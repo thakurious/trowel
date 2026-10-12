@@ -9,6 +9,9 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
+      # The archlinux image has no git; checkout with submodules needs a real git, not the REST fallback.
+      - name: Install git
+        run: pacman -Sy --noconfirm --needed git
       - uses: actions/checkout@v4
         with:
           submodules: recursive
