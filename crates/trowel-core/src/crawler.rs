@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::folder_selection;
+use crate::git_files::GitRepos;
 use crate::model::{Candidate, FileKind, IndexOptions};
 use crate::rules::{Classification, Rules};
 
@@ -25,6 +26,7 @@ impl Crawler {
         let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
         let mut report = CrawlReport::default();
         let mut project_roots = HashSet::new();
+        let mut repos = GitRepos::default();
         let mut found: Vec<Candidate> = Vec::new();
         let mut found_paths = HashSet::new();
         let root_paths: HashSet<String> = roots
@@ -33,7 +35,9 @@ impl Crawler {
             .collect();
 
         for root in roots {
-            if !options.code && Rules::is_project_root(root) {
+            if options.code {
+                repos.enter_root(root);
+            } else if Rules::is_project_root(root) {
                 project_roots.insert(root.to_string_lossy().into_owned());
             }
             let real = folder_selection::real_path(&root.to_string_lossy());
@@ -75,7 +79,9 @@ impl Crawler {
                     {
                         skip_prefixes.push(path.to_path_buf());
                         *report.skipped_folders.entry(reason).or_default() += 1;
-                    } else if !options.code && Rules::is_project_root(path) {
+                    } else if options.code {
+                        repos.enter(path);
+                    } else if Rules::is_project_root(path) {
                         project_roots.insert(path.to_string_lossy().into_owned());
                     }
                     continue;
@@ -112,6 +118,10 @@ impl Crawler {
                                     .skipped
                                     .entry("too big to be written by hand".into())
                                     .or_default() += 1;
+                                continue;
+                            }
+                            if repos.ignores(path) {
+                                *report.skipped.entry("ignored by git".into()).or_default() += 1;
                                 continue;
                             }
                         }
@@ -237,5 +247,88 @@ mod tests {
             })
             .collect();
         assert_eq!(names, ["trip.txt"]);
+    }
+
+    #[test]
+    fn code_crawl_keeps_what_git_keeps() {
+        let folder = std::env::temp_dir().join(format!(
+            "trowel-gitcrawl-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("app/notes")).unwrap();
+        fs::create_dir_all(folder.join("app/build")).unwrap();
+        fs::create_dir_all(folder.join("app/vendor/lib")).unwrap();
+        fs::create_dir_all(folder.join("app/node_modules/pad")).unwrap();
+        fs::create_dir_all(folder.join("app/sub")).unwrap();
+        fs::create_dir_all(folder.join("loose")).unwrap();
+        fs::write(folder.join("app/main.py"), "print(1)\n").unwrap();
+        fs::write(folder.join("app/README.md"), "# App\n").unwrap();
+        fs::write(folder.join("app/.gitignore"), "build/\n*.log\nscratch.py\n").unwrap();
+        fs::write(folder.join("app/scratch.py"), "x = 1\n").unwrap();
+        fs::write(folder.join("app/notes/todo.md"), "- ship\n").unwrap();
+        fs::write(folder.join("app/build/out.py"), "x = 2\n").unwrap();
+        fs::write(folder.join("app/vendor/lib/core.py"), "x = 3\n").unwrap();
+        fs::write(folder.join("app/node_modules/pad/index.js"), "x\n").unwrap();
+        fs::write(folder.join("app/data.json"), "{}\n").unwrap();
+        fs::write(folder.join("app/big.py"), "x = 1\n".repeat(200_000)).unwrap();
+        fs::write(folder.join("app/sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+        fs::write(folder.join("app/sub/lib.py"), "x = 4\n").unwrap();
+        fs::write(folder.join("loose/backup.sh"), "rsync\n").unwrap();
+        let status = std::process::Command::new("git")
+            .args(["-C", folder.join("app").to_str().unwrap(), "init", "-q"])
+            .status()
+            .expect("git");
+        assert!(status.success());
+        let code = IndexOptions {
+            code: true,
+            ..IndexOptions::default()
+        };
+        let report = Crawler::crawl(std::slice::from_ref(&folder), &code);
+        let mut names: Vec<_> = report
+            .candidates
+            .iter()
+            .map(|c| {
+                Path::new(&c.path)
+                    .strip_prefix(&folder)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "app/README.md",
+                "app/main.py",
+                "app/notes/todo.md",
+                "loose/backup.sh"
+            ]
+        );
+        assert_eq!(report.skipped.get("ignored by git").copied(), Some(1));
+        assert_eq!(
+            report
+                .skipped_folders
+                .get("vendored or built code")
+                .copied(),
+            Some(2)
+        );
+        assert_eq!(
+            report.skipped_folders.get("submodule or worktree").copied(),
+            Some(1)
+        );
+        let sub = Crawler::crawl(&[folder.join("app")], &code);
+        assert!(!sub
+            .candidates
+            .iter()
+            .any(|c| c.path.ends_with("scratch.py")));
+        let main = Crawler::crawl(std::slice::from_ref(&folder), &IndexOptions::default());
+        assert!(main.candidates.is_empty());
+        let _ = fs::remove_dir_all(&folder);
     }
 }

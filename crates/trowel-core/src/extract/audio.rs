@@ -25,13 +25,15 @@ impl AudioExtractor {
         let src = abs_path(url);
         let duration = super::video::MediaInfo::duration(&src).unwrap_or(0.0);
         std::fs::create_dir_all(folder).map_err(|err| ExtractError::Unreadable(err.to_string()))?;
-        let mut child = Command::new("ffmpeg")
-            .args(["-nostdin", "-loglevel", "error", "-i"])
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-nostdin", "-loglevel", "error", "-i"])
             .arg(&src)
             .args(["-f", "s16le", "-ac", "1", "-ar", "16000", "-"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        super::run::limit_child_memory(&mut cmd);
+        let mut child = cmd
             .spawn()
             .map_err(|err| ExtractError::Unreadable(format!("ffmpeg: {err}")))?;
         let timeout = ffmpeg_timeout(duration);

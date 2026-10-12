@@ -1,5 +1,7 @@
 //! Per-modality extractors. Tools run as subprocesses (`ROBUSTNESS.md` F5).
 
+use std::path::Path;
+
 mod audio;
 mod code;
 mod doc;
@@ -14,7 +16,7 @@ mod video;
 mod traps;
 
 pub use audio::AudioExtractor;
-pub use code::{CodeExtractor, CodeLookup, CodePiece};
+pub use code::{CodeExtractor, CodeFile, CodeLookup, CodePiece};
 pub use doc::{excerpt, DocExtractor};
 pub use error::ExtractError;
 pub use image::{ImageExtractor, PreparedImage};
@@ -25,3 +27,16 @@ pub use run::{
     TIMEOUT_PDF_PAGE,
 };
 pub use video::{average_hash, hamming, MediaInfo, MediaPiece, VideoExtractor};
+
+/// F5 boundary: each extractor talks to an external tool through [`run_tool`].
+pub trait Extractor {
+    type Output;
+    fn extract(&self, path: &Path) -> Result<Self::Output, ExtractError>;
+}
+
+impl Extractor for DocExtractor {
+    type Output = String;
+    fn extract(&self, path: &Path) -> Result<Self::Output, ExtractError> {
+        Self::text_of(path)
+    }
+}

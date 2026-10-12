@@ -302,6 +302,39 @@ impl CodeExtractor {
             .join("/");
         (None, title)
     }
+
+    /// First defining line, else first line of code. `upstream/Sources/DigUpKit/CodeExtractor.swift:130`
+    pub fn summary(text: &str) -> String {
+        let lines: Vec<String> = text
+            .split(['\n', '\r'])
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        let definition = lines.iter().find(|line| {
+            line.split_whitespace()
+                .take(4)
+                .any(CodeLookup::defines_something)
+        });
+        let code = lines.iter().find(|line| {
+            ![
+                "//", "#", "/*", "*", "--", "\"\"\"", "import ", "from ", "#include", "using ",
+                "package ", "}", ")", "@",
+            ]
+            .iter()
+            .any(|p| line.starts_with(p))
+        });
+        let line = definition
+            .or(code)
+            .or(lines.first())
+            .map(String::as_str)
+            .unwrap_or("");
+        if line.chars().count() > 160 {
+            format!("{}…", line.chars().take(160).collect::<String>())
+        } else {
+            line.to_string()
+        }
+    }
 }
 
 pub struct CodeLookup;
@@ -334,6 +367,59 @@ impl CodeLookup {
 
     pub fn defines_something(word: &str) -> bool {
         DEFINERS.contains(&word) && !matches!(word, "let" | "var" | "const" | "val")
+    }
+
+    /// Where `name` is defined in `text` (stretch whose first line is `first`).
+    /// `upstream/Sources/DigUpKit/CodeExtractor.swift:275`
+    pub fn definition(name: &str, text: &str, first: i32) -> Option<(i32, i32)> {
+        let mut best: Option<(i32, i32)> = None;
+        for (offset, line) in split_lines(text).into_iter().enumerate() {
+            for (before, after) in occurrences(name, line) {
+                let strength = definition_strength(before, after, line);
+                if strength > best.map(|b| b.1).unwrap_or(0) {
+                    best = Some((first + offset as i32, strength));
+                }
+                if strength == 2 {
+                    return best;
+                }
+            }
+        }
+        best
+    }
+
+    /// First line (from `first`) that has one of `words` as a definition, else as code.
+    /// `upstream/Sources/DigUpKit/CodeExtractor.swift:320`
+    pub fn first_line(words: &[&str], text: &str, first: i32) -> Option<i32> {
+        let words: Vec<String> = words
+            .iter()
+            .filter(|w| w.len() >= 2)
+            .map(|w| w.to_lowercase())
+            .collect();
+        if words.is_empty() {
+            return None;
+        }
+        let mut first_code: Option<i32> = None;
+        let mut first_any: Option<i32> = None;
+        for (offset, line) in split_lines(text).into_iter().enumerate() {
+            if !words.iter().any(|w| has_word(w, line)) {
+                continue;
+            }
+            let trimmed = line.trim();
+            if trimmed
+                .split_whitespace()
+                .take(4)
+                .any(Self::defines_something)
+            {
+                return Some(first + offset as i32);
+            }
+            if first_code.is_none() && !COMMENT_STARTS.iter().any(|p| trimmed.starts_with(p)) {
+                first_code = Some(offset as i32);
+            }
+            if first_any.is_none() {
+                first_any = Some(offset as i32);
+            }
+        }
+        first_code.or(first_any).map(|o| first + o)
     }
 }
 
@@ -375,6 +461,101 @@ const DEFINERS: &[&str] = &[
     "#define",
     "function*",
 ];
+const USERS: &[&str] = &[
+    "return", "await", "yield", "throw", "new", "else", "case", "print", "echo", "assert", "not",
+    "and", "or", "in", "is", "do", "go", "defer", "try", "catch", "if", "while", "for", "typeof",
+    "delete", "raise", "import", "from",
+];
+const COMMENT_STARTS: &[&str] = &["//", "#", "/*", "*", "--", "\"\"\"", "'''", "<!--", ";"];
+
+fn definition_strength(before: &str, after: &str, line: &str) -> i32 {
+    let before = before.trim();
+    let after = after.trim();
+    let previous = before.split_whitespace().next_back().unwrap_or("");
+    if DEFINERS.contains(&previous) {
+        return 2;
+    }
+    if before.starts_with("func (") && before.ends_with(')') {
+        return 2;
+    }
+    if before.starts_with("- (") || before.starts_with("+ (") {
+        return if after.starts_with(':')
+            || after.is_empty()
+            || after.starts_with('{')
+            || after.starts_with(';')
+        {
+            2
+        } else {
+            0
+        };
+    }
+    let last = before.chars().next_back();
+    let c_style = after.starts_with('(')
+        && !before.is_empty()
+        && !USERS.contains(&previous)
+        && !before.chars().any(|c| "=(,.!?".contains(c))
+        && !before.contains("->")
+        && last.is_some_and(|c| c.is_alphabetic() || c.is_numeric() || "*&>_]".contains(c));
+    if !c_style {
+        return 0;
+    }
+    if line.trim().ends_with(';') {
+        1
+    } else {
+        2
+    }
+}
+
+fn has_word(word: &str, line: &str) -> bool {
+    let lower: Vec<char> = line.to_lowercase().chars().collect();
+    let original: Vec<char> = line.chars().collect();
+    let needle: Vec<char> = word.chars().collect();
+    if needle.is_empty() || needle.len() > lower.len() {
+        return false;
+    }
+    let mut i = 0usize;
+    while i + needle.len() <= lower.len() {
+        if lower[i..i + needle.len()] == needle[..] {
+            let at_start = i == 0;
+            let after_break = i > 0 && !lower[i - 1].is_alphabetic() && !lower[i - 1].is_numeric();
+            let camel = original.get(i).is_some_and(|c| c.is_uppercase());
+            if at_start || after_break || camel {
+                return true;
+            }
+            i += needle.len();
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
+fn occurrences<'a>(name: &str, line: &'a str) -> Vec<(&'a str, &'a str)> {
+    let lower_line = line.to_lowercase();
+    let lower_name = name.to_lowercase();
+    let mut found = Vec::new();
+    let mut start = 0usize;
+    let line_bytes = line.as_bytes();
+    while let Some(rel) = lower_line[start..].find(&lower_name) {
+        let i = start + rel;
+        let j = i + lower_name.len();
+        if !line.is_char_boundary(i) || !line.is_char_boundary(j) {
+            start = i + 1;
+            continue;
+        }
+        let before_ok = i == 0 || !is_name_byte(line_bytes[i - 1]);
+        let after_ok = j == line.len() || !is_name_byte(line_bytes[j]);
+        if before_ok && after_ok {
+            found.push((&line[..i], &line[j..]));
+        }
+        start = j;
+    }
+    found
+}
+
+fn is_name_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$'
+}
 
 fn split_lines(text: &str) -> Vec<&str> {
     text.split('\n')
@@ -441,6 +622,10 @@ fn ident_prefix(s: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+
+    use crate::model::FileKind;
+    use crate::rules::{Classification, Rules};
 
     fn function(name: &str, body: usize, width: usize) -> String {
         let mut s = format!("func {name}() {{\n");
@@ -537,6 +722,273 @@ mod tests {
             CodeLookup::identifier("quantize_row_q8_0_ref").unwrap(),
             ["quantize", "row", "q8", "0", "ref"]
         );
+        assert_eq!(
+            CodeLookup::identifier("refreshAccessToken").unwrap(),
+            ["refreshaccesstoken"]
+        );
+        assert_eq!(
+            CodeLookup::identifier("DuplicateFinder").unwrap(),
+            ["duplicatefinder"]
+        );
+        assert_eq!(
+            CodeLookup::identifier("os.path.join").unwrap(),
+            ["os", "path", "join"]
+        );
+        assert_eq!(
+            CodeLookup::identifier("llama_sampler_top_k_impl()").unwrap(),
+            ["llama", "sampler", "top", "k", "impl"]
+        );
         assert!(CodeLookup::identifier("retry").is_none());
+        assert!(CodeLookup::identifier("Renamer").is_none());
+        assert!(CodeLookup::identifier("retry with backoff").is_none());
+        assert!(CodeLookup::identifier("hamming distance").is_none());
+    }
+
+    fn defined(name: &str, text: &str) -> Option<i32> {
+        CodeLookup::definition(name, text, 10).map(|(line, _)| line)
+    }
+
+    #[test]
+    fn definitions_over_uses() {
+        assert_eq!(
+            defined(
+                "retry_with_backoff",
+                "x = retry_with_backoff(f)\n\ndef retry_with_backoff(attempts=5):"
+            ),
+            Some(12)
+        );
+        assert_eq!(
+            defined(
+                "isMPEGTransportStream",
+                "    static func isMPEGTransportStream(_ url: URL) -> Bool {"
+            ),
+            Some(10)
+        );
+        assert_eq!(
+            defined(
+                "refreshAccessToken",
+                "  token = await refreshAccessToken();\nexport async function refreshAccessToken() {"
+            ),
+            Some(11)
+        );
+        assert_eq!(
+            defined(
+                "gguf_init_from_reader",
+                "struct gguf_context * result = gguf_init_from_reader(gr, params);\nstatic struct gguf_context * gguf_init_from_reader(const struct gguf_reader & gr, struct gguf_init_params p) {\n"
+            ),
+            Some(11)
+        );
+        assert_eq!(
+            defined(
+                "llama_sampler_top_k_impl",
+                "    llama_sampler_top_k_impl(cur_p, ctx->k);\n    return;"
+            ),
+            None
+        );
+        assert_eq!(
+            defined(
+                "SUStandardVersionComparator",
+                "@implementation SUStandardVersionComparator"
+            ),
+            Some(10)
+        );
+        assert_eq!(
+            defined("Name", "func (s *Server) Name() string {"),
+            Some(10)
+        );
+        let header =
+            "GGML_API void quantize_row_q8_0_ref(const float * x, block_q8_0 * y, int64_t k);";
+        assert_eq!(
+            CodeLookup::definition("quantize_row_q8_0_ref", header, 1)
+                .map(|(_, strength)| strength),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn the_line_to_open_at() {
+        let text = "import time\n\n\ndef retry_with_backoff(attempts=5):\n    pass\n";
+        assert_eq!(CodeLookup::first_line(&["retry"], text, 40), Some(43));
+        assert_eq!(
+            CodeLookup::first_line(&["backoff"], "let a = 1\nfunc retryWithBackoff() {}", 1),
+            Some(2)
+        );
+        assert_eq!(CodeLookup::first_line(&["zebra"], text, 1), None);
+        let module =
+            "\"\"\"Retrying calls to flaky services.\"\"\"\n\nimport random\n\ndef retry_with_backoff(f):\n    pass\n";
+        assert_eq!(
+            CodeLookup::first_line(&["retry", "backoff"], module, 1),
+            Some(5)
+        );
+        assert_eq!(
+            CodeLookup::first_line(&["calls"], &(module.to_string() + "x = calls()\n"), 1),
+            Some(7)
+        );
+    }
+
+    #[test]
+    fn a_stretch_in_one_line() {
+        assert_eq!(
+            CodeExtractor::summary(
+                "import os\n\n# Retry things\ndef retry_with_backoff(attempts=5):\n    pass"
+            ),
+            "def retry_with_backoff(attempts=5):"
+        );
+        assert_eq!(
+            CodeExtractor::summary("// header\nlet total = items.reduce(0, +)\n"),
+            "let total = items.reduce(0, +)"
+        );
+    }
+
+    #[test]
+    fn notebook_cells_without_their_outputs() {
+        let png = "A".repeat(5000);
+        let notebook = serde_json::json!({
+            "nbformat": 4,
+            "cells": [
+                {"cell_type": "markdown", "source": ["# Class balance\n"]},
+                {
+                    "cell_type": "code",
+                    "source": ["counts = df.label.value_counts()\n"],
+                    "outputs": [{"output_type": "display_data", "data": {"image/png": png, "text/plain": ["<Figure>"]}}]
+                },
+                {"cell_type": "code", "source": [""]},
+                {"cell_type": "raw", "source": ["notes\n"]}
+            ]
+        });
+        let data = serde_json::to_vec(&notebook).unwrap();
+        let cells = CodeExtractor::notebook_cells(&data).unwrap();
+        assert_eq!(cells.len(), 4);
+        assert!(!cells.join("").contains("AAAA"));
+        let pieces = CodeExtractor::cells(&cells, 1800);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!((pieces[0].first, pieces[0].last), (1, 4));
+        assert!(pieces[0].text.starts_with("# Class balance\n\ncounts"));
+    }
+
+    #[test]
+    fn notebook_stretches_hold_whole_cells() {
+        let cell = "x = 1\n".repeat(100);
+        let pieces = CodeExtractor::cells(
+            &[cell.clone(), cell.clone(), cell, "y = 2\n".repeat(500)],
+            1800,
+        );
+        assert_eq!(
+            pieces.iter().map(|p| p.first).collect::<Vec<_>>(),
+            [1, 3, 4, 4]
+        );
+        assert_eq!(
+            pieces.iter().map(|p| p.last).collect::<Vec<_>>(),
+            [2, 3, 4, 4]
+        );
+    }
+
+    #[test]
+    fn place_in_its_repo() {
+        let folder = std::env::temp_dir().join(format!(
+            "trowel-place-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let repo = folder.join("billing");
+        fs::create_dir_all(repo.join("payments")).unwrap();
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let file = repo.join("payments/retry.py");
+        fs::write(&file, "pass\n").unwrap();
+        let (found, title) = CodeExtractor::place(&file.to_string_lossy());
+        assert_eq!(found.as_deref(), Some(repo.to_str().unwrap()));
+        assert_eq!(title, "billing/payments/retry.py");
+        fs::create_dir_all(folder.join("scripts")).unwrap();
+        let loose = folder.join("scripts/backup.sh");
+        fs::write(&loose, "echo\n").unwrap();
+        assert_eq!(
+            CodeExtractor::place(&loose.to_string_lossy()),
+            (None, "scripts/backup.sh".into())
+        );
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn code_folder_types() {
+        let dir = std::env::temp_dir().join(format!("trowel-codekind-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let options = IndexOptions {
+            code: true,
+            ..IndexOptions::default()
+        };
+        let kind = |name: &str, text: &str| {
+            let p = dir.join(name);
+            fs::write(&p, text).unwrap();
+            Rules::classify_code(&p, &options)
+        };
+        assert_eq!(kind("retry.py", "x"), Classification::Index(FileKind::Code));
+        assert_eq!(
+            kind("App.swift", "x"),
+            Classification::Index(FileKind::Code)
+        );
+        assert_eq!(
+            kind("README.md", "x"),
+            Classification::Index(FileKind::Code)
+        );
+        assert_eq!(
+            kind("settings.yaml", "x"),
+            Classification::Index(FileKind::Code)
+        );
+        assert_eq!(
+            kind("explore.ipynb", "{}"),
+            Classification::Index(FileKind::Code)
+        );
+        assert_eq!(kind("Makefile", "x"), Classification::Index(FileKind::Code));
+        assert_eq!(
+            kind("Dockerfile.dev", "x"),
+            Classification::Index(FileKind::Code)
+        );
+        assert_eq!(kind("app.ts", "x"), Classification::Index(FileKind::Code));
+        assert_eq!(
+            kind("package.json", "{}"),
+            Classification::Skip("data file".into())
+        );
+        assert_eq!(
+            kind("rows.csv", "x"),
+            Classification::Skip("data file".into())
+        );
+        assert_eq!(
+            kind("yarn.lock", "x"),
+            Classification::Skip("data file".into())
+        );
+        assert_eq!(
+            kind("bundle.min.js", "x"),
+            Classification::Skip("minified".into())
+        );
+        assert_eq!(
+            kind("LICENSE.md", "x"),
+            Classification::Skip("license".into())
+        );
+        assert_eq!(
+            kind("prod.pem", "x"),
+            Classification::Skip("key or password file".into())
+        );
+        assert_eq!(
+            kind("id_ed25519", "x"),
+            Classification::Skip("key or password file".into())
+        );
+        assert_eq!(
+            kind("credentials.yaml", "x"),
+            Classification::Skip("key or password file".into())
+        );
+        assert_eq!(kind("photo.jpg", "x"), Classification::Ignore);
+        let mut bytes = vec![0xFFu8; 188 * 4];
+        for packet in 0..4 {
+            bytes[packet * 188] = 0x47;
+        }
+        let clip = dir.join("clip.ts");
+        fs::write(&clip, bytes).unwrap();
+        assert_eq!(
+            Rules::classify_code(&clip, &options),
+            Classification::Ignore
+        );
     }
 }

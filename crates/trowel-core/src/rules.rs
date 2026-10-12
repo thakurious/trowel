@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
+use std::process::Command;
+use std::sync::OnceLock;
 
 use crate::model::{FileKind, IndexOptions};
 
@@ -321,7 +323,21 @@ impl Rules {
         {
             return true;
         }
+        // Weak signal: a PNG whose pixel size equals a connected monitor's mode.
+        if let Some((w, h)) = png_ihdr_size(path) {
+            if connected_monitor_modes()
+                .iter()
+                .any(|(mw, mh)| *mw == w && *mh == h)
+            {
+                return true;
+            }
+        }
         false
+    }
+
+    /// Test helper: PNG IHDR size vs injected monitor modes (no hyprctl).
+    pub fn png_matches_monitor(path: &Path, modes: &[(u32, u32)]) -> bool {
+        png_ihdr_size(path).is_some_and(|(w, h)| modes.iter().any(|(mw, mh)| *mw == w && *mh == h))
     }
 
     pub fn skip_reason_for_folder(
@@ -446,6 +462,45 @@ fn extension(path: &Path) -> String {
         .to_lowercase()
 }
 
+fn png_ihdr_size(path: &Path) -> Option<(u32, u32)> {
+    let mut file = File::open(path).ok()?;
+    let mut buf = [0u8; 24];
+    file.read_exact(&mut buf).ok()?;
+    if buf[0..8] != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return None;
+    }
+    if &buf[12..16] != b"IHDR" {
+        return None;
+    }
+    let w = u32::from_be_bytes(buf[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(buf[20..24].try_into().ok()?);
+    (w > 0 && h > 0).then_some((w, h))
+}
+
+fn connected_monitor_modes() -> &'static [(u32, u32)] {
+    static MODES: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
+    MODES.get_or_init(|| {
+        let Ok(out) = Command::new("hyprctl").args(["monitors", "-j"]).output() else {
+            return Vec::new();
+        };
+        if !out.status.success() {
+            return Vec::new();
+        }
+        let Ok(json) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
+            return Vec::new();
+        };
+        json.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| {
+                let w = m.get("width")?.as_u64()? as u32;
+                let h = m.get("height")?.as_u64()? as u32;
+                (w > 0 && h > 0).then_some((w, h))
+            })
+            .collect()
+    })
+}
+
 fn looks_like_omarchy_screenshot(lower: &str) -> bool {
     // screenshot-YYYY-MM-DD_HH-MM-SS.png  (`omarchy-capture-screenshot`)
     let rest = match lower.strip_prefix("screenshot-") {
@@ -512,6 +567,7 @@ fn is_short_alpha_then_digits(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
     use std::io::Write;
 
     fn tmp() -> std::path::PathBuf {
@@ -605,6 +661,20 @@ mod tests {
             "/tmp/Screenshot 2026-10-02 at 8.15.40 AM.png"
         )));
         assert!(Rules::is_screenshot(Path::new("/tmp/grim-2026.png")));
+        assert!(!Rules::is_screenshot(Path::new("/tmp/holiday.png")));
+    }
+
+    #[test]
+    fn png_monitor_size_is_a_weak_screenshot_signal() {
+        let file = tmp().join("desktop.png");
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&1920u32.to_be_bytes());
+        png.extend_from_slice(&1200u32.to_be_bytes());
+        File::create(&file).unwrap().write_all(&png).unwrap();
+        assert!(Rules::png_matches_monitor(&file, &[(1920, 1200)]));
+        assert!(!Rules::png_matches_monitor(&file, &[(1280, 720)]));
         assert!(!Rules::is_screenshot(Path::new("/tmp/holiday.png")));
     }
 }

@@ -125,3 +125,33 @@ pub fn ffmpeg_timeout(duration_secs: f64) -> Duration {
     let hours = (duration_secs / 3600.0).max(1.0);
     Duration::from_secs((300.0 * hours).ceil() as u64)
 }
+
+/// Apply the F5 2 GiB `RLIMIT_AS` cap to a child about to be spawned (streaming ffmpeg).
+pub fn limit_child_memory(cmd: &mut Command) {
+    unsafe {
+        cmd.pre_exec(|| {
+            let lim = Rlimit {
+                rlim_cur: RLIMIT_AS_BYTES,
+                rlim_max: RLIMIT_AS_BYTES,
+            };
+            if setrlimit(RLIMIT_AS, &lim) != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn overrun_is_killed() {
+        let start = Instant::now();
+        let err = run_argv("sleep", &["30".as_ref()], Duration::from_millis(400)).unwrap_err();
+        assert!(start.elapsed() < Duration::from_secs(5));
+        assert!(err.to_string().contains("timed out"));
+    }
+}

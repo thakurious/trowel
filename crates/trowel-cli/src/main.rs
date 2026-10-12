@@ -71,7 +71,7 @@ fn main() {
 mod estimate {
     use std::collections::BTreeMap;
     use std::path::Path;
-    use trowel_core::{Crawler, IndexOptions};
+    use trowel_core::{Costs, Crawler, Estimator, IndexOptions};
 
     pub fn run(path: &Path, json: bool, code: bool) -> Result<(), String> {
         let options = IndexOptions {
@@ -79,6 +79,7 @@ mod estimate {
             ..IndexOptions::default()
         };
         let report = Crawler::crawl(&[path.to_path_buf()], &options);
+        let estimate = Estimator::estimate(&report.candidates, &options, &Costs::default());
         let mut by_kind: BTreeMap<&str, u64> = BTreeMap::new();
         for c in &report.candidates {
             *by_kind.entry(c.kind.as_str()).or_default() += 1;
@@ -91,6 +92,16 @@ mod estimate {
                 "skipped": report.skipped,
                 "skipped_folders": report.skipped_folders,
                 "datasets": report.datasets,
+                "pdf_pages": estimate.pdf_pages,
+                "pdf_pages_total": estimate.pdf_pages_total,
+                "audio_seconds": estimate.audio_seconds,
+                "video_seconds": estimate.video_seconds,
+                "doc_chunks": estimate.doc_chunks,
+                "seconds": estimate.seconds,
+                "long_files": estimate.long_files,
+                "later_seconds": estimate.later_seconds,
+                "code_stretches": estimate.code_stretches,
+                "bytes": estimate.bytes,
             });
             println!("{body}");
         } else {
@@ -98,6 +109,14 @@ mod estimate {
             for (kind, n) in &by_kind {
                 println!("  {kind}: {n}");
             }
+            println!(
+                "first pass ~{:.0}s ({} pdf pages, {:.0}s audio, {:.0}s video, {} doc chunks)",
+                estimate.seconds,
+                estimate.pdf_pages,
+                estimate.audio_seconds,
+                estimate.video_seconds,
+                estimate.doc_chunks
+            );
             for (reason, n) in &report.skipped {
                 println!("skipped {reason}: {n}");
             }

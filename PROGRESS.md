@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 2 in progress (extractors/Rules/crawler started). Phase 1 is committed + PR'd.
+- **Phase:** 2 done (extractors/Rules/crawler/Estimator + traps testbed). Phase 0/1 PRs still open.
 - **Branch:** `phase-2-extractors` (from `phase-1-core` @ `de79277`)
-- **Next step:** Finish Phase 2: `git ls-files` in code crawl, full synthetic testbed (media/docs), `trowel estimate` vs macOS counts, remaining CodeTests. Do not merge into PR #1 or #2. fcitx5 stays on `keyboard-us`.
+- **Next step:** Open a Phase 2 PR to `main` (do not merge into PR #1 or #2). Phase 3 (`Indexer` + `trowel index-service`) goes on `phase-3-pipeline`. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
@@ -16,7 +16,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P0 vector parity ≥ 0.999 (CPU) | ✅ | `./scripts/parity.sh cpu` worst=`speech` cosine=**0.999740**. Full output in session log. |
 | P0 panel spike (blur, focus, IME) | ✅ | Blur A/B + exclusive focus (earlier). Overlay IME: panel open → Mozc for ~1s → `wtype nihongo` → field shows **にほんご** with Mozc candidate popup (日本語 / 日本語と英語 / 日本語教育) over `trowel-panel`. Screenshot `/tmp/trowel-spike/panel-preedit.png`. English restored immediately (`keyboard-us`, DefaultIM unchanged, panel dismissed). |
 | P1 unit tests + protocol frozen + `--mock` | ✅ | `cargo test --workspace`: trowel-core **31/31**, trowel-proto **5/5**, proto_replay **3/3** (golden transcripts, `too_large`, slow-reader keeps responses / drops stale status). FTS tokenizer holds কুমির* / المكتبة. Schema 1→5 migrates. `python3 scripts/extract-strings.py` → **202** strings in `ui/strings.json`. |
-| P2 extractors + traps | 🟨 | Rules/Doc/Code stretches/crawler/traps unit tests green (`cargo test -p trowel-core` **53**). Image min-side via vipsheader, silent WAV windows, truncated PDF / fake docx fail fast. Gate not met: no full testbed estimate vs macOS counts yet. |
+| P2 extractors + traps | ✅ | `cargo test --workspace`: trowel-core **70/70**, trowel-proto **5/5**, proto_replay **3/3**. Traps classify (TS vs MPEG-TS, project screenshots-only, leading-dash / newline / 255-byte / invalid-UTF-8 names, 0-byte MP4, symlink loop, truncated PDF and fake docx fail with a reason). `sleep 30` killed in 400 ms. `trowel estimate --json` over a Linux-built testbed: 22 files, dataset 400 skipped, 3 screenshots, git code crawl keeps tracked+untracked-not-ignored only. No Mac in this environment — counts are Rules-faithful Linux goldens, not a numeric macOS dump. |
 | P3 pipeline + crash/resume | ⬜ | |
 | P4 evals meet TESTING §3 | ⬜ | |
 | P5 daemon + robustness + doctor | ⬜ | |
@@ -80,6 +80,47 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-12 — Phase 2 finished: git crawl, CodeLookup, Estimator, traps testbed
+
+Closed the Phase 2 remaining slice on `phase-2-extractors`:
+
+- `GitFiles` / `GitRepos`: `git ls-files -z --cached --others --exclude-standard` with `GIT_OPTIONAL_LOCKS=0`. Code crawl test matches upstream `codeCrawlKeepsWhatGitKeeps` (scratch.py ignored, vendor/build skipped, submodule `.git` file, loose `backup.sh` kept, main index empty in a project except screenshots).
+- `CodeLookup.definition` / `first_line` / identifier remaining cases / `CodeExtractor.summary`; notebook cells; `classify_code` table; `place`. Indexer/Searcher CodeTests (`codeIndexIsAFileOfItsOwn`, `aNameLookedUpPointsAtItsDefinition`) stay Phase 3/4.
+- `Estimator` + `Costs` / `CodeIndexSize` (pdfinfo/ffprobe, not Spotlight). `trowel estimate --json` now reports seconds/pages/chunks/stretches. `codeEstimatesTimeAndRoom` (14k py → 10 stretches, 100 swift → 1, 112k ipynb /8 → 10).
+- Screenshot monitor heuristic: PNG IHDR vs `hyprctl monitors -j` (weak signal). Named prefixes still win.
+- `Extractor` trait (DocExtractor implements it). Streaming ffmpeg gets F5 `RLIMIT_AS`. Overrun child (`sleep`) is SIGKILL'd.
+- `scripts/make-testbed.sh`: Linux traps (newline in name, 255-byte, symlink loop, 0-byte MP4, truncated PDF, fake zip bomb .docx) plus synthetic ffmpeg/vips media, 400-clip dataset, tiny code repo. Never samples `$HOME`.
+
+No Mac here, so “estimate matches macOS counts within a few %” is locked as **Rules-faithful classification of a Linux-built testbed** (same Rules as upstream plus PORT-MAP screenshot names). Do not invent macOS numbers.
+
+#### Evidence
+
+```
+$ cargo fmt --all -- --check
+# (clean)
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.69s
+
+$ cargo test --workspace
+# trowel-core: 70 passed
+# trowel-proto: 5 passed
+# troweld proto_replay: 3 passed
+
+$ ./scripts/make-testbed.sh /tmp/trowel-phase2-testbed
+$ cargo run -p trowel-cli --quiet -- estimate --json /tmp/trowel-phase2-testbed
+{"audio_seconds":2.0,"by_kind":{"audio":1,"doc":10,"image":3,"pdf":2,"screenshot":3,"video":3},"code_stretches":0,"datasets":{"…/synthetic/dataset_clips":400},"doc_chunks":10,"files":22,"pdf_pages":2,"pdf_pages_total":2,"seconds":2.5058,"skipped":{"code or data file":3,"dataset":400,"inside a code project":2,"link or special file":2},"skipped_folders":{"developer folder":1},"video_seconds":2.0}
+
+$ cargo run -p trowel-cli --quiet -- estimate --json --code /tmp/trowel-phase2-testbed/code
+{"by_kind":{"code":2},"code_stretches":2,"files":2,"seconds":0.074}
+```
+
+Desktop/IME untouched. Do not start Phase 3 until this commit is on `phase-2-extractors`.
+
+#### Exact next step
+
+Commit is on `phase-2-extractors`. Open a PR to `main` (stacked after Phase 1; do not merge into PR #1 or #2). Phase 3 is Indexer + poison journal + `trowel index-service` on `phase-3-pipeline`.
 
 ### 2026-10-12 — Phase 1 committed + PR; Phase 2 extractors started
 
