@@ -20,6 +20,22 @@ pub enum FileKind {
 }
 
 impl FileKind {
+    pub const ALL: [FileKind; 7] = [
+        FileKind::Screenshot,
+        FileKind::Image,
+        FileKind::Pdf,
+        FileKind::Doc,
+        FileKind::Audio,
+        FileKind::Video,
+        FileKind::Code,
+    ];
+
+    /// The order of the first indexing pass: what people look for most comes first.
+    /// `upstream/Sources/DigUpKit/Model.swift:10`
+    pub const INDEXING_ORDER_SQL: &'static str = "\
+CASE kind WHEN 'screenshot' THEN 0 WHEN 'image' THEN 1 WHEN 'pdf' THEN 2 WHEN 'doc' THEN 3
+WHEN 'audio' THEN 4 WHEN 'video' THEN 5 ELSE 6 END";
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Screenshot => "screenshot",
@@ -48,14 +64,6 @@ impl FromStr for FileKind {
             _ => Err(()),
         }
     }
-}
-
-impl FileKind {
-    /// The order of the first indexing pass: what people look for most comes first.
-    /// `upstream/Sources/DigUpKit/Model.swift:10`
-    pub const INDEXING_ORDER_SQL: &'static str = "\
-CASE kind WHEN 'screenshot' THEN 0 WHEN 'image' THEN 1 WHEN 'pdf' THEN 2 WHEN 'doc' THEN 3
-WHEN 'audio' THEN 4 WHEN 'video' THEN 5 ELSE 6 END";
 }
 
 /// One searchable piece of a file.

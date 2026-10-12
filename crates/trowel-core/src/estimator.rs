@@ -56,13 +56,23 @@ pub struct Estimate {
     pub later_seconds: f64,
     pub code_stretches: i32,
     pub bytes: f64,
+    /// Directories the crawl walked (F3 inotify budget).
+    pub directories: usize,
 }
 
 pub struct Estimator;
 
 impl Estimator {
-    pub fn estimate(candidates: &[Candidate], options: &IndexOptions, costs: &Costs) -> Estimate {
-        let mut estimate = Estimate::default();
+    pub fn estimate(
+        candidates: &[Candidate],
+        options: &IndexOptions,
+        costs: &Costs,
+        directories: usize,
+    ) -> Estimate {
+        let mut estimate = Estimate {
+            directories,
+            ..Estimate::default()
+        };
         for file in candidates {
             *estimate.files.entry(file.kind).or_default() += 1;
             match file.kind {
@@ -148,7 +158,7 @@ impl Estimator {
         }
         groups
             .into_iter()
-            .map(|(k, v)| (k, Self::estimate(&v, options, costs)))
+            .map(|(k, v)| (k, Self::estimate(&v, options, costs, 0)))
             .collect()
     }
 }
@@ -193,6 +203,7 @@ mod tests {
             ],
             &options,
             &Costs::default(),
+            0,
         );
         assert_eq!(estimate.code_stretches, 10 + 1 + 10);
         assert_eq!(estimate.files.get(&FileKind::Code).copied(), Some(3));
@@ -228,7 +239,7 @@ mod tests {
                 device: 0,
             },
         ];
-        let estimate = Estimator::estimate(&files, &IndexOptions::default(), &Costs::default());
+        let estimate = Estimator::estimate(&files, &IndexOptions::default(), &Costs::default(), 0);
         let costs = Costs::default();
         assert!(
             (estimate.seconds - (costs.image + costs.screenshot + costs.doc_chunk)).abs() < 1e-9
