@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 2 done (extractors/Rules/crawler/Estimator + traps testbed). Phase 0/1 PRs still open.
-- **Branch:** `phase-2-extractors` (from `phase-1-core` @ `de79277`)
-- **Next step:** Open a Phase 2 PR to `main` (do not merge into PR #1 or #2). Phase 3 (`Indexer` + `trowel index-service`) goes on `phase-3-pipeline`. fcitx5 stays on `keyboard-us`.
+- **Phase:** 2 on `main`. Phases 0–2 merged in order (PRs #1, #2, #3).
+- **Branch:** `main` @ `179eede` (merge of #3)
+- **Next step:** Phase 3 (`Indexer` + poison journal + `trowel index-service`) on `phase-3-pipeline`. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
@@ -80,6 +80,22 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-12 — Phases 0–2 merged to main
+
+Merged in order with merge commits (no squash, no force-push):
+
+1. https://github.com/thakurious/trowel/pull/1 → `8b816a4`
+2. https://github.com/thakurious/trowel/pull/2 → `f208d91`
+3. https://github.com/thakurious/trowel/pull/3 → `179eede`
+
+CI on the old PRs was red because the `archlinux` container has no `git` at checkout (`submodules: recursive` needs a real git). Fixed on each branch (`ee76739` / cherry-picks) before merging. Vector parity still local-only (no Arc on GHA).
+
+Local `main` fast-forwarded to `origin/main`. Desktop/IME untouched.
+
+#### Exact next step
+
+Branch `phase-3-pipeline` from `main` and start Indexer + `trowel index-service`.
 
 ### 2026-10-12 — Phase 2 finished: git crawl, CodeLookup, Estimator, traps testbed
 
