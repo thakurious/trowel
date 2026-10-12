@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 0 acceptance demonstrated (vector parity both backends + panel blur/focus/IME)
-- **Branch:** `phase-0-runtime`
-- **Next step:** Open/land the Phase 0 PR, then Phase 1 on `phase-1-core` (Database + IndexStore first). fcitx5 stays on `keyboard-us`.
+- **Phase:** 1 in progress (core model/DB/SearchText/IndexStore green; protocol freeze + `--mock` not started)
+- **Branch:** `phase-1-core` (from `phase-0-runtime` @ `cceb3e0`)
+- **Next step:** Freeze `PROTOCOL.md` v1 as `trowel-proto` types, golden transcripts, and `troweld --mock`. Then strings extraction. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
@@ -15,7 +15,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P0 vector parity ≥ 0.999 (Vulkan) | ✅ | `./scripts/parity.sh vulkan` worst=`frame-70` cosine=**0.999975**. Full output in session log. |
 | P0 vector parity ≥ 0.999 (CPU) | ✅ | `./scripts/parity.sh cpu` worst=`speech` cosine=**0.999740**. Full output in session log. |
 | P0 panel spike (blur, focus, IME) | ✅ | Blur A/B + exclusive focus (earlier). Overlay IME: panel open → Mozc for ~1s → `wtype nihongo` → field shows **にほんご** with Mozc candidate popup (日本語 / 日本語と英語 / 日本語教育) over `trowel-panel`. Screenshot `/tmp/trowel-spike/panel-preedit.png`. English restored immediately (`keyboard-us`, DefaultIM unchanged, panel dismissed). |
-| P1 unit tests + protocol frozen + `--mock` | ⬜ | |
+| P1 unit tests + protocol frozen + `--mock` | 🟨 | Core unit tests 31/31 (`cargo test -p trowel-core`). FTS tokenizer holds কুমির* / المكتبة. Schema 1→5 migrates. Protocol + `--mock` still stubbed. |
 | P2 extractors + traps | ⬜ | |
 | P3 pipeline + crash/resume | ⬜ | |
 | P4 evals meet TESTING §3 | ⬜ | |
@@ -42,8 +42,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Open questions for the human
 
-1. **Commit / PR?** Phase 0 acceptance is demonstrated. Source is still uncommitted on `phase-0-runtime`. Say if you want a commit (and a PR against `main`). I will not push `main`.
-2. **Jira ticket?** Branch name has no key. Skip logging unless you give one.
+1. **Phase 0 PR:** https://github.com/thakurious/trowel/pull/1 — review/merge when ready. Do not merge `phase-1-core` into it.
+2. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
 3. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
 
 ## Desktop changes to revert
@@ -79,6 +79,14 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-12 — Phase 0 committed; Phase 1 core started
+
+- Committed `cceb3e0` on `phase-0-runtime`, PR https://github.com/thakurious/trowel/pull/1
+- Branched `phase-1-core`. Ported Database, Model (`FileKind`/`SegmentKind`/`Modality`/`IndexOptions`/`CodeQuery`), SearchText (+ Landmark, PageTextProblem), FolderSelection, Vectors/VectorStorage (`blockRows=1024`), IndexStore schema v0–v5 + FTS tokenizer + `linux_raw_paths`/`linux_attempts` (D16, no `user_version` bump).
+- `cargo test -p trowel-core`: **31 passed**, including prune/scope, schema 1→5, Bengali/Arabic FTS, SearchText normalize/matches/snippet, FolderSelection, ModelFiles SHA-256.
+- Not yet: `Searcher` (Phase 4; `ftsQuery`/`kindHints` tests wait), Indexer.sync ejected-drive test (Phase 3), `troweld --mock`, strings extraction.
+- `cargo fmt` + `clippy -D warnings` green.
 
 ### 2026-10-12 — Phase 0 scaffold, llama.cpp worker, vector parity, panel spike
 
