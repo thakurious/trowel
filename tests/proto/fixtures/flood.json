@@ -1,0 +1,31 @@
+{
+  "state": "ready",
+  "status": {
+    "phase": "indexing",
+    "main": {"done": 0, "total": 1000},
+    "code": {"done": 0, "total": 0},
+    "missing_roots": [],
+    "unreadable_roots": [],
+    "counts": {
+      "screenshots": 0,
+      "images": 0,
+      "documents": 0,
+      "video": 0,
+      "audio": 0,
+      "code": 0
+    },
+    "worker": "ready",
+    "vectors_loaded": true
+  },
+  "model_status": {
+    "present": true,
+    "verified": true,
+    "bytes": 1,
+    "total": 1,
+    "downloading": false
+  },
+  "searches": [],
+  "status_script": [
+    {"delay_ms": 0, "repeat": 300, "patch": {"phase": "indexing"}}
+  ]
+}

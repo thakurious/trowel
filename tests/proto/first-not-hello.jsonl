@@ -1,0 +1,2 @@
+{"send": {"id": 1, "op": "status"}}
+{"recv": {"id": 1, "ok": false, "error": {"code": "bad_request", "message": "hello must be the first request"}}}

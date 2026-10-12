@@ -1,1 +1,1012 @@
-{}
+[
+  {
+    "file": "AddFolders.swift",
+    "line": 133,
+    "text": "Cancel"
+  },
+  {
+    "file": "AddFolders.swift",
+    "line": 135,
+    "text": "Add"
+  },
+  {
+    "file": "AddFolders.swift",
+    "line": 163,
+    "text": "Code search reads source files, notebooks and a repo's own docs. It skips what git ignores, vendored and generated code, data files, and anything that looks like a key or a password."
+  },
+  {
+    "file": "App.swift",
+    "line": 63,
+    "text": "About DigUp"
+  },
+  {
+    "file": "App.swift",
+    "line": 65,
+    "text": "Check for Updates…"
+  },
+  {
+    "file": "App.swift",
+    "line": 67,
+    "text": "Settings…"
+  },
+  {
+    "file": "App.swift",
+    "line": 69,
+    "text": "Hide DigUp"
+  },
+  {
+    "file": "App.swift",
+    "line": 70,
+    "text": "Quit DigUp"
+  },
+  {
+    "file": "App.swift",
+    "line": 73,
+    "text": "New Search"
+  },
+  {
+    "file": "App.swift",
+    "line": 74,
+    "text": "Close"
+  },
+  {
+    "file": "App.swift",
+    "line": 77,
+    "text": "Undo"
+  },
+  {
+    "file": "App.swift",
+    "line": 77,
+    "text": "undo:"
+  },
+  {
+    "file": "App.swift",
+    "line": 78,
+    "text": "Redo"
+  },
+  {
+    "file": "App.swift",
+    "line": 78,
+    "text": "redo:"
+  },
+  {
+    "file": "App.swift",
+    "line": 80,
+    "text": "Cut"
+  },
+  {
+    "file": "App.swift",
+    "line": 81,
+    "text": "Copy"
+  },
+  {
+    "file": "App.swift",
+    "line": 82,
+    "text": "Paste"
+  },
+  {
+    "file": "App.swift",
+    "line": 83,
+    "text": "Select All"
+  },
+  {
+    "file": "App.swift",
+    "line": 86,
+    "text": "Minimize"
+  },
+  {
+    "file": "App.swift",
+    "line": 87,
+    "text": "Close"
+  },
+  {
+    "file": "Components.swift",
+    "line": 90,
+    "text": "At \\(ResultRow.clock(start)) of \\(ResultRow.clock(duration))"
+  },
+  {
+    "file": "Components.swift",
+    "line": 197,
+    "text": "Press the new shortcut…"
+  },
+  {
+    "file": "Components.swift",
+    "line": 201,
+    "text": "Click to set a shortcut"
+  },
+  {
+    "file": "Components.swift",
+    "line": 216,
+    "text": "), click to change"
+  },
+  {
+    "file": "Components.swift",
+    "line": 216,
+    "text": "Recording a new shortcut"
+  },
+  {
+    "file": "Components.swift",
+    "line": 216,
+    "text": "Shortcut \\(combo?.display ?? "
+  },
+  {
+    "file": "Components.swift",
+    "line": 217,
+    "text": "Click to change"
+  },
+  {
+    "file": "Components.swift",
+    "line": 217,
+    "text": "Esc cancels"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 282,
+    "text": "Show \\(subfolders.count - Self.shortList) more"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 319,
+    "text": "Choose among its subfolders"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 319,
+    "text": "Hide its subfolders"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 320,
+    "text": "Hide the subfolders of \\(row.lastPathComponent)"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 321,
+    "text": "Show the subfolders of \\(row.lastPathComponent)"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 329,
+    "text": "Couldn't look inside it; it can still be searched."
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 334,
+    "text": "macOS isn't letting DigUp read it."
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 337,
+    "text": "Allow in Settings…"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 345,
+    "text": "No code here"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 345,
+    "text": "Nothing to search here yet"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 346,
+    "text": "Nothing to search in the subfolders checked"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 364,
+    "text": "+ \\(roughDuration(later)) later"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 405,
+    "text": " · \\(roughBytes(subfolder.bytes))"
+  },
+  {
+    "file": "FolderChoices.swift",
+    "line": 406,
+    "text": " + \\(roughDuration(subfolder.laterSeconds)) later"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 263,
+    "text": "Back"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 312,
+    "text": "Step \\(current + 1) of \\(count)"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 325,
+    "text": "Model ready"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 329,
+    "text": "Try Again"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 332,
+    "text": "Model not downloaded"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 333,
+    "text": "Download"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 338,
+    "text": "Downloading the model · \\(download.progressText)"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 354,
+    "text": "DigUp"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 357,
+    "text": "Describe it. Dig it up."
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 375,
+    "text": "Everything is indexed and searched on this Mac. DigUp downloads its AI model (865 MB) once; after that it works offline, and nothing you index ever leaves your Mac."
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 445,
+    "text": "macOS will ask before DigUp can read folders like Desktop, Documents and Downloads. DigUp only reads files: it never changes, moves or uploads them."
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 477,
+    "text": "Search this folder again"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 484,
+    "text": "Skip a Folder…"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 488,
+    "text": "File types"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 489,
+    "text": "Extensions"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 489,
+    "text": "e.g. heic, txt"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 495,
+    "text": "Code, keys, certificates, hidden folders, app bundles and caches are always skipped."
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 503,
+    "text": "Skip some folders or file types"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 540,
+    "text": "Open code in"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 541,
+    "text": "Open code in"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 570,
+    "text": "That's it. It works from any app."
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 573,
+    "text": "Try it now: press \\(hotkey.display)."
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 581,
+    "text": "IN THE SEARCH PANEL"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 621,
+    "text": "You're all set"
+  },
+  {
+    "file": "Onboarding.swift",
+    "line": 644,
+    "text": "DigUp lives in the menu bar, which shows how indexing is going."
+  },
+  {
+    "file": "Previews.swift",
+    "line": 148,
+    "text": "Show in Finder"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 173,
+    "text": "Show in Finder"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 291,
+    "text": "Play"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 291,
+    "text": "Play from \\(ResultRow.clock($0))"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 300,
+    "text": "\\(ResultRow.clock(playback.time)) – playing from "
+  },
+  {
+    "file": "Previews.swift",
+    "line": 359,
+    "text": "Play"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 359,
+    "text": "Play from \\(ResultRow.clock($0))"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 360,
+    "text": "Play"
+  },
+  {
+    "file": "Previews.swift",
+    "line": 360,
+    "text": "Play from \\(ResultRow.clock($0))"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 33,
+    "text": "Searching your code"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 64,
+    "text": "Searching…"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 66,
+    "text": "No folders chosen yet"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 67,
+    "text": "DigUp only searches the folders you pick."
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 68,
+    "text": "Choose Folders…"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 71,
+    "text": "No good matches in your code"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 72,
+    "text": "Try saying what the code does, or a name that's in it."
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 74,
+    "text": "No good matches"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 75,
+    "text": "Try what you'd see or hear in it, or words you remember from it."
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 176,
+    "text": "Show all \\(group.total) \\(group.kind.title.lowercased())…"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 183,
+    "text": "Open them in the DigUp window (⌘O shows everything)"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 271,
+    "text": "\\(row.kind.title), \\(row.name), \\(row.reason)"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 287,
+    "text": " : "
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 287,
+    "text": "Weaker matches"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 287,
+    "text": "\\(count) weaker \\(count == 1 ? "
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 310,
+    "text": " : "
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 310,
+    "text": "Weaker matches"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 310,
+    "text": "\\(count) weaker \\(count == 1 ? "
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 312,
+    "text": "They match much less well than the results above. Press Return to "
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 313,
+    "text": "fold them away."
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 313,
+    "text": "show them."
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 486,
+    "text": "Show in Finder"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 488,
+    "text": "Copy"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 492,
+    "text": "Copy Path"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 519,
+    "text": "Code search is off"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 520,
+    "text": "DigUp can find code by what it does, in the folders you pick. Code gets an index of its own and never shows up in other searches."
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 525,
+    "text": "Choose Code Folders…"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 528,
+    "text": "Search your code"
+  },
+  {
+    "file": "SearchPanelView.swift",
+    "line": 529,
+    "text": "Say what the code does, or type a name that's in it."
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 383,
+    "text": "Clear"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 401,
+    "text": "Hide Preview"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 401,
+    "text": "Show Preview"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 410,
+    "text": "Settings (⌘,)"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 424,
+    "text": "Choose folders to search"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 425,
+    "text": "DigUp only looks where you tell it to."
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 429,
+    "text": "Choose Folders…"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 463,
+    "text": "Folders and indexing"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 472,
+    "text": "DigUp \\(version) is available"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 476,
+    "text": "See what's new and update"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 534,
+    "text": "\\(count)"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 546,
+    "text": "\\(title) (⌘\\(number))"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 651,
+    "text": "\\(row.kind.title), \\(row.name), \\(row.reason)"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 726,
+    "text": "Code, \\(row.name), \\(row.reason)"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 743,
+    "text": "Code search is off"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 744,
+    "text": "DigUp can find code by what it does, in the folders you pick. Code gets an index of its own and never shows up in other searches."
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 750,
+    "text": "Choose Code Folders…"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 752,
+    "text": "Search your code"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 753,
+    "text": "Say what the code does, or type a name that's in it."
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 799,
+    "text": " : "
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 799,
+    "text": "Weaker matches"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 799,
+    "text": "\\(count) weaker \\(count == 1 ? "
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 852,
+    "text": "Describe it. Dig it up."
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 855,
+    "text": "Type what you remember in the search field above: what's in it, what it looks or sounds like, or words from it."
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 863,
+    "text": "TRY"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 879,
+    "text": "in \\(folders)"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 882,
+    "text": "\\(model.status.searchable.formatted()) files to search in \\(folders)"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 887,
+    "text": "opens DigUp from any app"
+  },
+  {
+    "file": "SearchWindow.swift",
+    "line": 957,
+    "text": "Search for “\\(text)”"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 200,
+    "text": "Search shortcut"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 201,
+    "text": "Opens the search panel from any app."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 213,
+    "text": "Open DigUp when you log in"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 214,
+    "text": "So the shortcut always works."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 226,
+    "text": "Check for updates automatically"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 227,
+    "text": "Once a day DigUp asks GitHub for its newest version; nothing about your files is sent. Updates install with one click."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 235,
+    "text": "Check Now"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 237,
+    "text": "DigUp \\($0) is available"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 238,
+    "text": ") as? String ?? "
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 238,
+    "text": "DigUp \\(Bundle.main.object(forInfoDictionaryKey: "
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 259,
+    "text": "No folders yet. Add the ones DigUp should search."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 269,
+    "text": "Folders to search"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 273,
+    "text": "Add Folders…"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 292,
+    "text": "Search this folder again"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 296,
+    "text": "None. Code projects, app bundles and caches are skipped anyway (code has its own tab)."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 300,
+    "text": "Skip these folders"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 310,
+    "text": "Skip a Folder…"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 318,
+    "text": "Skip these file types"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 320,
+    "text": "DigUp only reads pictures, PDFs, documents (txt, md, rtf, docx, odt, html), audio and video here; code is read only in the code folders (the Code tab). Keys, certificates and password files are never read, nor are hidden folders like ~/.ssh."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 344,
+    "text": "Remove"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 350,
+    "text": "Its \\(removing?.files.formatted() ?? ) files leave the index. Adding it back later indexes them "
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 368,
+    "text": "Extensions"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 368,
+    "text": "e.g. heic, txt"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 396,
+    "text": "Pause"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 396,
+    "text": "Resume"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 428,
+    "text": "No access"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 428,
+    "text": "Not connected"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 435,
+    "text": "Allow in Settings…"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 451,
+    "text": "Kept for when it's back"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 452,
+    "text": "\\(summary.indexed.formatted()) of \\(summary.files.formatted()) indexed"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 462,
+    "text": "Stop searching this folder"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 463,
+    "text": "Remove \\((summary.path as NSString).lastPathComponent)"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 483,
+    "text": "Model"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 485,
+    "text": "Google · Apache 2.0 · 865 MB"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 489,
+    "text": "Downloaded"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 492,
+    "text": "Download"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 502,
+    "text": "Index"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 511,
+    "text": "Privacy"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 512,
+    "text": "DigUp reads the folders you choose and keeps what it learns in its index, on this Mac. It goes online only to download its model, once, and to check for updates (General), which sends nothing about your files."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 519,
+    "text": ") as? String ?? ) · EmbeddingGemma 2 by Google (Apache 2.0), run by llama.cpp (MIT)."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 519,
+    "text": "DigUp \\(Bundle.main.object(forInfoDictionaryKey: "
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 540,
+    "text": "Search your code"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 541,
+    "text": "Find code by what it does, or by a name in it: type code: in the search panel, as in “code: retry with backoff”. Code has an index of its own, and it never shows up in other searches."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 565,
+    "text": "No code folders yet. Add the folders that hold your projects."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 572,
+    "text": "Code folders"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 576,
+    "text": "Add Folders…"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 576,
+    "text": "Choose Code Folders…"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 582,
+    "text": "Open code in"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 588,
+    "text": "A result opens there at the line that matched. Space shows the whole file in Quick Look."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 593,
+    "text": "The code index keeps your code's text on this Mac, as the main index keeps your documents'. It skips what git ignores, vendored and generated code, data files, and anything that looks like a key or a password."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 602,
+    "text": "Turn Off Code Search…"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 611,
+    "text": "Turn Off"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 616,
+    "text": "The code index (\\(bytes(state.codeIndexSize))) is deleted. Turning it on again reads the code again."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 620,
+    "text": "Remove"
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 626,
+    "text": "Its \\(removing?.files.formatted() ?? ) code files leave the code index."
+  },
+  {
+    "file": "SettingsWindow.swift",
+    "line": 645,
+    "text": "Show in Finder"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 57,
+    "text": "DigUp"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 123,
+    "text": "DigUp — \\(model.statusLine)"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 135,
+    "text": "Update to DigUp \\(version)…"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 140,
+    "text": "Choose Folders to Search…"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 142,
+    "text": "Search…"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 148,
+    "text": "Open DigUp"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 152,
+    "text": "Pause Indexing"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 152,
+    "text": "Resume Indexing"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 158,
+    "text": "Download the Model"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 163,
+    "text": "Settings…"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 165,
+    "text": "Check for Updates…"
+  },
+  {
+    "file": "StatusMenu.swift",
+    "line": 167,
+    "text": "Quit DigUp"
+  }
+]
