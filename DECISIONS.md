@@ -171,7 +171,7 @@ Present here: `cursor`, `nvim`, `hx`. If none chosen, `xdg-open`.
 `graphical-session.target`), `troweld.socket`, a `.desktop` entry for `trowel-app`, AppStream metainfo, an icon, the shared QML
 module in `/usr/share/trowel/qml`, the app in `/usr/share/trowel/app`, and the **Omarchy shell plugin**
 in `/usr/share/trowel/omarchy-plugin`. First run (or `trowel setup`) symlinks the plugin into
-`~/.config/omarchy/plugins/io.github.saurabh7481.trowel` and runs `omarchy plugin enable io.github.saurabh7481.trowel`.
+`~/.config/omarchy/plugins/io.github.thakurious.trowel` and runs `omarchy plugin enable io.github.thakurious.trowel`.
 Also see `ROBUSTNESS.md` §2 for the units and §4 for uninstall. Model downloaded on first run to `~/.local/share/trowel/models`. Updates via
 `pacman`/`paru`. Login item = enabling the user unit.
 
@@ -210,6 +210,6 @@ upstream migrations portable verbatim.
 A trowel is the small hand tool archaeologists use to dig things up carefully, which is what this
 does to your files, and it nods to upstream DigUp without reusing its name. Identifiers: binaries
 `trowel` (CLI), `troweld` (daemon), `trowel-worker` (C++ embedder), `trowel-app` (QML windows);
-Omarchy plugin id `io.github.saurabh7481.trowel`; XDG dirs `~/.local/share/trowel`,
+Omarchy plugin id `io.github.thakurious.trowel`; XDG dirs `~/.local/share/trowel`,
 `~/.config/trowel`, `~/.cache/trowel`, `$XDG_RUNTIME_DIR/trowel/`. Upstream file and type names
 (`DigUpKit`, `Sources/digup`, …) keep their spelling when cited.
