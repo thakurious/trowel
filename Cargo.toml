@@ -24,3 +24,5 @@ unicode-normalization = "0.1"
 half = "2"
 memmap2 = "0.9"
 sha2 = "0.10"
+exif = { version = "0.5", package = "kamadak-exif" }
+walkdir = "2"

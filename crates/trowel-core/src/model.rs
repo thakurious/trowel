@@ -293,6 +293,17 @@ mod tests {
         assert_eq!(CodeQuery::text_of("CODE:"), Some("".into()));
         assert_eq!(CodeQuery::text_of("payment"), None);
         assert_eq!(CodeQuery::text_of(" code: x"), Some("x".into()));
+        assert_eq!(
+            CodeQuery::text_of("code: retry with backoff"),
+            Some("retry with backoff".into())
+        );
+        assert_eq!(
+            CodeQuery::text_of("  Code:useDebounce"),
+            Some("useDebounce".into())
+        );
+        assert_eq!(CodeQuery::text_of("code:"), Some("".into()));
+        assert_eq!(CodeQuery::text_of("code review notes"), None);
+        assert_eq!(CodeQuery::text_of("the code: 1234"), None);
     }
 
     #[test]
