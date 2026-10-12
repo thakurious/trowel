@@ -11,12 +11,14 @@ use crate::git_files::GitRepos;
 use crate::model::{Candidate, FileKind, IndexOptions};
 use crate::rules::{Classification, Rules};
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct CrawlReport {
     pub candidates: Vec<Candidate>,
     pub skipped: HashMap<String, usize>,
     pub skipped_folders: HashMap<String, usize>,
     pub datasets: HashMap<String, usize>,
+    /// Directories walked (F3 inotify budget).
+    pub directories: usize,
 }
 
 pub struct Crawler;
@@ -84,6 +86,7 @@ impl Crawler {
                     } else if Rules::is_project_root(path) {
                         project_roots.insert(path.to_string_lossy().into_owned());
                     }
+                    report.directories += 1;
                     continue;
                 }
                 if !meta.is_file() {
@@ -329,6 +332,34 @@ mod tests {
             .any(|c| c.path.ends_with("scratch.py")));
         let main = Crawler::crawl(std::slice::from_ref(&folder), &IndexOptions::default());
         assert!(main.candidates.is_empty());
+        let _ = fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn crawl_counts_directories_for_inotify_budget() {
+        let folder = std::env::temp_dir().join(format!(
+            "trowel-dirs-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(folder.join("a/b")).unwrap();
+        fs::write(folder.join("a/b/n.txt"), "the harbour").unwrap();
+        let report = Crawler::crawl(std::slice::from_ref(&folder), &IndexOptions::default());
+        assert!(
+            report.directories >= 3,
+            "directories={}",
+            report.directories
+        );
+        let estimate = crate::estimator::Estimator::estimate(
+            &report.candidates,
+            &IndexOptions::default(),
+            &crate::estimator::Costs::default(),
+            report.directories,
+        );
+        assert_eq!(estimate.directories, report.directories);
         let _ = fs::remove_dir_all(&folder);
     }
 }

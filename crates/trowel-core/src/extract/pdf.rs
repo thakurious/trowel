@@ -21,7 +21,7 @@ pub struct PdfExtractor;
 impl PdfExtractor {
     pub fn pages(
         url: &Path,
-        range: impl Fn(i32) -> std::ops::Range<i32>,
+        mut range: impl FnMut(i32) -> std::ops::Range<i32>,
         min_text: i32,
         render_pixels: i32,
         folder: &Path,
@@ -140,29 +140,24 @@ fn pdfinfo(path: &Path) -> Result<Info, ExtractError> {
 
 fn pdftotext_page(path: &Path, number: i32) -> Result<String, ExtractError> {
     let n = number.to_string();
-    let output = run_tool(
+    let src = abs_path(path);
+    // poppler: `pdftotext [opts] PDF-file [text-file]`. `-` as the PDF path
+    // (before `--`) is an empty stdin document. File then stdout `-`, after `--`
+    // so a leading dash in the path cannot look like a flag.
+    let output = run_argv(
         "pdftotext",
-        &["-layout", "-f", &n, "-l", &n, "-"],
-        &[path.as_os_str()],
+        &[
+            "-layout".as_ref(),
+            "-f".as_ref(),
+            n.as_ref(),
+            "-l".as_ref(),
+            n.as_ref(),
+            "--".as_ref(),
+            src.as_os_str(),
+            "-".as_ref(),
+        ],
         TIMEOUT_PDF_PAGE,
-    );
-    // pdftotext wants: pdftotext -layout -f N -l N file -
-    // so put the file before stdout "-".
-    let output = output.or_else(|_| {
-        run_argv(
-            "pdftotext",
-            &[
-                "-layout".as_ref(),
-                "-f".as_ref(),
-                n.as_ref(),
-                "-l".as_ref(),
-                n.as_ref(),
-                path.as_os_str(),
-                "-".as_ref(),
-            ],
-            TIMEOUT_PDF_PAGE,
-        )
-    })?;
+    )?;
     stdout_text(&output, "pdftotext")
 }
 
@@ -198,14 +193,30 @@ fn render_page(
         "page-{number}-{}-{number:06}.png",
         std::process::id()
     ));
-    // pdftoppm writes prefix-1.png or prefix-01.png
-    for candidate in [
+    // pdftoppm writes prefix-1.png, prefix-01.png, or prefix-001.png
+    let mut candidates = vec![
         PathBuf::from(format!("{}-{number}.png", prefix.display())),
+        PathBuf::from(format!("{}-{:02}.png", prefix.display(), number)),
+        PathBuf::from(format!("{}-{:03}.png", prefix.display(), number)),
         PathBuf::from(format!("{}-{:06}.png", prefix.display(), number)),
         PathBuf::from(format!("{}-1.png", prefix.display())),
-        out.clone(),
+        PathBuf::from(format!("{}-001.png", prefix.display())),
+        out,
         numbered,
-    ] {
+    ];
+    if let Some(stem) = prefix.file_name() {
+        let stem = stem.to_string_lossy();
+        if let Ok(entries) = std::fs::read_dir(folder) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.starts_with(&*stem) && name.ends_with(".png") {
+                    candidates.push(entry.path());
+                }
+            }
+        }
+    }
+    for candidate in candidates {
         if candidate.exists() {
             return Ok(candidate);
         }

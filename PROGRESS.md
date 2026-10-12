@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 2 on `main`. Phases 0–2 merged in order (PRs #1, #2, #3).
-- **Branch:** `main` @ `179eede` (merge of #3)
-- **Next step:** Phase 3 (`Indexer` + poison journal + `trowel index-service`) on `phase-3-pipeline`. fcitx5 stays on `keyboard-us`.
+- **Phase:** 3 on `main` (merge of `phase-3-pipeline`).
+- **Branch:** `main`
+- **Next step:** Phase 4 Searcher + vector `trowel eval` on `phase-4-search`. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
@@ -17,7 +17,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P0 panel spike (blur, focus, IME) | ✅ | Blur A/B + exclusive focus (earlier). Overlay IME: panel open → Mozc for ~1s → `wtype nihongo` → field shows **にほんご** with Mozc candidate popup (日本語 / 日本語と英語 / 日本語教育) over `trowel-panel`. Screenshot `/tmp/trowel-spike/panel-preedit.png`. English restored immediately (`keyboard-us`, DefaultIM unchanged, panel dismissed). |
 | P1 unit tests + protocol frozen + `--mock` | ✅ | `cargo test --workspace`: trowel-core **31/31**, trowel-proto **5/5**, proto_replay **3/3** (golden transcripts, `too_large`, slow-reader keeps responses / drops stale status). FTS tokenizer holds কুমির* / المكتبة. Schema 1→5 migrates. `python3 scripts/extract-strings.py` → **202** strings in `ui/strings.json`. |
 | P2 extractors + traps | ✅ | `cargo test --workspace`: trowel-core **70/70**, trowel-proto **5/5**, proto_replay **3/3**. Traps classify (TS vs MPEG-TS, project screenshots-only, leading-dash / newline / 255-byte / invalid-UTF-8 names, 0-byte MP4, symlink loop, truncated PDF and fake docx fail with a reason). `sleep 30` killed in 400 ms. `trowel estimate --json` over a Linux-built testbed: 22 files, dataset 400 skipped, 3 screenshots, git code crawl keeps tracked+untracked-not-ignored only. No Mac in this environment — counts are Rules-faithful Linux goldens, not a numeric macOS dump. |
-| P3 pipeline + crash/resume | ⬜ | |
+| P3 pipeline + crash/resume | ✅ | `cargo test --workspace`: trowel-core **71/71** + long_files **13/13**, trowel-cli pipeline **3/3**, proto **5/5**, proto_replay **3/3**. `scripts/crash-resume.sh`: vectors **10→10** after `kill -9` ×50, no re-embed of finished files. Poison n≥2 → `Couldn't be read safely`. Touch one file → `changed=1`. Keyword search finds the indexed note. Vector `Searcher` / float16 LongFilesTest wait Phase 4. |
 | P4 evals meet TESTING §3 | ⬜ | |
 | P5 daemon + robustness + doctor | ⬜ | |
 | P6 UI checklist + budgets + visual QA | ⬜ | |
@@ -39,13 +39,14 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **fcitx5:** running (`fcitx5 --disable notificationitem`). `fcitx5-mozc` installed (`/usr/lib/fcitx5/fcitx5-mozc.so`, IM unique name `mozc`). Adding an IM by rewriting `~/.config/fcitx5/profile` while fcitx is running is overwritten on exit; use dbus `SetInputMethodGroupInfo`. **DefaultIM is `keyboard-us` again** (human asked to revert to English). Mozc remains a second item in the Default group. State=1 inactive.
 - **qmllint** is `/usr/lib/qt6/bin/qmllint`, not on `PATH`. Plugin QML imports `qs.Commons` / `qs.Ui` which only resolve inside omarchy-shell; standalone qmllint warns `Failed to import` + `Unqualified access` on `Color`/`Style`. Runtime is fine.
 - **CI** cannot run the vector-parity gate (no Arc 140V on GitHub-hosted runners). Documented in `.github/workflows/ci.yml`.
+- **pdftotext argv:** `pdftotext -layout -f N -l N - -- FILE` treats `-` as the PDF and errors `Document stream is empty`. Correct: `pdftotext -layout -f N -l N -- FILE -` (file then stdout `-`, after `--`).
+- **F5c vs later steps:** `linux_attempts` is per file. Overlapping prepare of the next step of the *same* long file must not increment `n` (kept in `Indexer.in_flight`); otherwise `finishLongFiles` poisons a healthy PDF/doc after two steps.
 
 ## Open questions for the human
 
-1. **Phase 0 PR:** https://github.com/thakurious/trowel/pull/1 — review/merge when ready. Do not merge later phases into it.
-2. **Phase 1 PR:** https://github.com/thakurious/trowel/pull/2 — stacked on Phase 0; targets `main`.
-3. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
-4. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
+1. **Phase 3 PR** merged to `main`. Next is Phase 4 (`Searcher` + evals).
+2. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
+3. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
 
 ## Desktop changes to revert
 
@@ -80,6 +81,48 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-12 — Phase 3: Indexer, LongFilesTests, CLI, index-service
+
+On `phase-3-pipeline`. Not committed.
+
+- `Indexer`: sync (path/inode/size/mtime/kind, move-by-inode, vanished roots kept), prepare/commit overlap on a real thread, image batches of 8, `finishLongFiles`, fingerprint `checkModel`/`adopt`/`reset_all`, F5c poison journal (`linux_attempts`, n≥2 → failed "Couldn't be read safely").
+- `FakeEmbedder` + `SharedEmbedder`. Scratch `$TMPDIR/trowel-<pid>/`.
+- `LongFilesTests` ported except `float16VectorsScoreAcrossBlocks` (needs Searcher, Phase 4). Linux `make_pdf` (Helvetica, wrapped Tj lines so pdftotext keeps ≥200 chars).
+- Estimator/crawl `directories` for F3.
+- CLI: `estimate | index | search | status | eval | index-service` + `--fake` / `--json` / `--index`. Search and eval are **keyword-only** until Phase 4. `trowel-worker` JSON client in `crates/trowel-cli/src/worker.rs`.
+- `pdftotext` argv fix (see Verified facts). `pdftoppm` output also accepts `prefix-001.png`.
+
+#### Evidence
+
+```
+$ cargo fmt --all -- --check
+# (clean)
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.35s
+
+$ cargo test --workspace --offline -- --test-threads=1
+     Running tests/pipeline.rs
+test result: ok. 3 passed
+     Running unittests src/lib.rs (trowel-core)
+test result: ok. 71 passed
+     Running tests/long_files.rs
+test result: ok. 13 passed
+     Running unittests src/lib.rs (trowel-proto)
+test result: ok. 5 passed
+     Running tests/proto_replay.rs
+test result: ok. 3 passed
+
+$ bash scripts/crash-resume.sh
+crash-resume ok: vectors=10 after-kills=10 final=10 rounds=50 lost_check=0
+```
+
+Long-files names that passed: `long_pdf_is_read_in_steps`, `stopping_between_steps_loses_nothing`, `a_changed_file_starts_over`, `long_document_goes_on_where_it_stopped`, `digits_get_keyword_search_only`, `machine_made_giants_stop_at_the_cap`, `old_indexes_finish_what_they_cut`, `estimates_count_the_rest`, plus move-by-inode, touch-one-file, poison, vanished-root.
+
+#### Exact next step
+
+Branch `phase-4-search` from `main` and port `Searcher` + vector `trowel eval`.
 
 ### 2026-10-12 — Phases 0–2 merged to main
 

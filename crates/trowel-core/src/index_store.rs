@@ -10,6 +10,16 @@ use crate::model::{Candidate, FileKind, IndexOptions, Modality, SegmentKind};
 use crate::search_text::{PageTextProblem, SearchText};
 use crate::vectors::Vectors;
 
+/// `upstream/Sources/DigUpKit/IndexStore.swift:410`
+#[derive(Debug, Clone, Default)]
+pub struct IndexCounts {
+    pub by_kind_and_state: BTreeMap<String, BTreeMap<String, usize>>,
+    pub vectors: i64,
+    pub segments: i64,
+    pub unfinished: i64,
+    pub left: i64,
+}
+
 /// A file as the index knows it.
 /// `upstream/Sources/DigUpKit/IndexStore.swift:4`
 #[derive(Debug, Clone)]
@@ -397,6 +407,7 @@ impl IndexStore {
 
     pub fn requeue_as(&self, id: i64, file: &Candidate) -> Result<(), DbError> {
         self.delete_segments(id, true)?;
+        self.clear_attempts(id)?;
         self.db.run(
             "
             UPDATE files SET kind = ?, size = ?, mtime = ?, inode = ?, device = ?, state = 'pending', detail = NULL,
@@ -531,6 +542,21 @@ impl IndexStore {
         Ok(count)
     }
 
+    pub fn unfinished(&self) -> Result<Vec<FileRecord>, DbError> {
+        let sql = format!(
+            "SELECT {} FROM files WHERE state = 'partial'{} ORDER BY {}, mtime DESC",
+            Self::FILE_COLUMNS,
+            self.scope_sql,
+            FileKind::INDEXING_ORDER_SQL
+        );
+        let mut out = Vec::new();
+        self.db.query(&sql, &self.scope_values, |row| {
+            out.push(Self::record(row));
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
     pub fn unfinished_count(&self) -> Result<(i64, i64), DbError> {
         let mut files = 0;
         let mut left = 0;
@@ -663,6 +689,139 @@ impl IndexStore {
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    pub fn info(&self, id: i64) -> Result<BTreeMap<String, String>, DbError> {
+        let mut info = BTreeMap::new();
+        self.db.query(
+            "SELECT info FROM files WHERE id = ?",
+            &[SqlValue::Int(id)],
+            |row| {
+                if let Some(json) = row.text(0) {
+                    if let Ok(map) = serde_json::from_str::<BTreeMap<String, String>>(&json) {
+                        info = map;
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        Ok(info)
+    }
+
+    pub fn last_place(&self, id: i64) -> Result<Option<i32>, DbError> {
+        let mut last = None;
+        self.db.query(
+            "SELECT MAX(loc) FROM segments WHERE file = ? AND kind IN ('page', 'page_image', 'chunk')",
+            &[SqlValue::Int(id)],
+            |row| {
+                last = if row.is_null(0) {
+                    None
+                } else {
+                    Some(row.double(0) as i32)
+                };
+                Ok(())
+            },
+        )?;
+        Ok(last)
+    }
+
+    /// Queue every file again and forget the fingerprint. `upstream/Sources/DigUpKit/IndexStore.swift:293`
+    pub fn reset_all(&self) -> Result<(), DbError> {
+        self.db.transaction(|| {
+            self.db.execute(
+                "DELETE FROM fts WHERE rowid IN (SELECT id FROM segments WHERE kind != 'name')",
+            )?;
+            self.db
+                .execute("DELETE FROM segments WHERE kind != 'name'")?;
+            self.db.execute(
+                "UPDATE files SET state = 'pending', detail = NULL, info = NULL, indexed_at = NULL",
+            )?;
+            self.set_meta("fingerprint", None)?;
+            Ok(())
+        })
+    }
+
+    /// F5c: increment the poison-file journal and stamp `detail='attempt:<n>'`, committed
+    /// before extract so a crash mid-file is visible on the next start.
+    pub fn begin_attempt(&self, id: i64) -> Result<i64, DbError> {
+        self.db.transaction(|| {
+            let mut n = 0i64;
+            self.db.query(
+                "SELECT n FROM linux_attempts WHERE file_id = ?",
+                &[SqlValue::Int(id)],
+                |row| {
+                    n = row.int(0);
+                    Ok(())
+                },
+            )?;
+            n += 1;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            self.db.run(
+                "
+                INSERT INTO linux_attempts(file_id, n, last_at) VALUES(?, ?, ?)
+                ON CONFLICT(file_id) DO UPDATE SET n = excluded.n, last_at = excluded.last_at
+                ",
+                &[SqlValue::Int(id), SqlValue::Int(n), SqlValue::Double(now)],
+            )?;
+            self.db.run(
+                "UPDATE files SET detail = ? WHERE id = ?",
+                &[SqlValue::Text(format!("attempt:{n}")), SqlValue::Int(id)],
+            )?;
+            Ok(n)
+        })
+    }
+
+    pub fn clear_attempts(&self, id: i64) -> Result<(), DbError> {
+        self.db.run(
+            "DELETE FROM linux_attempts WHERE file_id = ?",
+            &[SqlValue::Int(id)],
+        )
+    }
+
+    pub fn counts(&self) -> Result<IndexCounts, DbError> {
+        let mut counts = IndexCounts::default();
+        self.db.query(
+            &format!(
+                "SELECT kind, state, COUNT(*) FROM files WHERE 1{} GROUP BY kind, state",
+                self.scope_sql
+            ),
+            &self.scope_values,
+            |row| {
+                let kind = row.text(0).unwrap_or_else(|| "?".into());
+                let state = row.text(1).unwrap_or_else(|| "?".into());
+                let n = row.int(2) as usize;
+                counts
+                    .by_kind_and_state
+                    .entry(kind)
+                    .or_default()
+                    .insert(state, n);
+                Ok(())
+            },
+        )?;
+        let (unfinished, left) = self.unfinished_count()?;
+        counts.unfinished = unfinished;
+        counts.left = left;
+        let in_scope = if self.scope.is_none() {
+            String::new()
+        } else {
+            format!(
+                " AND file IN (SELECT id FROM files WHERE 1{})",
+                self.scope_sql
+            )
+        };
+        self.db.query(
+            &format!("SELECT COUNT(*), COUNT(vec) FROM segments WHERE kind != 'name'{in_scope}"),
+            &self.scope_values,
+            |row| {
+                counts.segments = row.int(0);
+                counts.vectors = row.int(1);
+                Ok(())
+            },
+        )?;
+        Ok(counts)
     }
 
     pub fn finish(
