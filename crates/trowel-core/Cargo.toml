@@ -13,3 +13,5 @@ unicode-normalization = { workspace = true }
 half = { workspace = true }
 memmap2 = { workspace = true }
 sha2 = { workspace = true }
+exif = { workspace = true }
+walkdir = { workspace = true }

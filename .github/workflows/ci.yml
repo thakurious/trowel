@@ -14,7 +14,8 @@ jobs:
           submodules: recursive
       - name: Install toolchain
         run: |
-          pacman -Syu --noconfirm --needed git base-devel cmake ninja rustup
+          pacman -Syu --noconfirm --needed git base-devel cmake ninja rustup \
+            libvips tesseract tesseract-data-eng poppler ffmpeg unzip
           rustup default stable
           rustup component add rustfmt clippy
       - name: fmt
