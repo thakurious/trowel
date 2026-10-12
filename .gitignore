@@ -1,9 +1,11 @@
 /target/
 /testbed/out/
 /cpp/build/
+/cpp/build-*/
 /cpp/llama/src/
 *.gguf
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
 .DS_Store
+.serena/

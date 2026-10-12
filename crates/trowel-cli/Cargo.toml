@@ -1,0 +1,17 @@
+[package]
+name = "trowel-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "trowel"
+path = "src/main.rs"
+
+[dependencies]
+trowel-core = { path = "../trowel-core" }
+base64 = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
