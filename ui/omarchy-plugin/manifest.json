@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.thakurious.trowel-dev",
+  "name": "Trowel (dev spike)",
+  "version": "0.0.0",
+  "author": "thakurious",
+  "description": "Phase 0 hello-world panel: blur, exclusive keyboard focus, fcitx5 pre-edit.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Panel.qml"
+  }
+}

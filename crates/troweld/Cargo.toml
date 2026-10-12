@@ -1,0 +1,12 @@
+[package]
+name = "troweld"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "troweld"
+path = "src/main.rs"
+
+[dependencies]
+trowel-proto = { path = "../trowel-proto" }
