@@ -1,0 +1,90 @@
+{
+  "state": "ready",
+  "status": {
+    "phase": "idle",
+    "main": {"done": 120, "total": 900, "current": "~/Pictures/x.png"},
+    "code": {"done": 0, "total": 0},
+    "missing_roots": [],
+    "unreadable_roots": [],
+    "counts": {
+      "screenshots": 120,
+      "images": 800,
+      "documents": 44,
+      "video": 3,
+      "audio": 9,
+      "code": 0
+    },
+    "worker": "ready",
+    "vectors_loaded": true
+  },
+  "model_status": {
+    "present": true,
+    "verified": true,
+    "bytes": 864676480,
+    "total": 864676480,
+    "downloading": false
+  },
+  "searches": [
+    {
+      "match": "refund",
+      "meaning": "skipped",
+      "groups": [
+        {
+          "kind": "documents",
+          "title": "Documents",
+          "total": 1,
+          "rows": [
+            {
+              "id": "/home/u/Documents/tax.pdf",
+              "name": "tax.pdf",
+              "folder": "~/Documents",
+              "kind": "pdf",
+              "segment": "page",
+              "segment_id": 812,
+              "loc": 3,
+              "place": "p. 3",
+              "excerpt": "… the «refund» was …",
+              "matched_meaning": true,
+              "matched_words": false,
+              "reason": "Similar meaning",
+              "modified": 1760000000,
+              "size": 182233,
+              "info": {},
+              "thumb": "thumb://812@132"
+            }
+          ]
+        }
+      ],
+      "weaker": []
+    },
+    {
+      "match": "notes",
+      "meaning": "skipped",
+      "groups": [
+        {
+          "kind": "documents",
+          "title": "Documents",
+          "total": 1,
+          "rows": [
+            {
+              "id": {"b64": "L3RtcC9ub3Rlc/8udHh0", "display": "/tmp/notes\ufffd.txt"},
+              "name": "notes\ufffd.txt",
+              "folder": "/tmp",
+              "kind": "txt",
+              "segment": "file",
+              "segment_id": 1,
+              "excerpt": "meeting notes",
+              "matched_meaning": false,
+              "matched_words": true,
+              "info": {}
+            }
+          ]
+        }
+      ],
+      "weaker": []
+    }
+  ],
+  "segments": {
+    "812": "the refund was processed last Tuesday"
+  }
+}

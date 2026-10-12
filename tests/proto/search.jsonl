@@ -1,0 +1,4 @@
+{"send": {"id": 1, "op": "hello", "protocol": 1, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 1, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr"], "state": "ready"}}
+{"send": {"id": 2, "op": "search", "text": "refund", "mode": "keyword", "prefix_last": true, "gen": 1}}
+{"recv": {"id": 2, "ok": true, "gen": 1, "groups": [{"kind": "documents", "title": "Documents", "total": 1, "rows": [{"id": "/home/u/Documents/tax.pdf", "name": "tax.pdf", "folder": "~/Documents", "kind": "pdf", "segment": "page", "segment_id": 812, "loc": 3.0, "place": "p. 3", "excerpt": "… the «refund» was …", "matched_meaning": true, "matched_words": false, "reason": "Similar meaning", "modified": 1760000000, "size": 182233, "info": {}, "thumb": "thumb://812@132"}]}], "weaker": [], "took_ms": 0, "meaning": "skipped"}}

@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 1 in progress (core model/DB/SearchText/IndexStore green; protocol freeze + `--mock` not started)
+- **Phase:** 1 complete (core + protocol freeze + `--mock` goldens + strings).
 - **Branch:** `phase-1-core` (from `phase-0-runtime` @ `cceb3e0`)
-- **Next step:** Freeze `PROTOCOL.md` v1 as `trowel-proto` types, golden transcripts, and `troweld --mock`. Then strings extraction. fcitx5 stays on `keyboard-us`.
+- **Next step:** PR `phase-1-core` → `main` (do not merge into Phase 0 PR #1). Then `phase-2-extractors`. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
@@ -15,7 +15,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P0 vector parity ≥ 0.999 (Vulkan) | ✅ | `./scripts/parity.sh vulkan` worst=`frame-70` cosine=**0.999975**. Full output in session log. |
 | P0 vector parity ≥ 0.999 (CPU) | ✅ | `./scripts/parity.sh cpu` worst=`speech` cosine=**0.999740**. Full output in session log. |
 | P0 panel spike (blur, focus, IME) | ✅ | Blur A/B + exclusive focus (earlier). Overlay IME: panel open → Mozc for ~1s → `wtype nihongo` → field shows **にほんご** with Mozc candidate popup (日本語 / 日本語と英語 / 日本語教育) over `trowel-panel`. Screenshot `/tmp/trowel-spike/panel-preedit.png`. English restored immediately (`keyboard-us`, DefaultIM unchanged, panel dismissed). |
-| P1 unit tests + protocol frozen + `--mock` | 🟨 | Core unit tests 31/31 (`cargo test -p trowel-core`). FTS tokenizer holds কুমির* / المكتبة. Schema 1→5 migrates. Protocol + `--mock` still stubbed. |
+| P1 unit tests + protocol frozen + `--mock` | ✅ | `cargo test --workspace`: trowel-core **31/31**, trowel-proto **5/5**, proto_replay **3/3** (golden transcripts, `too_large`, slow-reader keeps responses / drops stale status). FTS tokenizer holds কুমির* / المكتبة. Schema 1→5 migrates. `python3 scripts/extract-strings.py` → **202** strings in `ui/strings.json`. |
 | P2 extractors + traps | ⬜ | |
 | P3 pipeline + crash/resume | ⬜ | |
 | P4 evals meet TESTING §3 | ⬜ | |
@@ -80,12 +80,46 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
 
 ## Session log
 
+### 2026-10-12 — Phase 1 protocol freeze, `--mock`, strings
+
+Froze `PROTOCOL.md` v1 as `crates/trowel-proto` serde types (envelope, ops, PathValue UTF-8-or-`{b64,display}`, closed error codes, search groups/rows, status, config). Default search `limit` is 60; unknown fields ignored.
+
+`troweld --mock`: Unix JSON-lines, max line 4 MiB → `{"error":"too_large"}` and close, canned searches from fixture JSON, `--latency-ms` for in-flight search, `gen` supersede, outbound queue cap 256 dropping only stale `status` events (responses kept). `SO_PEERCRED` skipped (Phase 5). Socket parent chmod only when creating a new dir — never chmod `/tmp`.
+
+Golden transcripts in `tests/proto/*.jsonl` (hello, version mismatch, first-not-hello, unknown_op, search, superseded gen, non-UTF-8 path + copy_path, subscribe/status, cancel). Replay: `cargo test -p troweld --test proto_replay`.
+
+Strings: `scripts/extract-strings.py` walks `upstream/Sources/DigUpApp/*.swift` UI calls (`Text`/`Button`/`Label`/…, `ActionMenuItem`, `.help`, menus) and writes `ui/strings.json` with `file`/`line`/`text`. Adjacent Swift literals are concatenated. **202** strings.
+
+#### Evidence
+
+```
+$ cargo fmt --all -- --check
+# (clean)
+
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.33s
+
+$ cargo test --workspace
+# trowel-core: 31 passed
+# trowel-proto: 5 passed (hello roundtrip, limit=60, unknown fields, PathValue utf8 + b64)
+# troweld proto_replay: 3 passed (golden_transcripts, too_large_closes_the_connection, slow_reader_keeps_responses)
+
+$ python3 scripts/extract-strings.py
+wrote 202 strings to ui/strings.json
+```
+
+`troweld` without `--mock` still exits 2 (Phase 5). Desktop/IME untouched.
+
+#### Exact next step
+
+This commit closes Phase 1 on `phase-1-core`. Open a PR to `main` (do not merge into Phase 0 PR #1). Phase 2 extractors go on `phase-2-extractors`. Leave IME on English.
+
 ### 2026-10-12 — Phase 0 committed; Phase 1 core started
 
 - Committed `cceb3e0` on `phase-0-runtime`, PR https://github.com/thakurious/trowel/pull/1
 - Branched `phase-1-core`. Ported Database, Model (`FileKind`/`SegmentKind`/`Modality`/`IndexOptions`/`CodeQuery`), SearchText (+ Landmark, PageTextProblem), FolderSelection, Vectors/VectorStorage (`blockRows=1024`), IndexStore schema v0–v5 + FTS tokenizer + `linux_raw_paths`/`linux_attempts` (D16, no `user_version` bump).
 - `cargo test -p trowel-core`: **31 passed**, including prune/scope, schema 1→5, Bengali/Arabic FTS, SearchText normalize/matches/snippet, FolderSelection, ModelFiles SHA-256.
-- Not yet: `Searcher` (Phase 4; `ftsQuery`/`kindHints` tests wait), Indexer.sync ejected-drive test (Phase 3), `troweld --mock`, strings extraction.
+- Not yet: `Searcher` (Phase 4; `ftsQuery`/`kindHints` tests wait), Indexer.sync ejected-drive test (Phase 3). `--mock` and strings extraction landed later the same day (uncommitted until asked).
 - `cargo fmt` + `clippy -D warnings` green.
 
 ### 2026-10-12 — Phase 0 scaffold, llama.cpp worker, vector parity, panel spike

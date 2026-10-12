@@ -489,6 +489,7 @@ dependencies = [
 name = "trowel-proto"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "serde",
  "serde_json",
 ]
@@ -497,6 +498,9 @@ dependencies = [
 name = "troweld"
 version = "0.1.0"
 dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
  "trowel-proto",
 ]
 

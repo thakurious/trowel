@@ -10,3 +10,10 @@ path = "src/main.rs"
 
 [dependencies]
 trowel-proto = { path = "../trowel-proto" }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+trowel-proto = { path = "../trowel-proto" }
