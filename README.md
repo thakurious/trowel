@@ -8,9 +8,28 @@ file search built on Google DeepMind's **EmbeddingGemma 2** (text + images + aud
 Apache-2.0) — to Linux, targeting **Omarchy (Arch + Hyprland + Quickshell)** on this machine:
 **Intel Core Ultra 7 258V (Lunar Lake), Arc 140V iGPU, 30 GB RAM, Wayland**.
 
-This folder is the deliverable from a full read of the DigUp codebase (all of `Sources/DigUpKit`,
-`Sources/LlamaRuntime`, `worker/`, `Sources/digup/`, `Sources/DigUpApp/`, `scripts/`, `evals/`,
-`Tests/`, `Package.swift`, build/packaging). Nothing here has been *built* yet — this is the plan.
+**You do not need a Mac.** Trowel runs on Omarchy (Arch + Hyprland + Quickshell). The product
+name is Trowel (DECISIONS D17); DigUp is the upstream macOS app this port follows.
+
+## Use it
+
+```bash
+# from this checkout, after a workspace build:
+export PATH="$PWD/target/debug:$PATH"
+trowel setup --from-tree "$PWD"
+```
+
+That installs the Omarchy plugin (`io.github.thakurious.trowel`), the Super+D bind, and
+`troweld.socket` for your user. **Restart omarchy-shell once** (or log out), then press
+**Super+D**. First open is onboarding; indexing starts after you pick folders.
+
+```bash
+trowel doctor              # why isn't it working
+trowel uninstall           # plugin + units
+trowel uninstall --purge   # also deletes ~/.local/share/trowel and config
+```
+
+Packaged install (Phase 7 PKGBUILD): `makepkg -si` then `trowel setup`.
 
 ## Documents
 

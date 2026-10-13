@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
-import "../qml/Trowel"
+import "Trowel"
 
 // trowel-app: search, Quick Look, Settings, Onboarding. Separate process
 // so a bug here cannot take down omarchy-shell (UI-DESIGN §1 / F18).
@@ -27,6 +27,7 @@ ShellRoot {
 
     Loader {
       anchors.fill: parent
+      focus: true
       sourceComponent: {
         if (surface === "onboarding" || (client.config && client.config.onboarded === false && surface === "search"))
           return onboardingComp

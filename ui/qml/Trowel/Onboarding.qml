@@ -1,21 +1,40 @@
 import QtQuick
 import Quickshell
-import "../qml/Trowel"
 
+// First-run wizard. Product name is Trowel (DECISIONS D17), not upstream DigUp.
 Item {
   id: root
   required property var client
   property int step: 0
+  property var selectedFolders: ["~/Desktop", "~/Documents", "~/Downloads", "~/Pictures"]
   readonly property var steps: ["welcome", "folders", "code", "shortcut", "ready"]
   signal finished
-  width: 560
-  height: 640
+  implicitWidth: 560
+  implicitHeight: col.implicitHeight + 40
+  focus: true
+
+  Keys.onPressed: function (event) {
+    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+      root.next()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) {
+      if (root.step > 0) {
+        root.back()
+        event.accepted = true
+      }
+    }
+  }
+
+  Component.onCompleted: {
+    selectedFolders = xdgFolders()
+    root.forceActiveFocus()
+  }
 
   function next() {
     if (step === 0)
       client.modelDownload("start")
     if (step === 1) {
-      var roots = xdgFolders()
+      var roots = selectedFolders.length ? selectedFolders : xdgFolders()
       if (roots.length)
         client.configSet({
             "roots": roots
@@ -43,10 +62,34 @@ Item {
     return ["~/Desktop", "~/Documents", "~/Downloads", "~/Pictures"]
   }
 
+  function folderSelected(path) {
+    for (var i = 0; i < selectedFolders.length; i++) {
+      if (selectedFolders[i] === path)
+        return true
+    }
+    return false
+  }
+
+  function toggleFolder(path) {
+    var next = []
+    var found = false
+    for (var i = 0; i < selectedFolders.length; i++) {
+      if (selectedFolders[i] === path)
+        found = true
+      else
+        next.push(selectedFolders[i])
+    }
+    if (!found)
+      next.push(path)
+    selectedFolders = next
+  }
+
   Column {
-    anchors.fill: parent
-    anchors.margins: 24
-    spacing: 16
+    id: col
+    width: parent.width - 40
+    x: 20
+    y: 20
+    spacing: 12
 
     Text {
       text: "Step " + (root.step + 1) + " of " + root.steps.length
@@ -57,9 +100,10 @@ Item {
     Column {
       visible: root.step === 0
       width: parent.width
-      spacing: 10
+      height: visible ? implicitHeight : 0
+      spacing: 8
       Text {
-        text: "DigUp"
+        text: "Trowel"
         color: Theme.brandAmber
         font.pixelSize: Theme.querySize
         font.weight: Font.DemiBold
@@ -73,7 +117,7 @@ Item {
       Text {
         width: parent.width
         wrapMode: Text.Wrap
-        text: "Everything is indexed and searched on this Mac. DigUp downloads its AI model (865 MB) once; after that it works offline, and nothing you index ever leaves your Mac."
+        text: "Everything is indexed and searched on this computer. Trowel downloads its AI model (865 MB) once; after that it works offline, and nothing you index ever leaves this machine."
         color: Theme.secondary
       }
     }
@@ -81,6 +125,7 @@ Item {
     Column {
       visible: root.step === 1
       width: parent.width
+      height: visible ? implicitHeight : 0
       spacing: 8
       Text {
         text: "Choose folders to search"
@@ -88,7 +133,7 @@ Item {
         font.weight: Font.DemiBold
       }
       Text {
-        text: "DigUp only looks where you tell it to."
+        text: "Trowel only looks where you tell it to."
         color: Theme.secondary
       }
       Repeater {
@@ -96,7 +141,8 @@ Item {
         delegate: FolderRow {
           width: parent.width
           path: modelData
-          checked: true
+          checked: root.folderSelected(modelData)
+          onToggled: root.toggleFolder(modelData)
         }
       }
     }
@@ -104,6 +150,7 @@ Item {
     Column {
       visible: root.step === 2
       width: parent.width
+      height: visible ? implicitHeight : 0
       spacing: 8
       Text {
         width: parent.width
@@ -115,7 +162,7 @@ Item {
       Text {
         width: parent.width
         wrapMode: Text.Wrap
-        text: "DigUp can find code by what it does, in the folders you pick. Code gets an index of its own and never shows up in other searches."
+        text: "Trowel can find code by what it does, in the folders you pick. Code gets an index of its own and never shows up in other searches."
         color: Theme.secondary
       }
     }
@@ -123,6 +170,7 @@ Item {
     Column {
       visible: root.step === 3
       width: parent.width
+      height: visible ? implicitHeight : 0
       spacing: 8
       Text {
         text: "That's it. It works from any app."
@@ -138,11 +186,18 @@ Item {
         font.pixelSize: Theme.groupSize
         font.weight: Font.DemiBold
       }
+      Text {
+        width: parent.width
+        wrapMode: Text.Wrap
+        text: "Press Super+D from anywhere. Esc closes the panel."
+        color: Theme.secondary
+      }
     }
 
     Column {
       visible: root.step === 4
       width: parent.width
+      height: visible ? implicitHeight : 0
       spacing: 8
       Text {
         text: "You're all set"
@@ -153,7 +208,7 @@ Item {
       Text {
         width: parent.width
         wrapMode: Text.Wrap
-        text: "DigUp lives in the menu bar, which shows how indexing is going."
+        text: "Trowel lives in the status bar, which shows how indexing is going. Super+D opens search."
         color: Theme.secondary
       }
       Text {
@@ -172,22 +227,26 @@ Item {
     }
 
     Row {
-      spacing: 12
+      spacing: 16
       Text {
         visible: root.step > 0
         text: "Back"
         color: Theme.accent
+        font.pixelSize: Theme.rowTitleSize
         MouseArea {
           anchors.fill: parent
+          anchors.margins: -10
           onClicked: root.back()
         }
       }
       Text {
         text: root.step === root.steps.length - 1 ? "You're all set" : "Continue"
         color: Theme.accent
+        font.pixelSize: Theme.rowTitleSize
         font.weight: Font.DemiBold
         MouseArea {
           anchors.fill: parent
+          anchors.margins: -10
           onClicked: root.next()
         }
       }

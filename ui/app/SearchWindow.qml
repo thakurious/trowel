@@ -1,5 +1,5 @@
 import QtQuick
-import "../qml/Trowel"
+import "Trowel"
 
 Item {
   id: root
@@ -162,18 +162,18 @@ Item {
           cacheBuffer: 240
           delegate: Item {
             width: ListView.view.width
-            height: rowType === "row" ? (session.codeMode ? 46 : 176) : (rowType === "header" ? 28 : 26)
+            height: model.rowType === "row" ? (session.codeMode ? 46 : 176) : (model.rowType === "header" ? 28 : 26)
             GroupHeader {
-              visible: rowType === "header"
-              title: title
+              visible: model.rowType === "header"
+              title: model.title
               width: parent.width
             }
             WeakerFold {
-              visible: rowType === "fold"
+              visible: model.rowType === "fold"
               width: parent.width
-              count: count
+              count: model.count
               expanded: client.showWeaker
-              selected: session.selection === rowId
+              selected: session.selection === model.rowId
               onToggled: {
                 client.showWeaker = !client.showWeaker
                 session.selection = client.weakerId
@@ -181,12 +181,12 @@ Item {
               }
             }
             ResultRow {
-              visible: rowType === "row"
+              visible: model.rowType === "row"
               width: parent.width
               row: model
-              selected: session.selection === rowId
+              selected: session.selection === model.rowId
               onClicked: {
-                session.selection = rowId
+                session.selection = model.rowId
                 session.navigated = true
                 session.pickSelected()
               }

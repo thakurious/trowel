@@ -1,5 +1,5 @@
 import QtQuick
-import "../qml/Trowel"
+import "Trowel"
 
 // UI-DESIGN §7: borderless, 80 % of the monitor, opens at the matched place.
 Item {

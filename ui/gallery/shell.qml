@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell
-import "../qml/Trowel"
+import "Trowel"
 
 ShellRoot {
   FloatingWindow {

@@ -21,9 +21,11 @@ Verified environment: omarchy-shell (Quickshell 0.3.1, Qt 6.11) running from
 | Non-Omarchy fallback | `quickshell -p /usr/share/trowel/panel` runs the panel plugin's QML standalone, with a theme shim | So the panel still works on plain Hyprland or Sway. This is secondary; do not let it constrain the Omarchy design. |
 
 Shared code: `ui/qml/Trowel/` is a QML module with `Client.qml` (the protocol client), `Theme.qml`,
-`Motion.qml`, and the components in §6. It is installed once and imported by both hosts. The panel
-plugin imports the module from `/usr/share/trowel/qml` (installed by the package), and the plugin
-directory itself holds only `manifest.json` plus thin entry points.
+`Motion.qml`, and the components in §6. It is installed once and imported by both hosts. Quickshell
+0.3.1's qmlscanner will not register types from a path **outside** the `-p` config folder (relative
+`import "../qml/Trowel"` fails with `Client is not a type`). Each host therefore has a `Trowel`
+symlink to `../qml/Trowel` and uses `import "Trowel"`. The packaged layout can still install the
+module under `/usr/share/trowel/qml` once Phase 7 sets an import path.
 
 > Rule: **QML never does work.** No file I/O, no image decoding without `asynchronous: true`, no
 > sorting or filtering in JS, no `XMLHttpRequest`. The UI renders what `troweld` sends (PROTOCOL.md).
@@ -256,9 +258,9 @@ cannot import those, so it carries look-alikes built on the same tokens.
   opening at the matched place (PDF page scrolled to the band, video seeked to the moment and
   paused, code scrolled to the focus line). `Space`/`Esc` close it and `←`/`→` move through results.
   Sushi is only a fallback for kinds we can't render.
-- **Settings** (`SettingsWindow.swift`): tabs General / Folders / Code / Storage. **Copy is
-  string-for-string from upstream**; extract every user-visible string into `ui/strings.json` in
-  Phase 6.0 so this is mechanical. General covers the hotkey recorder, start at login (systemd
+- **Settings** (`SettingsWindow.swift`): tabs General / Folders / Code / Storage. Layout and
+  meaning follow upstream; **user-visible product name is Trowel** (DECISIONS D17), not DigUp,
+  and Linux wording replaces “this Mac” / macOS. Extract remaining copy into `ui/strings.json`. General covers the hotkey recorder, start at login (systemd
   enable), index on battery (`AppSettings.batteryTitle/Detail`) and about. Folders shows per-root
   status (missing/unreadable), Add, and Skip. Code covers folders, the editor picker and turning it
   off. Storage shows the model, index size, locations, "Delete index" and privacy copy.

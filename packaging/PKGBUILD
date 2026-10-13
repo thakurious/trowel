@@ -1,0 +1,34 @@
+# Maintainer: thakurious
+pkgname=trowel
+pkgver=0.7.0
+pkgrel=1
+pkgdesc="On-device multimodal file search for Omarchy"
+arch=('x86_64')
+url="https://github.com/thakurious/trowel"
+license=('MIT')
+depends=('quickshell' 'hyprland' 'libvips' 'tesseract' 'tesseract-data-eng' 'poppler' 'ffmpeg' 'qt6-base' 'qt6-declarative')
+makedepends=('rust' 'cmake' 'ninja' 'vulkan-headers')
+source=()
+options=('!strip')
+
+package() {
+  local root="${startdir}/.."
+  install -Dm755 "${root}/target/release/trowel" "${pkgdir}/usr/bin/trowel"
+  install -Dm755 "${root}/target/release/troweld" "${pkgdir}/usr/bin/troweld"
+  if [[ -x "${root}/cpp/build-vulkan/trowel-worker" ]]; then
+    install -Dm755 "${root}/cpp/build-vulkan/trowel-worker" "${pkgdir}/usr/bin/trowel-worker"
+  fi
+  install -d "${pkgdir}/usr/share/trowel/app" "${pkgdir}/usr/share/trowel/omarchy-plugin" \
+    "${pkgdir}/usr/share/trowel/qml" "${pkgdir}/usr/lib/systemd/user"
+  cp -a "${root}/ui/app/." "${pkgdir}/usr/share/trowel/app/"
+  cp -a "${root}/ui/omarchy-plugin/." "${pkgdir}/usr/share/trowel/omarchy-plugin/"
+  cp -a "${root}/ui/qml/Trowel/." "${pkgdir}/usr/share/trowel/qml/Trowel/"
+  ln -sfn /usr/share/trowel/qml/Trowel "${pkgdir}/usr/share/trowel/app/Trowel"
+  ln -sfn /usr/share/trowel/qml/Trowel "${pkgdir}/usr/share/trowel/omarchy-plugin/Trowel"
+  install -Dm644 "${root}/packaging/systemd/troweld.service" "${pkgdir}/usr/lib/systemd/user/troweld.service"
+  install -Dm644 "${root}/packaging/systemd/troweld.socket" "${pkgdir}/usr/lib/systemd/user/troweld.socket"
+  install -Dm644 "${root}/packaging/systemd/trowel-index.slice" "${pkgdir}/usr/lib/systemd/user/trowel-index.slice"
+  install -Dm644 "${root}/packaging/trowel-app.desktop" "${pkgdir}/usr/share/applications/trowel.desktop"
+  install -Dm644 "${root}/packaging/hypr/trowel.lua" "${pkgdir}/usr/share/trowel/hypr/trowel.lua"
+  install -Dm644 "${root}/packaging/hypr/trowel-app.lua" "${pkgdir}/usr/share/trowel/hypr/trowel-app.lua"
+}

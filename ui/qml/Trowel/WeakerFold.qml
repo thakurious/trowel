@@ -23,7 +23,7 @@ Rectangle {
       text: "▸"
       rotation: root.expanded ? 90 : 0
       color: Theme.secondary
-      font.pixelSize: 9.5
+      font.pixelSize: 10
       font.weight: Font.Bold
       Behavior on rotation {
         NumberAnimation {
