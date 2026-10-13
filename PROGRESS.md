@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 5 on `phase-5-daemon`. Acceptance demonstrated; this commit lands it. Phase 4 is on `main` (PR **#5** merged).
+- **Phase:** 5 on `phase-5-daemon`, PR **#6**. CI rust failed once: `estimate_and_status_subscribe` required model GGUFs. Fixed: only daemon/tools/disk/index must be non-FAIL.
 - **Branch:** `phase-5-daemon` (from `main` @ `35596ea`)
-- **Next step:** open the PR, merge to `main`, then Phase 6 UI. Do not index `$HOME`. Do not `systemctl enable`. fcitx5 stays on `keyboard-us`.
+- **Next step:** wait for CI, merge PR #6, then Phase 6 UI. Do not index `$HOME`. Do not `systemctl enable`. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
