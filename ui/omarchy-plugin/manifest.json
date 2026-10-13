@@ -1,13 +1,20 @@
 {
   "schemaVersion": 1,
   "id": "io.github.thakurious.trowel-dev",
-  "name": "Trowel (dev spike)",
-  "version": "0.0.0",
+  "name": "Trowel (dev)",
+  "version": "0.6.0",
   "author": "thakurious",
-  "description": "Phase 0 hello-world panel: blur, exclusive keyboard focus, fcitx5 pre-edit.",
-  "kinds": ["panel"],
+  "description": "On-device multimodal file search. Dev plugin id — production is io.github.thakurious.trowel (Phase 7).",
+  "kinds": ["panel", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {
-    "panel": "Panel.qml"
+    "panel": "Panel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Trowel",
+    "description": "Index status and search",
+    "category": "System",
+    "allowMultiple": false
   }
 }

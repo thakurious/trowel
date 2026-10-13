@@ -82,6 +82,81 @@
         }
       ],
       "weaker": []
+    },
+    {
+      "match": "zebra",
+      "meaning": "used",
+      "groups": [
+        {
+          "kind": "video",
+          "title": "Video",
+          "total": 1,
+          "rows": [
+            {
+              "id": "/home/u/Videos/safari.mp4",
+              "name": "safari.mp4",
+              "folder": "~/Videos",
+              "kind": "video",
+              "segment": "frame",
+              "segment_id": 401,
+              "loc": 6.0,
+              "place": "0:06",
+              "excerpt": "a «zebra» on the savannah",
+              "matched_meaning": true,
+              "matched_words": true,
+              "reason": "Similar meaning",
+              "info": {},
+              "thumb": "thumb://401@132"
+            }
+          ]
+        }
+      ],
+      "weaker": [
+        {
+          "id": "/home/u/Pictures/stripes.png",
+          "name": "stripes.png",
+          "folder": "~/Pictures",
+          "kind": "image",
+          "segment": "file",
+          "segment_id": 402,
+          "place": "",
+          "excerpt": "striped fabric",
+          "matched_meaning": true,
+          "matched_words": false,
+          "reason": "Similar meaning",
+          "info": {}
+        }
+      ]
+    },
+    {
+      "match": "retry",
+      "meaning": "used",
+      "groups": [
+        {
+          "kind": "code",
+          "title": "Code",
+          "total": 1,
+          "rows": [
+            {
+              "id": "/home/u/src/http.rs",
+              "name": "http.rs",
+              "folder": "~/src",
+              "kind": "code",
+              "segment": "lines",
+              "segment_id": 900,
+              "loc": 12.0,
+              "loc_end": 40.0,
+              "place": "L12–40",
+              "excerpt": "fn retry_with_backoff",
+              "matched_meaning": true,
+              "matched_words": true,
+              "reason": "Similar meaning",
+              "info": {}
+            }
+          ]
+        }
+      ],
+      "weaker": []
     }
   ],
   "segments": {
