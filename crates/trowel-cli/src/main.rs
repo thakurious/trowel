@@ -2,13 +2,14 @@ mod index_service;
 mod parity;
 mod worker;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use trowel_core::{
     CodeQuery, Costs, Crawler, Embedder, Estimator, FakeEmbedder, FileKind, IndexOptions,
-    IndexStore, Indexer, ModelFiles, SharedEmbedder, SqlValue,
+    IndexStore, Indexer, ModelFiles, Prompts, SearchHit, Searcher, SegmentKind, SharedEmbedder,
 };
 
 use crate::index_service::{IndexService, Part};
@@ -73,7 +74,7 @@ enum Commands {
         #[arg(long)]
         exclude_ext: Vec<String>,
     },
-    /// Keyword search (vector search is Phase 4).
+    /// Hybrid search (meaning + words).
     Search {
         #[arg(required = true)]
         query: Vec<String>,
@@ -87,6 +88,12 @@ enum Commands {
         kind: Option<String>,
         #[arg(long)]
         code: bool,
+        #[arg(long)]
+        fake: bool,
+        #[arg(long, default_value_t = 2.0)]
+        zgate: f64,
+        #[arg(long)]
+        word_weight: Option<f64>,
     },
     /// What's in the index.
     Status {
@@ -97,7 +104,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Keyword-only recall until Phase 4 wires Searcher.
+    /// Recall of known answers (R@1/5/10, MRR, tags, @range, weaker-fold).
     Eval {
         file: PathBuf,
         #[arg(long)]
@@ -106,6 +113,17 @@ enum Commands {
         json: bool,
         #[arg(short = 'n', long, default_value_t = 10)]
         limit: usize,
+        #[arg(long)]
+        fake: bool,
+        #[arg(long, default_value_t = 2.0)]
+        zgate: f64,
+        #[arg(long)]
+        word_weight: Option<f64>,
+        #[arg(long)]
+        bench: bool,
+        /// Override the eval file's `base` (Linux testbed lives in the repo, not ~/DigUpTestbed).
+        #[arg(long)]
+        base: Option<PathBuf>,
     },
     /// The app's indexing helper (JSON lines on stdout).
     IndexService {
@@ -258,6 +276,9 @@ fn main() {
             limit,
             kind,
             code,
+            fake,
+            zgate,
+            word_weight,
         } => {
             if let Err(err) = cmd_search(
                 &query.join(" "),
@@ -266,6 +287,9 @@ fn main() {
                 limit,
                 kind.as_deref(),
                 code,
+                fake,
+                zgate,
+                word_weight,
             ) {
                 eprintln!("{err}");
                 std::process::exit(1);
@@ -282,9 +306,23 @@ fn main() {
             index,
             json,
             limit,
+            fake,
+            zgate,
+            word_weight,
+            bench,
+            base,
         } => {
-            if let Err(err) = cmd_eval(&file, index.unwrap_or_else(default_index_dir), json, limit)
-            {
+            if let Err(err) = cmd_eval(
+                &file,
+                index.unwrap_or_else(default_index_dir),
+                json,
+                limit,
+                fake,
+                zgate,
+                word_weight,
+                bench,
+                base,
+            ) {
                 eprintln!("{err}");
                 std::process::exit(1);
             }
@@ -425,10 +463,10 @@ fn cmd_index(
     }
     let mut indexer = Indexer::new(store, options, Box::new(move || make_embedder(fake)))
         .map_err(|e| e.to_string())?;
-    if !fake {
-        indexer.embedder_source = crate::worker::worker_source(default_backend());
-        indexer.check_model().map_err(|e| e.to_string())?;
-    }
+    // Fingerprint is written from the live worker in Indexer::full_worker. Do not
+    // pre-check a guessed `worker_source()` string — it does not match the
+    // worker's `google/embeddinggemma-2@… llama.cpp-vectors1 …` line, so a
+    // second `trowel index` would refuse to resume.
     let summary = indexer.sync(paths).map_err(|e| e.to_string())?;
     if json {
         println!(
@@ -498,6 +536,60 @@ fn cmd_index(
     Ok(())
 }
 
+fn parse_kinds(kind: Option<&str>) -> Result<Option<HashSet<FileKind>>, String> {
+    let Some(list) = kind else {
+        return Ok(None);
+    };
+    let mut set = HashSet::new();
+    for part in list.split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        set.insert(part.parse().map_err(|_| {
+            format!("unknown kind {part}; use screenshot, image, pdf, doc, audio, video")
+        })?);
+    }
+    Ok(Some(set).filter(|s| !s.is_empty()))
+}
+
+fn query_vectors(
+    queries: &[String],
+    searcher: &Searcher,
+    prompt: fn(&str) -> String,
+    fake: bool,
+) -> Result<Option<Vec<Vec<f32>>>, String> {
+    if searcher.vector_count() == 0 || queries.is_empty() {
+        return Ok(None);
+    }
+    let prompted: Vec<String> = queries.iter().map(|q| prompt(q)).collect();
+    let use_fake = fake
+        || searcher
+            .vector_source
+            .as_deref()
+            .is_some_and(|s| s.starts_with("fake@"));
+    if use_fake {
+        let mut embedder = FakeEmbedder::new();
+        return Ok(Some(
+            embedder.embed_texts(&prompted).map_err(|e| e.to_string())?,
+        ));
+    }
+    let mut worker = WorkerEmbedder::spawn(default_backend(), true)?;
+    if let Some(source) = &searcher.vector_source {
+        let now = worker.info().vector_source();
+        if source != &now {
+            worker.close();
+            return Err(format!(
+                "index vectors come from {source} but the query encoder is {now}"
+            ));
+        }
+    }
+    let vectors = worker.embed_texts(&prompted).map_err(|e| e.to_string())?;
+    worker.close();
+    Ok(Some(vectors))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn cmd_search(
     query: &str,
     index: PathBuf,
@@ -505,6 +597,9 @@ fn cmd_search(
     limit: usize,
     kind: Option<&str>,
     code: bool,
+    fake: bool,
+    zgate: f64,
+    word_weight: Option<f64>,
 ) -> Result<(), String> {
     let mut q = query.to_string();
     let code_q = CodeQuery::text_of(&q);
@@ -520,61 +615,187 @@ fn cmd_search(
         IndexStore::MAIN_FILE
     };
     let store = IndexStore::open_named(&index, file).map_err(|e| e.to_string())?;
-    let mut sql = String::from(
-        "SELECT f.path, f.kind, s.kind, s.loc, s.excerpt, bm25(fts) \
-         FROM fts JOIN segments s ON s.id = fts.rowid JOIN files f ON f.id = s.file \
-         WHERE fts MATCH ?",
-    );
-    let mut values = vec![SqlValue::Text(fts_query(&q))];
-    if let Some(kind) = kind {
-        sql.push_str(" AND f.kind = ?");
-        values.push(SqlValue::Text(kind.into()));
-    }
-    sql.push_str(" ORDER BY bm25(fts) LIMIT ?");
-    values.push(SqlValue::Int(limit as i64));
-    let mut rows = Vec::new();
-    store
-        .db
-        .query(&sql, &values, |row| {
-            rows.push(serde_json::json!({
-                "path": row.text(0).unwrap_or_default(),
-                "kind": row.text(1).unwrap_or_default(),
-                "segment": row.text(2).unwrap_or_default(),
-                "loc": row.double(3),
-                "excerpt": row.text(4).unwrap_or_default(),
-                "bm25": row.double(5),
-            }));
-            Ok(())
-        })
-        .map_err(|e| e.to_string())?;
-    if json {
-        println!("{}", serde_json::to_string_pretty(&rows).unwrap());
-    } else if rows.is_empty() {
-        println!("no good matches");
+    let mut searcher = Searcher::new(store, true).map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    let prompt = if code_q.is_some() {
+        Prompts::code_query
     } else {
-        for (i, row) in rows.iter().enumerate() {
-            println!(
-                "{:>2}. {:<10} {}  [{}]",
-                i + 1,
-                row["kind"].as_str().unwrap_or(""),
-                Path::new(row["path"].as_str().unwrap_or(""))
-                    .file_name()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                row["excerpt"].as_str().unwrap_or("")
-            );
-        }
-        println!("(keyword search; vector search is Phase 4)");
+        Prompts::query
+    };
+    let vector =
+        query_vectors(&[q.clone()], &searcher, prompt, fake)?.and_then(|v| v.into_iter().next());
+    let encoded = started.elapsed();
+    let kinds = parse_kinds(kind)?;
+    let search_started = Instant::now();
+    let hits = searcher
+        .search(
+            &q,
+            vector.as_deref(),
+            kinds.as_ref(),
+            limit,
+            zgate,
+            word_weight,
+            false,
+        )
+        .map_err(|e| e.to_string())?;
+    let searched = search_started.elapsed();
+    if json {
+        let rows: Vec<serde_json::Value> = hits.iter().map(hit_json).collect();
+        println!("{}", serde_json::to_string_pretty(&rows).unwrap());
+        return Ok(());
     }
+    if hits.is_empty() {
+        println!("no good matches");
+    }
+    for (rank, hit) in hits.iter().enumerate() {
+        let why = [
+            hit.z.map(|z| format!("z {z:.1}")),
+            hit.keyword_rank.map(|r| format!("words #{r}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
+        let place = location(hit);
+        let name = Path::new(&hit.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| hit.path.clone());
+        println!(
+            "{:>2}. {:<10} {name}{}   ({why})",
+            rank + 1,
+            hit.kind.as_str(),
+            if place.is_empty() {
+                String::new()
+            } else {
+                format!("  [{place}]")
+            }
+        );
+        let parent = Path::new(&hit.path)
+            .parent()
+            .map(|p| tilde(&p.display().to_string()))
+            .unwrap_or_default();
+        println!("      {parent}");
+        if let Some(excerpt) = &hit.excerpt {
+            if !excerpt.is_empty() {
+                let shown: String = excerpt.chars().take(160).collect();
+                println!("      “{shown}”");
+            }
+        }
+    }
+    println!(
+        "({} vectors · query encoder {:.2} s incl. start-up · search {:.0} ms)",
+        searcher.vector_count(),
+        encoded.as_secs_f64(),
+        searched.as_secs_f64() * 1000.0
+    );
     Ok(())
 }
 
-fn fts_query(query: &str) -> String {
-    query
-        .split_whitespace()
-        .map(|w| format!("\"{}\"", w.replace('"', "")))
-        .collect::<Vec<_>>()
-        .join(" ")
+fn hit_json(hit: &SearchHit) -> serde_json::Value {
+    let mut row = serde_json::json!({
+        "path": hit.path,
+        "kind": hit.kind.as_str(),
+        "segment": hit.segment.as_str(),
+        "score": hit.score,
+    });
+    if let Some(z) = hit.z {
+        row["z"] = serde_json::json!(z);
+    }
+    if let Some(cosine) = hit.cosine {
+        row["cosine"] = serde_json::json!(cosine);
+    }
+    if let Some(rank) = hit.keyword_rank {
+        row["keyword_rank"] = serde_json::json!(rank);
+    }
+    if let Some(loc) = hit.loc {
+        row["loc"] = serde_json::json!(loc);
+    }
+    if let Some(end) = hit.loc_end {
+        row["loc_end"] = serde_json::json!(end);
+    }
+    if let Some(focus) = hit.focus {
+        row["focus"] = serde_json::json!(focus);
+    }
+    if let Some(excerpt) = &hit.excerpt {
+        row["excerpt"] = serde_json::json!(excerpt);
+    }
+    row
+}
+
+fn tilde(path: &str) -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        if let Some(rest) = path.strip_prefix(&home) {
+            return format!("~{rest}");
+        }
+    }
+    path.to_string()
+}
+
+fn clock(seconds: f64) -> String {
+    let total = seconds as i64;
+    if total >= 3600 {
+        format!(
+            "{}:{:02}:{:02}",
+            total / 3600,
+            (total / 60) % 60,
+            total % 60
+        )
+    } else {
+        format!("{}:{:02}", total / 60, total % 60)
+    }
+}
+
+fn location(hit: &SearchHit) -> String {
+    match hit.segment {
+        SegmentKind::Page | SegmentKind::PageImage => hit
+            .loc
+            .map(|l| format!("p. {}", l as i64))
+            .unwrap_or_default(),
+        SegmentKind::Audio | SegmentKind::Frame => hit
+            .loc
+            .map(|l| {
+                format!(
+                    "at {}{}",
+                    clock(l),
+                    if hit.segment == SegmentKind::Audio {
+                        " (sound)"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .unwrap_or_default(),
+        SegmentKind::Chunk => hit
+            .loc
+            .map(|l| format!("part {}", l as i64))
+            .unwrap_or_default(),
+        SegmentKind::Lines => hit
+            .loc
+            .map(|l| {
+                format!(
+                    "lines {}–{}{}",
+                    l as i64,
+                    hit.loc_end.unwrap_or(l) as i64,
+                    hit.focus
+                        .map(|f| format!(", opens at {}", f as i64))
+                        .unwrap_or_default()
+                )
+            })
+            .unwrap_or_default(),
+        SegmentKind::Cells => hit
+            .loc
+            .map(|l| {
+                if Some(l) == hit.loc_end {
+                    format!("cell {}", l as i64)
+                } else {
+                    format!("cells {}–{}", l as i64, hit.loc_end.unwrap_or(l) as i64)
+                }
+            })
+            .unwrap_or_default(),
+        SegmentKind::Ocr => "text in image".into(),
+        _ => String::new(),
+    }
 }
 
 fn cmd_status(index: PathBuf, code: bool, json: bool) -> Result<(), String> {
@@ -632,7 +853,18 @@ fn cmd_status(index: PathBuf, code: bool, json: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_eval(file: &Path, index: PathBuf, json: bool, limit: usize) -> Result<(), String> {
+#[allow(clippy::too_many_arguments)]
+fn cmd_eval(
+    file: &Path,
+    index: PathBuf,
+    json: bool,
+    limit: usize,
+    fake: bool,
+    zgate: f64,
+    word_weight: Option<f64>,
+    bench: bool,
+    base_override: Option<PathBuf>,
+) -> Result<(), String> {
     #[derive(serde::Deserialize)]
     struct Query {
         q: String,
@@ -642,70 +874,270 @@ fn cmd_eval(file: &Path, index: PathBuf, json: bool, limit: usize) -> Result<(),
     }
     #[derive(serde::Deserialize)]
     struct EvalFile {
+        #[serde(default)]
+        base: String,
         queries: Vec<Query>,
     }
     let raw = std::fs::read_to_string(file).map_err(|e| e.to_string())?;
     let spec: EvalFile = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
-    let store = IndexStore::open(&index).map_err(|e| e.to_string())?;
-    let mut r1 = 0;
-    let mut r5 = 0;
-    let mut r10 = 0;
-    let n = spec.queries.len().max(1);
-    for q in &spec.queries {
-        let mut hits = Vec::new();
-        store
-            .db
-            .query(
-                "SELECT f.path FROM fts JOIN segments s ON s.id = fts.rowid JOIN files f ON f.id = s.file \
-                 WHERE fts MATCH ? ORDER BY bm25(fts) LIMIT ?",
-                &[
-                    SqlValue::Text(fts_query(&q.q)),
-                    SqlValue::Int(limit as i64),
-                ],
-                |row| {
-                    hits.push(row.text(0).unwrap_or_default());
-                    Ok(())
-                },
+    let base = base_override
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| expand_tilde(&spec.base));
+    let is_code: Vec<bool> = spec
+        .queries
+        .iter()
+        .map(|q| CodeQuery::text_of(&q.q).is_some())
+        .collect();
+    let texts: Vec<String> = spec
+        .queries
+        .iter()
+        .map(|q| CodeQuery::text_of(&q.q).unwrap_or_else(|| q.q.clone()))
+        .collect();
+    let mut searchers: std::collections::HashMap<bool, Searcher> = std::collections::HashMap::new();
+    let mut vectors: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+    let encode_started = Instant::now();
+    for code in [false, true] {
+        if !is_code.contains(&code) {
+            continue;
+        }
+        let file_name = if code {
+            IndexStore::CODE_FILE
+        } else {
+            IndexStore::MAIN_FILE
+        };
+        let store = IndexStore::open_named(&index, file_name).map_err(|e| e.to_string())?;
+        let searcher = Searcher::new(store, true).map_err(|e| e.to_string())?;
+        let indices: Vec<usize> = texts
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| is_code[*i] == code)
+            .map(|(i, _)| i)
+            .collect();
+        let batch: Vec<String> = indices.iter().map(|i| texts[*i].clone()).collect();
+        let prompt = if code {
+            Prompts::code_query
+        } else {
+            Prompts::query
+        };
+        let embedded = query_vectors(&batch, &searcher, prompt, fake)?;
+        if let Some(embedded) = embedded {
+            for (index, vector) in indices.into_iter().zip(embedded) {
+                vectors[index] = Some(vector);
+            }
+        }
+        searchers.insert(code, searcher);
+    }
+    let encode_secs = encode_started.elapsed().as_secs_f64();
+
+    #[derive(Clone, Copy, Default)]
+    struct Row {
+        n: i32,
+        at1: i32,
+        at5: i32,
+        at10: i32,
+        mrr: f64,
+    }
+    let mut by_tag: BTreeMap<String, Row> = BTreeMap::new();
+    let mut shown = 0;
+    let mut listed = 0;
+    let mut folded = 0;
+    let mut search_secs = 0.0;
+    let mut lines = Vec::new();
+    for (index, query) in spec.queries.iter().enumerate() {
+        let kinds = query
+            .kind
+            .as_deref()
+            .and_then(|k| k.parse::<FileKind>().ok())
+            .map(|k| HashSet::from([k]));
+        let searcher = searchers
+            .get_mut(&is_code[index])
+            .ok_or_else(|| "no searcher".to_string())?;
+        let started = Instant::now();
+        let hits = searcher
+            .search(
+                &texts[index],
+                vectors[index].as_deref(),
+                kinds.as_ref(),
+                limit,
+                zgate,
+                word_weight,
+                false,
             )
-            .ok();
-        let found = hits.iter().position(|p| {
-            q.expect.iter().any(|e| {
-                let e = e.split('@').next().unwrap_or(e);
-                p.ends_with(e) || p.contains(e)
+            .map_err(|e| e.to_string())?;
+        search_secs += started.elapsed().as_secs_f64();
+        let strong = Searcher::strong_count(&hits, 0.5);
+        shown += strong;
+        listed += hits.len();
+        let targets: Vec<(String, Option<(f64, f64)>)> = query
+            .expect
+            .iter()
+            .map(|entry| {
+                let mut parts = entry.splitn(2, '@');
+                let rel = parts.next().unwrap_or(entry);
+                let range = parts.next().and_then(|span| {
+                    let mut nums = span.split('-').filter_map(|s| s.parse::<f64>().ok());
+                    Some((nums.next()?, nums.next()?))
+                });
+                let path = if base.is_empty() {
+                    rel.to_string()
+                } else {
+                    format!("{base}/{rel}")
+                };
+                (path, range)
+            })
+            .collect();
+        let at = |hit: &SearchHit, lo: f64, hi: f64| -> bool {
+            let Some(loc) = hit.loc else {
+                return false;
+            };
+            if hit.segment == SegmentKind::Lines || hit.segment == SegmentKind::Cells {
+                loc <= hi && hit.loc_end.unwrap_or(loc) >= lo
+            } else {
+                loc >= lo && loc <= hi
+            }
+        };
+        let rank = hits.iter().position(|hit| {
+            targets.iter().any(|(path, range)| {
+                hit.path == *path && range.map(|(lo, hi)| at(hit, lo, hi)).unwrap_or(true)
             })
         });
-        if found == Some(0) {
-            r1 += 1;
+        if let Some(rank) = rank {
+            if rank + 1 > strong {
+                folded += 1;
+            }
         }
-        if found.is_some_and(|i| i < 5) {
-            r5 += 1;
+        let tag = query.tag.as_deref().unwrap_or("all");
+        for key in [tag, "ALL"] {
+            let row = by_tag.entry(key.to_string()).or_default();
+            row.n += 1;
+            if let Some(rank) = rank {
+                let r = rank + 1;
+                if r <= 1 {
+                    row.at1 += 1;
+                }
+                if r <= 5 {
+                    row.at5 += 1;
+                }
+                if r <= 10 {
+                    row.at10 += 1;
+                }
+                row.mrr += 1.0 / r as f64;
+            }
         }
-        if found.is_some_and(|i| i < 10) {
-            r10 += 1;
-        }
-        let _ = &q.tag;
-        let _ = &q.kind;
+        let top = hits
+            .first()
+            .map(|h| {
+                let name = Path::new(&h.path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| h.path.clone());
+                let place = location(h);
+                if place.is_empty() {
+                    name
+                } else {
+                    format!("{name} [{place}]")
+                }
+            })
+            .unwrap_or_else(|| "-".into());
+        let rank_s = rank
+            .map(|r| format!("#{:<3}", r + 1))
+            .unwrap_or_else(|| "miss".into());
+        lines.push(format!("{rank_s}  {:<11} “{}” top: {top}", tag, query.q));
     }
-    let body = serde_json::json!({
-        "mode": "keyword",
-        "note": "vector eval is Phase 4",
-        "n": spec.queries.len(),
-        "r@1": r1 as f64 / n as f64,
-        "r@5": r5 as f64 / n as f64,
-        "r@10": r10 as f64 / n as f64,
-    });
+    let nq = spec.queries.len().max(1) as f64;
     if json {
-        println!("{body}");
-    } else {
+        let mut tags = serde_json::Map::new();
+        for (tag, row) in &by_tag {
+            let n = f64::from(row.n);
+            tags.insert(
+                tag.clone(),
+                serde_json::json!({
+                    "n": row.n,
+                    "r@1": f64::from(row.at1) / n,
+                    "r@5": f64::from(row.at5) / n,
+                    "r@10": f64::from(row.at10) / n,
+                    "mrr": row.mrr / n,
+                }),
+            );
+        }
         println!(
-            "keyword-only (Phase 4 does vectors): R@1={:.2} R@5={:.2} R@10={:.2} n={}",
-            r1 as f64 / n as f64,
-            r5 as f64 / n as f64,
-            r10 as f64 / n as f64,
-            spec.queries.len()
+            "{}",
+            serde_json::json!({
+                "n": spec.queries.len(),
+                "tags": tags,
+                "fold": {
+                    "shown_per_query": shown as f64 / nq,
+                    "listed_per_query": listed as f64 / nq,
+                    "expected_folded": folded,
+                },
+                "bench": {
+                    "encode_s": encode_secs,
+                    "search_s": search_secs,
+                    "search_ms_per_query": search_secs * 1000.0 / nq,
+                }
+            })
         );
+    } else {
+        for line in lines {
+            println!("{line}");
+        }
+        println!();
+        println!(
+            "{:<12} {:>3}  {:>5}  {:>5}  {:>5}  {:>5}",
+            "tag", "n", "R@1", "R@5", "R@10", "MRR"
+        );
+        let mut tags: Vec<_> = by_tag.into_iter().collect();
+        tags.sort_by(|a, b| {
+            let key = |k: &str| {
+                if k == "ALL" {
+                    "~".to_string()
+                } else {
+                    k.to_string()
+                }
+            };
+            key(&a.0).cmp(&key(&b.0))
+        });
+        for (tag, row) in tags {
+            let n = f64::from(row.n);
+            println!(
+                "{:<12} {:>3}  {:5.2}  {:5.2}  {:5.2}  {:5.2}",
+                tag,
+                row.n,
+                f64::from(row.at1) / n,
+                f64::from(row.at5) / n,
+                f64::from(row.at10) / n,
+                row.mrr / n
+            );
+        }
+        println!(
+            "weaker-matches fold (below 0.5× the top score): {:.1} of {:.1} results shown per query; {} expected {} folded",
+            shown as f64 / nq,
+            listed as f64 / nq,
+            folded,
+            if folded == 1 { "answer" } else { "answers" }
+        );
+        if bench {
+            println!(
+                "bench: encode {:.2}s · search {:.0} ms/query ({:.2}s total)",
+                encode_secs,
+                search_secs * 1000.0 / nq,
+                search_secs
+            );
+        }
     }
     Ok(())
+}
+
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    if path == "~" {
+        return std::env::var("HOME").unwrap_or_else(|_| path.to_string());
+    }
+    path.to_string()
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -211,7 +211,8 @@ fn is_mark(ch: char) -> bool {
     )
 }
 
-fn is_word_character(ch: char) -> bool {
+/// Apple `CharacterSet.alphanumerics`: Unicode L*, M*, N*.
+pub(crate) fn is_word_character(ch: char) -> bool {
     ch.is_alphanumeric() || is_mark(ch)
 }
 

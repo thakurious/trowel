@@ -365,6 +365,12 @@ impl CodeLookup {
         )
     }
 
+    /// One FTS5 phrase so the identifier's words match only side by side, as written.
+    /// `upstream/Sources/DigUpKit/CodeExtractor.swift:267`
+    pub fn phrase(words: &[String]) -> String {
+        format!("\"{}\"", words.join(" "))
+    }
+
     pub fn defines_something(word: &str) -> bool {
         DEFINERS.contains(&word) && !matches!(word, "let" | "var" | "const" | "val")
     }

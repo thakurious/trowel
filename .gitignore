@@ -9,3 +9,5 @@
 *.sqlite-shm
 .DS_Store
 .serena/
+__pycache__/
+*.pyc

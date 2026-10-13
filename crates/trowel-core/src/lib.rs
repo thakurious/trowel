@@ -14,6 +14,7 @@ pub mod model_files;
 pub mod prompts;
 pub mod rules;
 pub mod search_text;
+pub mod searcher;
 pub mod vectors;
 
 pub use crawler::{CrawlReport, Crawler};
@@ -32,4 +33,5 @@ pub use model_files::ModelFiles;
 pub use prompts::Prompts;
 pub use rules::{Classification, Rules};
 pub use search_text::{Landmark, PageTextProblem, SearchText};
+pub use searcher::{SearchHit, Searcher};
 pub use vectors::{VectorStorage, Vectors, DIMENSION};

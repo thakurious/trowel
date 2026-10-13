@@ -357,18 +357,150 @@ fn rtf_text(path: &Path) -> Result<String, ExtractError> {
     match run_tool("unrtf", &["--text"], &[abs.as_os_str()], TIMEOUT_DOCX) {
         Ok(out) if out.status.success() => {
             let raw = String::from_utf8_lossy(&out.stdout);
-            Ok(raw
+            let text = raw
                 .lines()
                 .skip_while(|l| l.starts_with("###") || l.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n")
                 .trim()
-                .to_string())
+                .to_string();
+            if !text.is_empty() {
+                return Ok(text);
+            }
         }
-        _ => Err(ExtractError::Unreadable(
-            "rtf needs unrtf (not installed)".into(),
-        )),
+        _ => {}
     }
+    // PORT-MAP: rtf via unrtf / rtf-parser. unrtf is optional; decode Unicode RTF
+    // ourselves so Linux evals do not depend on a Mac tool or an extra package.
+    rtf_plain(&abs)
+}
+
+fn rtf_plain(path: &Path) -> Result<String, ExtractError> {
+    let raw = fs::read(path).map_err(|err| ExtractError::Unreadable(err.to_string()))?;
+    let text = decode_rtf(&String::from_utf8_lossy(&raw));
+    if text.trim().is_empty() {
+        Err(ExtractError::Unreadable("empty rtf".into()))
+    } else {
+        Ok(text)
+    }
+}
+
+fn decode_rtf(src: &str) -> String {
+    let chs: Vec<char> = src.chars().collect();
+    let mut i = 0;
+    let mut out = String::new();
+    let mut uc_skip = 1i32;
+    while i < chs.len() {
+        match chs[i] {
+            '{' => {
+                let peek: String = chs[i + 1..].iter().take(24).collect();
+                if peek.starts_with('\\')
+                    && (peek.starts_with("\\*")
+                        || peek.starts_with("\\fonttbl")
+                        || peek.starts_with("\\colortbl")
+                        || peek.starts_with("\\stylesheet")
+                        || peek.starts_with("\\info"))
+                {
+                    i = skip_rtf_group(&chs, i);
+                    continue;
+                }
+                i += 1;
+            }
+            '}' => i += 1,
+            '\\' => {
+                if i + 1 >= chs.len() {
+                    break;
+                }
+                let next = chs[i + 1];
+                if next == '\\' || next == '{' || next == '}' {
+                    out.push(next);
+                    i += 2;
+                    continue;
+                }
+                if next == '\'' && i + 3 < chs.len() {
+                    let hex: String = chs[i + 2..i + 4].iter().collect();
+                    if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                        out.push(byte as char);
+                    }
+                    i += 4;
+                    continue;
+                }
+                i += 1;
+                let start = i;
+                while i < chs.len() && chs[i].is_ascii_alphabetic() {
+                    i += 1;
+                }
+                let word: String = chs[start..i].iter().collect();
+                let mut num = String::new();
+                if i < chs.len() && (chs[i] == '-' || chs[i].is_ascii_digit()) {
+                    if chs[i] == '-' {
+                        num.push('-');
+                        i += 1;
+                    }
+                    while i < chs.len() && chs[i].is_ascii_digit() {
+                        num.push(chs[i]);
+                        i += 1;
+                    }
+                }
+                if i < chs.len() && chs[i] == ' ' {
+                    i += 1;
+                }
+                match word.as_str() {
+                    "par" | "line" => out.push('\n'),
+                    "tab" => out.push('\t'),
+                    "uc" => {
+                        if let Ok(n) = num.parse() {
+                            uc_skip = n;
+                        }
+                    }
+                    "u" => {
+                        if let Ok(n) = num.parse::<i32>() {
+                            let cp = if n < 0 { n + 65_536 } else { n };
+                            if let Some(c) = char::from_u32(cp as u32) {
+                                out.push(c);
+                            }
+                        }
+                        for _ in 0..uc_skip.max(0) {
+                            if i < chs.len() {
+                                i += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            '\r' | '\n' => i += 1,
+            c => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    collapse_spaces(&out)
+}
+
+fn skip_rtf_group(chs: &[char], mut i: usize) -> usize {
+    let mut depth = 0;
+    while i < chs.len() {
+        match chs[i] {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                i += 1;
+                if depth == 0 {
+                    return i;
+                }
+                continue;
+            }
+            '\\' if i + 1 < chs.len() && matches!(chs[i + 1], '\\' | '{' | '}') => {
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    i
 }
 
 fn doc_text(path: &Path) -> Result<String, ExtractError> {
@@ -399,6 +531,16 @@ pub fn excerpt(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rtf_unicode_decodes_without_unrtf() {
+        let text = decode_rtf(
+            r"{\rtf1\ansi\deff0{\fonttbl{\f0 Noto Sans;}}\f0 Design review moved to Thursday. \u1605?\u1603?\u1578?\u1576?\u1577?}",
+        );
+        assert!(text.contains("Design review moved to Thursday"));
+        assert!(text.contains("مكتبة"));
+        assert!(!text.contains("Noto Sans"));
+    }
 
     #[test]
     fn html_becomes_plain_text() {

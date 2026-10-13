@@ -130,6 +130,13 @@ pub enum Modality {
 }
 
 impl Modality {
+    pub const ALL: [Modality; 4] = [
+        Modality::None,
+        Modality::Text,
+        Modality::Image,
+        Modality::Audio,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",

@@ -37,7 +37,8 @@ Add Linux-specific tests: HEIC/RAW via vips, ffmpeg windowing/silence gate, aver
 ## 3. Evals — Phase 4 gate, permanent
 
 Three JSON suites copied verbatim; run via `trowel eval`. An eval entry is `{q, expect:[paths],
-tag?, kind?}`; `path@a-b` requires the hit to start in `[a,b)` (a moment/page/lines overlap).
+tag?, kind?}`; `path@a-b` requires the hit's `loc` in `[a,b]` inclusive (matching
+`upstream/Sources/digup/main.swift` `evaluate`); a code stretch overlaps `[a,b]`.
 Metrics: **R@1, R@5, R@10, MRR**, plus the weaker-fold stats.
 
 Published targets to match or beat on this machine, from DigUp's own comments:
