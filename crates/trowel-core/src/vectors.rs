@@ -29,7 +29,7 @@ impl Vectors {
 /// `upstream/Sources/DigUpKit/Vectors.swift:28`
 pub struct VectorStorage {
     pub rows: usize,
-    _map: MmapMut,
+    map: MmapMut,
     half_bytes: usize,
 }
 
@@ -46,13 +46,54 @@ impl VectorStorage {
         let map = MmapOptions::new().len(bytes).map_anon().ok()?;
         Some(Self {
             rows,
-            _map: map,
+            map,
             half_bytes,
         })
     }
 
     pub fn half_bytes(&self) -> usize {
         self.half_bytes
+    }
+
+    pub fn halves(&self) -> &[u8] {
+        &self.map[..self.half_bytes]
+    }
+
+    pub fn write_row(&mut self, row: usize, bytes: &[u8]) {
+        let start = row * DIMENSION * 2;
+        let n = bytes.len().min(DIMENSION * 2);
+        self.map[start..start + n].copy_from_slice(&bytes[..n]);
+    }
+
+    /// Cosine of `query` with every stored row: blocked fp16→fp32, then `(count×768)·(768×1)`.
+    /// `upstream/Sources/DigUpKit/Searcher.swift:285`
+    pub fn scores(&self, query: &[f32]) -> Vec<f32> {
+        let rows = self.rows;
+        let mut scores = vec![0f32; rows];
+        if rows == 0 || query.len() != DIMENSION {
+            return scores;
+        }
+        let mut block = vec![0f32; Self::BLOCK_ROWS * DIMENSION];
+        let mut row = 0;
+        while row < rows {
+            let count = (rows - row).min(Self::BLOCK_ROWS);
+            let src = row * DIMENSION * 2;
+            let dst = count * DIMENSION;
+            Vectors::floats_from_half(
+                &self.map[src..src + count * DIMENSION * 2],
+                &mut block[..dst],
+            );
+            for i in 0..count {
+                let off = i * DIMENSION;
+                scores[row + i] = block[off..off + DIMENSION]
+                    .iter()
+                    .zip(query.iter())
+                    .map(|(a, b)| a * b)
+                    .sum();
+            }
+            row += count;
+        }
+        scores
     }
 }
 

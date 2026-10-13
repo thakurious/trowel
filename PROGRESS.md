@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 3 on `main` (merge of `phase-3-pipeline`).
-- **Branch:** `main`
-- **Next step:** Phase 4 Searcher + vector `trowel eval` on `phase-4-search`. fcitx5 stays on `keyboard-us`.
+- **Phase:** 4 on `phase-4-search` (Searcher + `trowel eval`). Acceptance demonstrated.
+- **Branch:** `phase-4-search` (from `main` @ `2d6bf60`)
+- **Next step:** merge this branch to `main`, then start Phase 5 (`troweld`, watcher, PROTOCOL for real, doctor) on `phase-5-daemon`. fcitx5 stays on `keyboard-us`. Never index `$HOME` until Phase 5 acceptance.
 
 ## Gates
 
@@ -17,8 +17,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P0 panel spike (blur, focus, IME) | ✅ | Blur A/B + exclusive focus (earlier). Overlay IME: panel open → Mozc for ~1s → `wtype nihongo` → field shows **にほんご** with Mozc candidate popup (日本語 / 日本語と英語 / 日本語教育) over `trowel-panel`. Screenshot `/tmp/trowel-spike/panel-preedit.png`. English restored immediately (`keyboard-us`, DefaultIM unchanged, panel dismissed). |
 | P1 unit tests + protocol frozen + `--mock` | ✅ | `cargo test --workspace`: trowel-core **31/31**, trowel-proto **5/5**, proto_replay **3/3** (golden transcripts, `too_large`, slow-reader keeps responses / drops stale status). FTS tokenizer holds কুমির* / المكتبة. Schema 1→5 migrates. `python3 scripts/extract-strings.py` → **202** strings in `ui/strings.json`. |
 | P2 extractors + traps | ✅ | `cargo test --workspace`: trowel-core **70/70**, trowel-proto **5/5**, proto_replay **3/3**. Traps classify (TS vs MPEG-TS, project screenshots-only, leading-dash / newline / 255-byte / invalid-UTF-8 names, 0-byte MP4, symlink loop, truncated PDF and fake docx fail with a reason). `sleep 30` killed in 400 ms. `trowel estimate --json` over a Linux-built testbed: 22 files, dataset 400 skipped, 3 screenshots, git code crawl keeps tracked+untracked-not-ignored only. No Mac in this environment — counts are Rules-faithful Linux goldens, not a numeric macOS dump. |
-| P3 pipeline + crash/resume | ✅ | `cargo test --workspace`: trowel-core **71/71** + long_files **13/13**, trowel-cli pipeline **3/3**, proto **5/5**, proto_replay **3/3**. `scripts/crash-resume.sh`: vectors **10→10** after `kill -9` ×50, no re-embed of finished files. Poison n≥2 → `Couldn't be read safely`. Touch one file → `changed=1`. Keyword search finds the indexed note. Vector `Searcher` / float16 LongFilesTest wait Phase 4. |
-| P4 evals meet TESTING §3 | ⬜ | |
+| P3 pipeline + crash/resume | ✅ | `cargo test --workspace`: trowel-core **71/71** + long_files **13/13**, trowel-cli pipeline **3/3**, proto **5/5**, proto_replay **3/3**. `scripts/crash-resume.sh`: vectors **10→10** after `kill -9` ×50, no re-embed of finished files. Poison n≥2 → `Couldn't be read safely`. Touch one file → `changed=1`. Keyword search finds the indexed note. |
+| P4 evals meet TESTING §3 | ✅ | Linux testbed `/tmp/trowel-eval` (no Mac). `synthetic.json` ALL **37/37 R@1=1.00** (TESTING: 0.88). `code.json` **41/41**. `multilingual.json` ALL **R@1=0.92** / R@5=0.98 / R@10=1.00. 0 expected answers folded on all three. `real/` not run (CLAUDE.md: no `$HOME` until Phase 5). |
 | P5 daemon + robustness + doctor | ⬜ | |
 | P6 UI checklist + budgets + visual QA | ⬜ | |
 | P7 fault injection + packaging + soak | ⬜ | |
@@ -41,12 +41,18 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **CI** cannot run the vector-parity gate (no Arc 140V on GitHub-hosted runners). Documented in `.github/workflows/ci.yml`.
 - **pdftotext argv:** `pdftotext -layout -f N -l N - -- FILE` treats `-` as the PDF and errors `Document stream is empty`. Correct: `pdftotext -layout -f N -l N -- FILE -` (file then stdout `-`, after `--`).
 - **F5c vs later steps:** `linux_attempts` is per file. Overlapping prepare of the next step of the *same* long file must not increment `n` (kept in `Indexer.in_flight`); otherwise `finishLongFiles` poisons a healthy PDF/doc after two steps.
+- **Code eval testbed must not sit inside another git repo.** `GitRepos.enter_root` walks parents for `.git` (Swift does too). `testbed/out/code` under this repo made `scripts/backup_photos.sh` look gitignored → 39/41. `/tmp/trowel-eval/code` → **41/41**.
+- **Eval `@range`:** upstream `evaluate` uses a closed range `[a,b]` (`loc` contained; code stretches overlap). TESTING.md said `[a,b)`; the doc now matches Swift.
+- **Query encoder:** text-only `trowel-worker --text-only`. Fake indexes (`vector_source` starts with `fake@`) reuse `FakeEmbedder` so CLI tests do not spawn the GPU worker.
+- **Linux eval corpus** (`scripts/testbed/make_eval_corpus.py`, default `/tmp/trowel-eval`): Wikimedia Commons photos (not `/Library/User Pictures`); Chromium `--print-to-pdf` for a logical Unicode text layer (pangocairo/pango-view `--paper` is missing here and also splits Arabic letters); Google `translate_tts` HTTP (no `say` / espeak); Pillow screenshots at the Hyprland mode (1920×1200) so the monitor heuristic classifies them; RTF via a builtin `\uN` decoder when `unrtf` is absent. Never samples `$HOME`.
+- **pango-view** on this distro has no `--paper` / no cairo paper backend. Do not pass `--paper=letter`.
+- **Eval index** should `--exclude $TB/traps/linux`. Those crawler-poison files (`x.txt`, `-notes.txt`) are Phase 2 traps, not in upstream evals; leaving them in the index stole R@1 on image/multilingual queries.
+- **`trowel index` fingerprint:** do not pre-check a guessed `worker_source()` string. The live worker reports `google/embeddinggemma-2@bfcd298 llama.cpp-vectors1 text-q8_0+mmproj-q8_0`; a second index run would refuse to resume. `Indexer::full_worker` already `adopt()`s the real line.
 
 ## Open questions for the human
 
-1. **Phase 3 PR** merged to `main`. Next is Phase 4 (`Searcher` + evals).
-2. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
-3. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
+1. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
+2. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
 
 ## Desktop changes to revert
 
@@ -81,6 +87,65 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-12 — Phase 4: Searcher + Linux evals (no macOS)
+
+On `phase-4-search`. Human: Linux must not depend on anything Mac.
+
+- `Searcher` port of `upstream/Sources/DigUpKit/Searcher.swift` (constants unchanged).
+- Linux testbed: `scripts/testbed/make_eval_corpus.py` + `scripts/make-testbed.sh` default `/tmp/trowel-eval`. Wikimedia photos, Chromium PDFs, Google TTS, 1920×1200 screenshots, `make_code.py`. No `sips`/`say`/Swift/`/Library/User Pictures`/`~/DigUpTestbed`.
+- RTF extracts without `unrtf` (`decode_rtf` for `\uN`). Incremental `trowel index` no longer false-mismatches the worker fingerprint.
+- Eval index: `--exclude $TB/traps/linux` (crawler traps are not eval corpus).
+
+#### Evidence
+
+```
+$ cargo fmt && cargo clippy --workspace --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.45s
+
+$ cargo test --workspace --offline
+     Running tests/pipeline.rs
+test result: ok. 4 passed
+     Running unittests src/lib.rs (trowel-core)
+test result: ok. 82 passed
+     Running tests/long_files.rs
+test result: ok. 13 passed
+     Running tests/searcher.rs
+test float16_vectors_score_across_blocks ... ok
+     Running unittests src/lib.rs (trowel-proto)
+test result: ok. 5 passed
+     Running tests/proto_replay.rs
+test result: ok. 3 passed
+
+$ bash scripts/make-testbed.sh /tmp/trowel-eval
+== done: /tmp/trowel-eval ==
+8.1M	/tmp/trowel-eval
+
+$ trowel index /tmp/trowel-eval/synthetic /tmp/trowel-eval/traps \
+    --index /tmp/trowel-eval/index --exclude /tmp/trowel-eval/traps/linux
+$ trowel index /tmp/trowel-eval/code --code --index /tmp/trowel-eval/index
+
+$ trowel eval evals/synthetic.json --index /tmp/trowel-eval/index --base /tmp/trowel-eval --bench
+tag            n    R@1    R@5   R@10    MRR
+ALL           37   1.00   1.00   1.00   1.00
+weaker-matches fold: 2.3 of 3.1 results shown per query; 0 expected answers folded
+bench: encode 0.99s · search 13 ms/query
+
+$ trowel eval evals/multilingual.json --index /tmp/trowel-eval/index --base /tmp/trowel-eval --bench
+tag            n    R@1    R@5   R@10    MRR
+ALL           48   0.92   0.98   1.00   0.95
+weaker-matches fold: 2.8 of 4.1 results shown per query; 0 expected answers folded
+bench: encode 1.06s · search 13 ms/query
+
+$ trowel eval evals/code.json --index /tmp/trowel-eval/index --base /tmp/trowel-eval/code --bench
+tag            n    R@1    R@5   R@10    MRR
+ALL           41   1.00   1.00   1.00   1.00
+weaker-matches fold: 1.4 of 1.7 results shown per query; 0 expected answers folded
+```
+
+#### Exact next step
+
+Commit + PR for Phase 4 when asked. Do not start Phase 5. Do not index `$HOME`.
 
 ### 2026-10-12 — Phase 3: Indexer, LongFilesTests, CLI, index-service
 

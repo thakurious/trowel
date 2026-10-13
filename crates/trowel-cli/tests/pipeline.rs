@@ -164,3 +164,61 @@ fn touch_one_file_reports_changed() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn eval_reports_recall_and_fold() {
+    let root = temp();
+    let files = root.join("files");
+    let index = root.join("index");
+    std::fs::write(
+        files.join("notes.txt"),
+        "the harbour meeting notes from the village library\n",
+    )
+    .unwrap();
+    assert!(trowel()
+        .args([
+            "index",
+            files.to_str().unwrap(),
+            "--index",
+            index.to_str().unwrap(),
+            "--fake",
+        ])
+        .status()
+        .unwrap()
+        .success());
+    let eval = root.join("eval.json");
+    std::fs::write(
+        &eval,
+        serde_json::json!({
+            "base": files,
+            "queries": [
+                {"q": "harbour village library", "expect": ["notes.txt"], "tag": "doc"}
+            ]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = trowel()
+        .args([
+            "eval",
+            eval.to_str().unwrap(),
+            "--index",
+            index.to_str().unwrap(),
+            "--json",
+            "--fake",
+            "--bench",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let body: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(body["n"], 1);
+    assert!((body["tags"]["ALL"]["r@1"].as_f64().unwrap() - 1.0).abs() < 1e-9);
+    assert_eq!(body["fold"]["expected_folded"], 0);
+    assert!(body["bench"]["search_s"].as_f64().is_some());
+    let _ = std::fs::remove_dir_all(root);
+}
