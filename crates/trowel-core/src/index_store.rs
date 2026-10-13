@@ -1,6 +1,7 @@
 //! On-disk index. `upstream/Sources/DigUpKit/IndexStore.swift`
 
 use std::collections::{BTreeMap, HashSet};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -62,12 +63,55 @@ impl IndexStore {
         let directory = directory.as_ref().to_path_buf();
         std::fs::create_dir_all(&directory)
             .map_err(|e| DbError::new(format!("mkdir {}: {e}", directory.display())))?;
+        let _ = std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700));
         let file = directory.join(name);
-        let db = Database::open(&file)?;
+        let existed = file.is_file()
+            && std::fs::metadata(&file)
+                .map(|m| m.len() > 0)
+                .unwrap_or(false);
+        match Self::open_existing(&directory, &file) {
+            Ok(store) => Ok(store),
+            Err(err) if existed => {
+                let ts = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let dest = directory.join(format!("{name}.corrupt-{ts}"));
+                let _ = std::fs::rename(&file, &dest);
+                for suffix in ["-wal", "-shm"] {
+                    let extra = PathBuf::from(format!("{}{suffix}", file.display()));
+                    if extra.exists() {
+                        let _ = std::fs::rename(
+                            &extra,
+                            directory.join(format!("{name}.corrupt-{ts}{suffix}")),
+                        );
+                    }
+                }
+                eprintln!(
+                    "trowel: index was damaged, moved to {} ({err})",
+                    dest.display()
+                );
+                Self::open_existing(&directory, &file)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn open_existing(directory: &Path, file: &Path) -> Result<Self, DbError> {
+        let db = Database::open(file)?;
+        let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+        if file.is_file()
+            && std::fs::metadata(file)
+                .map(|m| m.len() > 100)
+                .unwrap_or(false)
+            && !db.quick_check()?
+        {
+            return Err(DbError::new("PRAGMA quick_check failed"));
+        }
         let store = Self {
-            directory,
+            directory: directory.to_path_buf(),
             db,
-            file,
+            file: file.to_path_buf(),
             scope_sql: String::new(),
             scope_values: Vec::new(),
             scope: None,

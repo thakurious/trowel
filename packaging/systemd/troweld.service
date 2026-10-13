@@ -1,0 +1,19 @@
+[Unit]
+Description=Trowel search daemon
+Documentation=https://github.com/thakurious/trowel
+After=troweld.socket
+Requires=troweld.socket
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/troweld
+Restart=on-failure
+RestartSec=2
+StartLimitBurst=5
+StartLimitIntervalSec=60
+MemoryHigh=400M
+WatchdogSec=30
+NotifyAccess=main
+
+[Install]
+WantedBy=default.target

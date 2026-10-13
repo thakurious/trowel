@@ -146,6 +146,18 @@ impl Database {
             .busy_timeout(Duration::from_millis(ms))
             .map_err(DbError::from)
     }
+
+    /// ROBUSTNESS F10: `PRAGMA quick_check`.
+    pub fn quick_check(&self) -> Result<bool, DbError> {
+        let mut ok = true;
+        self.query("PRAGMA quick_check", &[], |row| {
+            if row.text(0).as_deref().unwrap_or("ok") != "ok" {
+                ok = false;
+            }
+            Ok(())
+        })?;
+        Ok(ok)
+    }
 }
 
 pub struct QueryRow<'a>(&'a rusqlite::Row<'a>);

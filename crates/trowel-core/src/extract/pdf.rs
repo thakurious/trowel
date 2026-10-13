@@ -105,6 +105,17 @@ impl PdfExtractor {
     pub fn page_count(url: &Path) -> Result<i32, ExtractError> {
         Ok(pdfinfo(&abs_path(url))?.pages)
     }
+
+    /// Render page `number` (1-based) to a PNG under `folder`.
+    pub fn render(
+        url: &Path,
+        number: i32,
+        pixels: i32,
+        folder: &Path,
+    ) -> Result<PathBuf, ExtractError> {
+        std::fs::create_dir_all(folder).map_err(|err| ExtractError::Unreadable(err.to_string()))?;
+        render_page(&abs_path(url), number, pixels, folder)
+    }
 }
 
 struct Info {

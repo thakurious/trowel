@@ -1,0 +1,9 @@
+[Unit]
+Description=Trowel indexing helper and worker
+
+[Slice]
+CPUWeight=20
+IOSchedulingClass=idle
+MemoryHigh=3G
+MemoryMax=4G
+Nice=10

@@ -1,0 +1,11 @@
+[Unit]
+Description=Trowel daemon socket
+Documentation=https://github.com/thakurious/trowel
+
+[Socket]
+ListenStream=%t/trowel/troweld.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target
