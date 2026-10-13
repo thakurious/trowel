@@ -1,0 +1,30 @@
+{
+  "geometry": {
+    "app": [
+      1040,
+      700
+    ],
+    "list": 330,
+    "preview": 450,
+    "top": 0.16,
+    "width": 780
+  },
+  "groups": [],
+  "keyboard": [
+    "Esc",
+    "Up",
+    "Down",
+    "Return",
+    "Ctrl+Return",
+    "Space",
+    "Ctrl+Y",
+    "Ctrl+C",
+    "Ctrl+O",
+    "Tab"
+  ],
+  "meaning": "",
+  "query": "",
+  "state": "empty",
+  "surface": "panel",
+  "weaker": []
+}

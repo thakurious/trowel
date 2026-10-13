@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 5 on `phase-5-daemon`, PR **#6**. CI rust failed once: `estimate_and_status_subscribe` required model GGUFs. Fixed: only daemon/tools/disk/index must be non-FAIL.
-- **Branch:** `phase-5-daemon` (from `main` @ `35596ea`)
-- **Next step:** wait for CI, merge PR #6, then Phase 6 UI. Do not index `$HOME`. Do not `systemctl enable`. fcitx5 stays on `keyboard-us`.
+- **Phase:** 6 complete on `phase-6-ui` (acceptance demonstrated). Phase 5 is on `main` (PR **#6** merged, `52f274d`).
+- **Branch:** `phase-6-ui` (from `main` @ `52f274d`)
+- **Next step:** merge Phase 6, then start Phase 7 (`phase-7-hardening`) from that `main`. Do not index `$HOME`. Do not `systemctl enable`. Do not `hyprctl reload` / Mozc / wtype. fcitx5 stays on `keyboard-us`. Production plugin id `io.github.thakurious.trowel` is Phase 7; keep `-dev` until then.
 
 ## Gates
 
@@ -20,7 +20,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P3 pipeline + crash/resume | ✅ | `cargo test --workspace`: trowel-core **71/71** + long_files **13/13**, trowel-cli pipeline **3/3**, proto **5/5**, proto_replay **3/3**. `scripts/crash-resume.sh`: vectors **10→10** after `kill -9` ×50, no re-embed of finished files. Poison n≥2 → `Couldn't be read safely`. Touch one file → `changed=1`. Keyword search finds the indexed note. |
 | P4 evals meet TESTING §3 | ✅ | Linux testbed `/tmp/trowel-eval` (no Mac). `synthetic.json` ALL **37/37 R@1=1.00** (TESTING: 0.88). `code.json` **41/41**. `multilingual.json` ALL **R@1=0.92** / R@5=0.98 / R@10=1.00. 0 expected answers folded on all three. `real/` not run (CLAUDE.md: no `$HOME` until Phase 5). |
 | P5 daemon + robustness + doctor | ✅ | `cargo test -p troweld --test daemon` **9/9** (folder-change, overflow SIGUSR1, suspend/resume SIGUSR2, idle RSS ≤120 MB + `release_vectors`, estimate+subscribe+doctor). `trowel doctor` exit 0, no FAIL (daemon/index WARN: units not enabled, `$HOME` not indexed). systemd written, **not enabled**. F7 via `gdbus` PrepareForSleep + sysfs, no zbus. |
-| P6 UI checklist + budgets + visual QA | ⬜ | |
+| P6 UI checklist + budgets + visual QA | ✅ | `cargo test --workspace` green including `ui_phase6` **3/3** (two-phase place badges `p. 3` / `0:06` / `L12–40`, F18 SIGSTOP stall + CONT reconnect, kill connect fails &lt;2s) and `cli_ui` **4/4** (`ui-trace` vs `--mock` meets IPC budgets). `trowel debug ui-trace --json`: hello 0.75 ms / panel_opened 0.29 ms / keyword_refund 0.57 ms / hybrid_zebra 0.56 ms (budgets 50/50/40/200). Layout snapshots in `design/linux/*.json`. Honest gaps: no macOS refs, no live QSG on keepLoaded shell, IME not retested this phase. |
 | P7 fault injection + packaging + soak | ⬜ | |
 
 ## Verified facts
@@ -57,6 +57,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **F9:** `statvfs` <500 MB or <5% → `paused_reason=disk_full`.
 - **F10:** `PRAGMA quick_check` on open; failure quarantines to `index.sqlite.corrupt-<ts>` and starts fresh. Index dir `0700`, DB `0600`.
 - **set_hotkey** writes `$XDG_CONFIG_HOME/hypr/trowel.lua` and does **not** `hyprctl reload`.
+- **Hyprland 0.56 `hl.window_rule`** (`/usr/share/hypr/hyprland.lua`): `{ name, match = { class, title, float }, float, size, move, ... }`. `packaging/hypr/trowel-app.lua` matches class `trowel-app` **and** title `Trowel` because Quickshell `appId` is readonly and the window class may be `quickshell`.
+- **`trowel debug ui-trace` / `snapshot`:** IPC timings vs `--mock` are the measurable PROTOCOL/UI-DESIGN §5 proxy. Live QSG frame times need a keepLoaded omarchy-shell restart (not done). Snapshots write layout+results JSON under `design/linux/`; no grim, no macOS references.
 
 ## Open questions for the human
 
@@ -97,6 +99,86 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-13 — Phase 6 complete (UI)
+
+Human: fully finish phase 6 then merge.
+
+- Shared module `ui/qml/Trowel`: Theme (Omarchy toml watch), Motion (§4 timings), Client (JSON-lines, gen stale-drop, ListModel diff, F18 stall 2 s → "Trowel isn't responding" / disconnected → "Trowel isn't running"), SearchSession (keyword then hybrid at 120 ms), FilterBar, and UI-DESIGN §6 components.
+- Plugin (`io.github.thakurious.trowel-dev`, keepLoaded): panel 780/330, top 16 %, open 140 ms, keyboard map (Esc/↑↓/↩/Ctrl↩/Space-after-nav Quick Look/Ctrl+Y/Ctrl+C/Ctrl+O/Tab, IME composing ignored), Banner, preview column. Bar-widget ProgressRing + popup. Live shell **not** rescanned/restarted.
+- `trowel-app`: SearchWindow 1040×700 + 324 px preview, Quick Look, Settings (4 tabs, battery copy verbatim, autostart via `trowel autostart`, portal-pick-folder Process), Onboarding 5 steps (`TROWEL_ONBOARDING_LOCATIONS` override; Continue on folders `configSet` roots only).
+- CLI: `trowel debug ui-trace|snapshot`, `trowel autostart status|on|off` (`status` only this session). Packaging: `trowel-app.desktop`, `hypr/trowel-app.lua`.
+- Mock fixture: `zebra` (video `0:06` + weaker) and `retry` (`L12–40`); `refund` unchanged so proto_replay goldens hold.
+- Linux layout oracle: `design/linux/{panel-empty,panel-results,panel-weaker,panel-code,panel-no-matches,app-results,app-home}.json`. No grim / no macOS `design/reference/macos/`.
+
+#### Evidence
+
+```
+$ cargo fmt --all && cargo clippy --workspace --all-targets --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+
+$ cargo test --workspace --offline -- --test-threads=1
+# cli_ui 4/4 (portal help, debug/autostart help, autostart status, ui-trace vs mock)
+# trowel-core 82 + long_files 13
+# troweld lib 13, daemon 9/9, proto_replay 3/3
+# ui_phase6 3/3 (two_phase place badges, f18 STOP/CONT, kill <2s)
+
+$ trowel debug ui-trace --socket $SOCK --json   # troweld --mock
+[
+  {"name":"hello","ms":0.747,"budget_ms":50,"ok":true},
+  {"name":"panel_opened","ms":0.294,"budget_ms":50,"ok":true},
+  {"name":"keyword_refund","ms":0.571,"budget_ms":40,"ok":true},
+  {"name":"hybrid_zebra","ms":0.564,"budget_ms":200,"ok":true}
+]
+
+$ trowel debug snapshot panel results --socket $SOCK --out design/linux/panel-results.json
+# place "p. 3"; weaker snapshot has "0:06" + weaker row; code "L12–40"
+
+$ trowel autostart status
+not-found
+# read-only; `autostart on` was not run.
+
+$ trowel portal-pick-folder --help
+# zenity dialog not opened.
+```
+
+**Not measured / not done (honest):** live omarchy-shell QSG frame times (keepLoaded; would need a shell restart); macOS reference screenshots (no Mac); IME retest with Mozc/wtype (P0 `/tmp/trowel-spike/panel-preedit.png` still the evidence; fcitx5 left on `keyboard-us`); theme×scale grim matrix (layout JSON is the Linux oracle); gallery/app windows not launched this session.
+
+No `systemctl enable`, no `$HOME` index, no `hyprctl reload`.
+
+#### Exact next step
+
+PR Phase 6, wait CI, merge to `main`. Then Phase 7. Do not enable the production plugin or index `$HOME` until then.
+
+### 2026-10-13 — Phase 5 merged; Phase 6 started
+
+Human: merge and start phase 6.
+
+- Phase 5 committed `23de1ad` + CI fix `17da370` (doctor model/gpu/worker may FAIL on GitHub runners with no GGUFs). PR **https://github.com/thakurious/trowel/pull/6** merged to `main` (`52f274d`). CI rust + GitGuardian green. Linked to this thread.
+- Branched `phase-6-ui`. UI-DESIGN §6 library: `ui/qml/Trowel/{Theme,Motion,Strings,Client}` + Keycap/PlaceBadge/MomentBar/ResultRow/GroupHeader/WeakerFold/QueryField/PreviewPane/HotkeyRecorder/FolderRow/ProgressRing/EmptyState/Banner/KindIcon + monochrome SVGs.
+- `Client.qml`: Quickshell `Socket` + `SplitParser` JSON-lines, `gen` stale-drop, ListModel insert/remove/move (no wholesale `clear`).
+- Plugin: real panel (780/330, 16 % top, 120 ms two-phase search, keyboard map, empty states, preview column) + `bar-widget` with ProgressRing popup. Id stays `io.github.thakurious.trowel-dev` (do not rescan/enable; live spike is keepLoaded).
+- `ui/gallery/shell.qml`, `ui/app/shell.qml` (1040×700). `trowel portal-pick-folder` via zenity (not invoked — would open a dialog).
+- Not done: Settings/Onboarding 5 steps, Quick Look window, hotkey recorder write path, §5 frame budgets, §9 screenshots (no macOS reference), IME retest, F18 kill-daemon-while-open.
+
+#### Evidence
+
+```
+$ cargo fmt --all && cargo clippy --workspace --all-targets --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.97s
+
+$ cargo test --workspace --offline
+# troweld daemon 9/9, proto_replay 3/3, cli_ui portal-pick-folder --help ok
+
+$ trowel portal-pick-folder --help
+# documents the portal FileChooser helper (zenity). Dialog not opened.
+```
+
+No `systemctl enable`, no `$HOME` index, no hypr reload, IME left on `keyboard-us`. Gallery/app not launched (would open windows).
+
+#### Exact next step
+
+Wire panel search against `troweld --mock` without restarting omarchy-shell; then Settings/Onboarding in `trowel-app`. Do not commit Phase 6 until asked.
 
 ### 2026-10-13 — Phase 5 complete
 

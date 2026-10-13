@@ -1,3 +1,5 @@
+mod autostart;
+mod debug_ui;
 mod index_service;
 mod parity;
 mod worker;
@@ -163,6 +165,42 @@ enum Commands {
         #[arg(long)]
         exclude_ext: Vec<String>,
     },
+    /// Print a folder path chosen via the desktop portal (UI-DESIGN §6.0).
+    PortalPickFolder,
+    /// Headless UI probes (UI-DESIGN §5, TESTING §4).
+    Debug {
+        #[command(subcommand)]
+        cmd: DebugCmd,
+    },
+    /// Start troweld at login (`systemctl --user enable troweld.socket`).
+    Autostart { action: AutostartAction },
+}
+
+#[derive(Subcommand)]
+enum DebugCmd {
+    /// Time hello / panel_opened / keyword / hybrid against the daemon.
+    UiTrace {
+        #[arg(long)]
+        socket: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Write a layout+results JSON snapshot (no grim; no macOS references here).
+    Snapshot {
+        surface: String,
+        state: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum AutostartAction {
+    Status,
+    On,
+    Off,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -402,6 +440,47 @@ fn main() {
                 linger,
             );
             std::process::exit(code);
+        }
+        Commands::PortalPickFolder => {
+            if let Err(err) = cmd_portal_pick_folder() {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Debug { cmd } => {
+            let err = match cmd {
+                DebugCmd::UiTrace { socket, json } => {
+                    debug_ui::ui_trace(socket.unwrap_or_else(debug_ui::default_socket), json)
+                }
+                DebugCmd::Snapshot {
+                    surface,
+                    state,
+                    out,
+                    socket,
+                } => debug_ui::snapshot(
+                    socket.unwrap_or_else(debug_ui::default_socket),
+                    &surface,
+                    &state,
+                    out.unwrap_or_else(|| {
+                        PathBuf::from("design/linux").join(format!("{surface}-{state}.json"))
+                    }),
+                ),
+            };
+            if let Err(e) = err {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Autostart { action } => {
+            let err = match action {
+                AutostartAction::Status => autostart::status(),
+                AutostartAction::On => autostart::set(true),
+                AutostartAction::Off => autostart::set(false),
+            };
+            if let Err(e) = err {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
     }
 }
@@ -1255,4 +1334,22 @@ fn cmd_index_service(
     };
     let service = IndexService::new(main, code, model, ready, backfill, new_limit, linger);
     service.serve()
+}
+
+/// D4 / UI-DESIGN §6.0: zenity FileChooser (portal-backed on this desktop).
+/// Prints the path; cancel is exit 1 with no stdout.
+fn cmd_portal_pick_folder() -> Result<(), String> {
+    let out = std::process::Command::new("zenity")
+        .args(["--file-selection", "--directory", "--title=Choose a folder"])
+        .output()
+        .map_err(|err| format!("zenity: {err}"))?;
+    if !out.status.success() {
+        return Err("cancelled".into());
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err("cancelled".into());
+    }
+    println!("{path}");
+    Ok(())
 }

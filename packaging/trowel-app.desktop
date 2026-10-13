@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Trowel
+Comment=On-device multimodal file search
+Exec=quickshell -p /usr/share/trowel/app
+Icon=trowel
+Terminal=false
+Categories=Utility;FileTools;
+StartupWMClass=trowel-app
+X-Trowel-Surface=search

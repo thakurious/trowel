@@ -1,2 +1,21 @@
 module Trowel
-# Shared QML module. Components land in Phase 6.0.
+singleton Theme 1.0 Theme.qml
+singleton Motion 1.0 Motion.qml
+singleton Strings 1.0 Strings.qml
+Client 1.0 Client.qml
+Keycap 1.0 Keycap.qml
+PlaceBadge 1.0 PlaceBadge.qml
+MomentBar 1.0 MomentBar.qml
+ResultRow 1.0 ResultRow.qml
+GroupHeader 1.0 GroupHeader.qml
+WeakerFold 1.0 WeakerFold.qml
+QueryField 1.0 QueryField.qml
+PreviewPane 1.0 PreviewPane.qml
+HotkeyRecorder 1.0 HotkeyRecorder.qml
+FolderRow 1.0 FolderRow.qml
+ProgressRing 1.0 ProgressRing.qml
+EmptyState 1.0 EmptyState.qml
+Banner 1.0 Banner.qml
+KindIcon 1.0 KindIcon.qml
+SearchSession 1.0 SearchSession.qml
+FilterBar 1.0 FilterBar.qml
