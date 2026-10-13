@@ -235,6 +235,18 @@ soak is clean.
 
 ---
 
+## Phase 8: Launcher, calculator, clipboard (`phase-8-launcher`)
+
+Approved 2026-10-13 (DECISIONS D18–D24). The full plan is in **`LAUNCHER-PLAN.md`**: L0 spikes →
+L1 protocol v2 + `state.sqlite` + mock → L2 apps ∥ L2c calculator ∥ L3 clipboard → L4 UI → L5
+Omarchy integration and hardening → L6 extras. It touches no Phase 7 gate, so it may run while the
+Phase 7 soak is open.
+
+**Acceptance:** each L-phase acceptance line in `LAUNCHER-PLAN.md` is demonstrated with output in
+`PROGRESS.md`, and the P4 evals re-run with identical numbers after L4.
+
+---
+
 ## Cross-cutting workstreams
 
 - **Fidelity harness** (from Phase 0, permanent): reference vectors (Vulkan and CPU) plus the three

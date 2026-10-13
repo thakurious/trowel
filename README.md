@@ -44,6 +44,7 @@ Packaged install (Phase 7 PKGBUILD): `makepkg -si` then `trowel setup`.
 | **[UI-DESIGN.md](UI-DESIGN.md)** | The visual and motion spec: Omarchy plugin hosting, theme-token mapping, exact panel/window geometry from the Swift source, keyboard map, motion curves, smoothness budgets, visual QA. |
 | **[PROTOCOL.md](PROTOCOL.md)** | The `troweld` socket protocol v1 that every UI speaks (search with stale-dropping, previews, status, config). It is frozen in Phase 1 so the UI can be built against `troweld --mock`. |
 | **[ROBUSTNESS.md](ROBUSTNESS.md)** | The Linux failure-mode matrix (no FSEvents history, inotify limits, poison files, GPU loss, suspend, disk full, corruption) with the required handling, supervision layout and `trowel doctor`. |
+| **[LAUNCHER-PLAN.md](LAUNCHER-PLAN.md)** | *Proposal (Phase 8+, awaiting sign-off):* Raycast-style app launching, inline calculator and rich clipboard history on Omarchy, with proposed decisions, protocol v2 ops, phases L0–L6, budgets and open questions. |
 
 **Reading order for implementers:** README → ARCHITECTURE §A → DECISIONS → EXECUTION-PLAN (then,
 per phase: PORT-MAP rows + PROTOCOL / UI-DESIGN / ROBUSTNESS as referenced) → TESTING.

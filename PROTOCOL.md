@@ -109,7 +109,7 @@ repeat requests in under 5 ms.
 |---|---|---|
 | `open` | `{segment_id\|path}` | Opens at the matched place: `evince -p` / `zathura -P` for PDF pages, `mpv --start=` for media, the editor at the line for code, otherwise `xdg-open`. The daemon picks the command; see `PORT-MAP.md` §D `CodeEditors`. |
 | `reveal` | `{path}` | `org.freedesktop.FileManager1.ShowItems`, falling back to opening the parent folder. |
-| `copy_path` | `{path}` | Returns `{text}`. The UI copies it with `wl-copy`; the daemon never touches the clipboard. |
+| `copy_path` | `{path}` | Returns `{text}`. The UI copies it with `wl-copy`. (v1 rule. From v2 the daemon may write the clipboard for `clip_paste` / `calc_copy`, see DECISIONS D21.) |
 | `quick_look` | `{segment_id}` | Asks `trowel-app` to open the large preview at the place, starting the app if needed. |
 
 ### Indexing control & settings

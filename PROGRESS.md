@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 7 on `phase-7-hardening` (from `origin/main` @ P6 merge). Packaging + `trowel setup` done on this machine. 72 h soak and full TESTING §7 suite are **not** done.
+- **Phase:** 8 (`phase-8-launcher`, from `main` @ `9b3f4d5`, the P7 merge). D18–D24 are approved. L0 spikes are in progress. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) are still open and independent. Before Phase 8, Phase 7 ran on `phase-7-hardening` (from `origin/main` @ P6 merge). Packaging + `trowel setup` done on this machine. 72 h soak and full TESTING §7 suite are **not** done.
 - **Live:** `troweld.socket` **enabled**. Plugin `io.github.thakurious.trowel` enabled. `onboarded=true`. Index has **5478 files in FTS, 0 document vectors** (battery backfill gated). `sd_notify` datagram READY is fixed (Type=notify no longer times out). Super+D search works for prefix keywords (`bitw` → `bitwig_cinematic_album_workbook.pdf`); hybrid no longer wipes those hits before embeddings exist.
-- **Next step:** Merging `phase-7-hardening` to `main` (this session). Soak / `makepkg -si` on a fresh account remain open.
+- **Next step:** finish the L0 spikes (`LAUNCHER-PLAN.md` §4 L0), then L1 (protocol v2 + `state.sqlite` + mock).
 
 ## Gates
 
@@ -63,9 +63,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Open questions for the human
 
-1. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
-2. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
-3. **zbus for F7?** Not added. F7 uses `gdbus monitor` + sysfs + SIGUSR2 for tests. Say if you still want zbus.
+1. **`wl-clipboard-rs`:** decide after spike L0.3 (does file paste need a multi-MIME offer?).
+2. **Interactive L0 spikes:** L0.2–L0.5 need the human to copy from real apps (Nautilus, Firefox, 1Password/Bitwarden) and to allow test keystrokes into a scratch window.
+
+Resolved 2026-10-13 (human accepted every recommendation, see DECISIONS D18–D24): no Jira; plugin `qmllint` stays local-only; no zbus; Phase 8 decisions approved.
 
 ## Desktop changes to revert
 
@@ -100,6 +101,20 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-13 — Phase 8 proposal: launcher + clipboard (plan only, no code)
+
+- Wrote `LAUNCHER-PLAN.md` (linked from README). It covers Raycast-style app launching and rich clipboard history built on Omarchy mechanisms. There are no code changes and no desktop config was touched.
+- Verified Omarchy facts (recorded in the plan §0):
+  - Apps launch through `uwsm-app -- gtk-launch <id>.desktop` (`services/AppLibrary.qml`).
+  - Hidden entries come from `launcher.hides` plus `services/hidden-entries.sh`.
+  - Ranking is `services/AppSearch.js` `fuzzyScore`.
+  - The `shell.appLibrary` facade is injected only for `kind: "menu"` plugins (`shell.qml:603`).
+  - `omarchy.clipboard` watches text and image/png only and keeps 300 entries in `~/.local/state/omarchy/clipboard-history.json`. There are 0 file entries here, and 401 image blobs (145 MB) for 50 live image entries, because there is no GC.
+  - Paste is `wl-copy` + 150 ms + `wtype -M shift -k Insert -m shift`.
+  - wl-clipboard 2.3.0 and wtype 0.4 are installed. The systemd user env has `WAYLAND_DISPLAY` / `HYPRLAND_INSTANCE_SIGNATURE`.
+- Added a Raycast-style inline calculator to the plan: P-D24 proposes `fend-core` (a new dependency that needs approval; `qalc` is rejected), with protocol op `calc`, phase L2c, a false-positive corpus gate and a < 1 ms budget. Currency stays off unless the human opts in.
+- **Next step:** the human answers LAUNCHER-PLAN §7 (approve P-D18–P-D24, `fend-core`, currency, binds, `wl-clipboard-rs`, retention, L6 order). Then branch `phase-8-launcher` and run the L0 spikes. Phase 7 soak / fresh-account `makepkg -si` are still open and independent.
 
 ### 2026-10-13 — Phase 7 start: Trowel name, Super+D onboarding, setup
 

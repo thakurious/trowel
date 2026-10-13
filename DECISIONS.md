@@ -213,3 +213,66 @@ does to your files, and it nods to upstream DigUp without reusing its name. Iden
 Omarchy plugin id `io.github.thakurious.trowel`; XDG dirs `~/.local/share/trowel`,
 `~/.config/trowel`, `~/.cache/trowel`, `$XDG_RUNTIME_DIR/trowel/`. Upstream file and type names
 (`DigUpKit`, `Sources/digup`, …) keep their spelling when cited.
+
+---
+
+> **D18–D24** were approved by the human on 2026-10-13 ("accept all recommendations"). The
+> full rationale, rejected alternatives and phases are in `LAUNCHER-PLAN.md`. The entries below are
+> the binding summary.
+
+## D18. Scope: **launcher + calculator + clipboard + file search, one panel, Super+D**
+
+Trowel becomes a Raycast-style command bar for Omarchy. Super+D stays the only default bind.
+Trowel does **not** offer to take Super+Space (the Omarchy menu). `trowel setup` *offers* the
+Super+Ctrl+V takeover as an opt-in that defaults to **no** (D23). File search behavior, fidelity
+invariants and eval gates are unchanged, and the new sources never enter `Searcher`.
+
+## D19. Apps: **indexed by `troweld`, launched the Omarchy way**
+
+A hand-written Desktop Entry parser (no new crate), `notify` watches, hidden entries exactly as
+Omarchy's `launcher.hides` + `services/hidden-entries.sh`, and ranking ported from Omarchy's
+`services/AppSearch.js` `fuzzyScore` (parity-gated), with frecency only as a tiebreak. Launch is
+`uwsm-app -- gtk-launch <id>.desktop`. *Rejected:* the `shell.appLibrary` facade (it needs
+`kind: "menu"`, does JS work in the shell process, and isn't available to `trowel-app` or the CLI).
+
+## D20. Clipboard: **Trowel's own capture and store**
+
+`troweld` supervises `wl-paste --watch trowel clip-capture`, with metadata in
+`~/.local/share/trowel/state.sqlite` (separate from `index.sqlite`, so D16 is untouched) and blobs
+in `~/.local/share/trowel/clipboard/` with refcounted GC. Omarchy's history is imported once and
+never modified. Retention defaults: **1000 entries, 30 days, 512 MB of blobs**, and pins are never
+evicted.
+
+## D21. **The daemon may write the clipboard and send the paste keystroke**
+
+This supersedes the PROTOCOL v1 note that "the daemon never touches the clipboard". The UI hides
+the panel, then the daemon runs `wl-copy` (with the stored MIME) and, for paste, Omarchy's
+`wtype -M shift -k Insert -m shift` after the measured delay. `copy_path` keeps its v1 behavior.
+
+## D22. **Protocol v2**
+
+PROTOCOL v1 plus the `apps_*`, `clip_*` and `calc*` ops and the `clipboard` event, as specified in
+`LAUNCHER-PLAN.md` §3. `hello` capabilities gain `apps`, `clipboard` and `calc`. The tables move
+into `PROTOCOL.md` in the L1 commit that implements them.
+
+## D23. Coexistence with `omarchy.clipboard`
+
+Both watchers may run. `trowel setup` **offers** two changes and defaults both to no: disabling
+`omarchy.clipboard` (`disabledPlugins[]`), and rebinding Super+Ctrl+V to
+`omarchy-shell trowel clipboard`. Each change is backed up as `<file>.bak.trowel-<ts>` and
+reverted by `trowel uninstall`.
+
+## D24. Calculator: **`fend-core`, in-process, offline**
+
+`fend-core` is approved as a dependency. It evaluates inside `troweld` with a 20 ms interrupt.
+**No currency conversion** (D13: no network). *Rejected:* `qalc` (a system package, subprocess per
+keystroke, network for currency) and a hand-written evaluator (no units or bases).
+
+## Related approvals (2026-10-13)
+
+- `wl-clipboard-rs` is **not** approved yet. Decide after spike L0.3 shows whether file paste needs
+  a multi-MIME offer.
+- Order of the extras: Omarchy commands → window switcher → clipboard OCR.
+- `qmllint` for plugin QML stays a **local-only** check (no Omarchy tree in CI).
+- No zbus. F7 stays on `gdbus monitor` + sysfs.
+- No Jira logging.
