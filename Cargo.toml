@@ -26,3 +26,6 @@ memmap2 = "0.9"
 sha2 = "0.10"
 exif = { version = "0.5", package = "kamadak-exif" }
 walkdir = "2"
+notify = "6"
+toml = "0.8"
+libc = "0.2"

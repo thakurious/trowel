@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 4 on `phase-4-search` (Searcher + `trowel eval`). Acceptance demonstrated.
-- **Branch:** `phase-4-search` (from `main` @ `2d6bf60`)
-- **Next step:** merge this branch to `main`, then start Phase 5 (`troweld`, watcher, PROTOCOL for real, doctor) on `phase-5-daemon`. fcitx5 stays on `keyboard-us`. Never index `$HOME` until Phase 5 acceptance.
+- **Phase:** 5 on `phase-5-daemon`, PR **#6**. CI rust failed once: `estimate_and_status_subscribe` required model GGUFs. Fixed: only daemon/tools/disk/index must be non-FAIL.
+- **Branch:** `phase-5-daemon` (from `main` @ `35596ea`)
+- **Next step:** wait for CI, merge PR #6, then Phase 6 UI. Do not index `$HOME`. Do not `systemctl enable`. fcitx5 stays on `keyboard-us`.
 
 ## Gates
 
@@ -19,7 +19,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P2 extractors + traps | ✅ | `cargo test --workspace`: trowel-core **70/70**, trowel-proto **5/5**, proto_replay **3/3**. Traps classify (TS vs MPEG-TS, project screenshots-only, leading-dash / newline / 255-byte / invalid-UTF-8 names, 0-byte MP4, symlink loop, truncated PDF and fake docx fail with a reason). `sleep 30` killed in 400 ms. `trowel estimate --json` over a Linux-built testbed: 22 files, dataset 400 skipped, 3 screenshots, git code crawl keeps tracked+untracked-not-ignored only. No Mac in this environment — counts are Rules-faithful Linux goldens, not a numeric macOS dump. |
 | P3 pipeline + crash/resume | ✅ | `cargo test --workspace`: trowel-core **71/71** + long_files **13/13**, trowel-cli pipeline **3/3**, proto **5/5**, proto_replay **3/3**. `scripts/crash-resume.sh`: vectors **10→10** after `kill -9` ×50, no re-embed of finished files. Poison n≥2 → `Couldn't be read safely`. Touch one file → `changed=1`. Keyword search finds the indexed note. |
 | P4 evals meet TESTING §3 | ✅ | Linux testbed `/tmp/trowel-eval` (no Mac). `synthetic.json` ALL **37/37 R@1=1.00** (TESTING: 0.88). `code.json` **41/41**. `multilingual.json` ALL **R@1=0.92** / R@5=0.98 / R@10=1.00. 0 expected answers folded on all three. `real/` not run (CLAUDE.md: no `$HOME` until Phase 5). |
-| P5 daemon + robustness + doctor | ⬜ | |
+| P5 daemon + robustness + doctor | ✅ | `cargo test -p troweld --test daemon` **9/9** (folder-change, overflow SIGUSR1, suspend/resume SIGUSR2, idle RSS ≤120 MB + `release_vectors`, estimate+subscribe+doctor). `trowel doctor` exit 0, no FAIL (daemon/index WARN: units not enabled, `$HOME` not indexed). systemd written, **not enabled**. F7 via `gdbus` PrepareForSleep + sysfs, no zbus. |
 | P6 UI checklist + budgets + visual QA | ⬜ | |
 | P7 fault injection + packaging + soak | ⬜ | |
 
@@ -48,11 +48,21 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **pango-view** on this distro has no `--paper` / no cairo paper backend. Do not pass `--paper=letter`.
 - **Eval index** should `--exclude $TB/traps/linux`. Those crawler-poison files (`x.txt`, `-notes.txt`) are Phase 2 traps, not in upstream evals; leaving them in the index stole R@1 on image/multilingual queries.
 - **`trowel index` fingerprint:** do not pre-check a guessed `worker_source()` string. The live worker reports `google/embeddinggemma-2@bfcd298 llama.cpp-vectors1 text-q8_0+mmproj-q8_0`; a second index run would refuse to resume. `Indexer::full_worker` already `adopt()`s the real line.
+- **Phase 5 daemon does not crawl default `~/Desktop`… roots.** `onboarded=false` until the user finishes onboarding; F1 sync and the watcher start only then. Tests pass `--index` / `--config` under `/tmp`.
+- **New crates (named in DECISIONS / PROTOCOL):** `notify` 6.1 (inotify), `toml` 0.8 (`config.toml`), `libc` 0.2 (`flock`, `SO_PEERCRED`, `statvfs`/`statfs`, signals). `base64` already a workspace dep (PROTOCOL paths + worker vectors). **No zbus:** F7 is `gdbus monitor --system --dest org.freedesktop.login1` for `PrepareForSleep`, plus `/sys/power/suspend_stats/success`. Tests inject SIGUSR1 (overflow rescan) and SIGUSR2 (sleep toggle).
+- **Helper binary:** `$TROWEL`, else sibling of `troweld` named `trowel`, else `PATH`. Tests set `TROWEL` to `target/debug/trowel` and `TROWEL_LINGER=3`. Child gets `PR_SET_PDEATHSIG=SIGTERM` so a test `kill()` of troweld does not leave `index-service` holding the DB.
+- **PowerPolicy:** sysfs `/sys/class/power_supply/*/type` Mains `online` / Battery `Discharging`. Gates `--backfill` only; `index_on_battery=true` never blocks.
+- **Query encoder:** text-only `trowel-worker --text-only` (`TROWEL_WORKER` or `cpp/build-{vulkan,cpu}/trowel-worker`). Idle `encoder_idle_seconds` (default 600) closes the worker and `release_vectors`. Fake indexes still use FakeEmbedder.
+- **F3/F4:** `statfs` NFS/SMB/CIFS/FUSE → 30 min poll, no inotify. Watch setup failure sets overflow → F1 sync.
+- **F9:** `statvfs` <500 MB or <5% → `paused_reason=disk_full`.
+- **F10:** `PRAGMA quick_check` on open; failure quarantines to `index.sqlite.corrupt-<ts>` and starts fresh. Index dir `0700`, DB `0600`.
+- **set_hotkey** writes `$XDG_CONFIG_HOME/hypr/trowel.lua` and does **not** `hyprctl reload`.
 
 ## Open questions for the human
 
 1. **Jira ticket?** Branch names have no key. Skip logging unless you give one.
 2. **qmllint import path.** For CI, should we add `-I /usr/share/omarchy/shell` (needs that tree in the arch container) or keep plugin QML lint as a local-only check?
+3. **zbus for F7?** Not added. F7 uses `gdbus monitor` + sysfs + SIGUSR2 for tests. Say if you still want zbus.
 
 ## Desktop changes to revert
 
@@ -87,6 +97,90 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-13 — Phase 5 complete
+
+Human: complete phase 5 fully.
+
+- Previews: PDF `band` 0–1 from `SearchText::matches`, `pdftoppm` page PNG, audio ~400 `peaks` via ffmpeg s16le, video `frame` via ffmpeg `-ss`, LRU 256 MB under `$XDG_CACHE_HOME/trowel/previews`.
+- Overflow: inotify `need_rescan` / watch errors, idle reaper F1 sync, SIGUSR1 inject. Test writes a file then SIGUSR1 → searchable.
+- F7: `gdbus` PrepareForSleep (pause helper, drop watches) / resume F1; SIGUSR2 toggle for tests. No zbus.
+- Encoder: `QueryEncoder` text-only worker; idle closes it + `release_vectors`. Fake path unchanged.
+- RSS: `idle_releases_vectors` asserts `/proc/<pid>/status` VmRSS ≤ 120 MB after release.
+- PROTOCOL leftovers: `estimate` events, `model_status`/`model_download` (status; files already on disk), `set_hotkey` (no hypr reload), `subscribe` status, config.toml watch, code watcher 2 s / 10 min, network/FUSE poll, F9 disk, F10 quick_check.
+
+#### Evidence
+
+```
+$ cargo clippy --workspace --all-targets --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.69s
+
+$ cargo test -p troweld --offline
+test result: ok. 13 passed   # lib
+test result: ok. 9 passed    # daemon (folder_change, overflow, suspend_resume, idle RSS, estimate+doctor)
+test result: ok. 3 passed    # proto_replay --mock goldens
+
+$ cargo run -p trowel-cli --offline --quiet -- doctor
+daemon     WARN  no socket at /run/user/1000/trowel/troweld.sock
+           fix: systemctl --user start troweld
+model      OK    .../embeddinggemma-2-Q8_0.gguf + .../mmproj-...
+tools      OK    pdftotext pdftoppm pdfinfo ffmpeg ffprobe tesseract git
+inotify    OK    max_user_watches=524288
+gpu        OK    GPU0:
+worker     OK    .../cpp/build-vulkan/trowel-worker
+disk       OK    enough free space
+index      WARN  no index yet
+exit 0 (no FAIL). Daemon/index WARN because units are not enabled and $HOME is not indexed (CLAUDE.md).
+```
+
+#### Exact next step
+
+Open the PR and merge to `main`; then Phase 6 UI against the real daemon (still `--mock` goldens). Do not `systemctl enable`. Do not index `$HOME`.
+
+### 2026-10-13 — Phase 5 helper, watcher sync, previews
+
+On `phase-5-daemon` (uncommitted). Human: continue.
+
+- `troweld` spawns `trowel index-service` (`--fake` in tests, `--prune`, `--backfill` unless PowerPolicy blocks). Stdin `sync` / `sync code` / `stop` / `backfill on|off`. Searcher reload ≤2 s (`force` on idle/exit). Pause sends `stop`; resume starts the helper. `config_set` that changes onboarded/roots restarts the watcher + helper.
+- FolderWatch 0.75 s debounce now calls `request_sync` (onboarded roots only). Overflow/`need_rescan` schedules a sync. F1: helper starts with `sync_requested=true`.
+- PROTOCOL `text_of_segment`, `thumbnail` (64/132/264/528, vips, freedesktop cache first), `preview` (typed payload; PDF band / waveform peaks still empty), `typing` embed-ahead + QueryCache 256, `panel_opened` prewarm, encoder-idle `release_vectors`, `open`/`reveal`.
+- F7: poll `/sys/power/suspend_stats/success` then F1 sync. No zbus. Watchdog `sd_notify WATCHDOG=1`.
+
+#### Evidence
+
+```
+$ cargo clippy --workspace --all-targets --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.82s
+
+$ cargo test --workspace --offline
+     Running tests/daemon.rs
+test pause_sets_status ... ok
+test resume_starts_helper_after_pause ... ok
+test second_instance_exits_zero ... ok
+test hello_and_keyword_search ... ok
+test folder_change_indexes_and_search_finds_it ... ok
+test idle_releases_vectors ... ok
+test result: ok. 6 passed
+     Running tests/proto_replay.rs
+test result: ok. 3 passed
+trowel-core 82 + long_files 13 + searcher 1; trowel-cli pipeline 4; troweld lib 9.
+```
+
+`folder_change_indexes_and_search_finds_it`: onboarded temp root (not `$HOME`), wait until `phase=idle`, write `notes.txt`, debounce + helper sync, keyword `harbour` hits, `text_of_segment` contains harbour.
+
+#### Exact next step
+
+Measure idle RSS; fill PDF-band / audio peaks / video frame preview; overflow + doctor-all-green; ask about zbus for PrepareForSleep. Do not start Phase 6. Do not commit unless asked.
+
+### 2026-10-13 — Phase 4 merged; Phase 5 started
+
+- Phase 4 committed `4188ad3`, PR **https://github.com/thakurious/trowel/pull/5** merged to `main` (`35596ea`). CI rust + GitGuardian green. Linked to this thread.
+- Branch `phase-5-daemon` from that main. Real `troweld`: lock, `SO_PEERCRED`, config.toml, Searcher keyword search, pause/status, FolderWatch 0.75 s, `trowel doctor`, `packaging/systemd/{troweld.socket,troweld.service,trowel-index.slice}` (not installed).
+- Tests: troweld lib 4, daemon 3 (F11, hello+keyword, pause), proto_replay mock still 3/3. `cargo clippy --workspace -- -D warnings` clean.
+
+#### Exact next step
+
+Wire `trowel index-service` as the helper, refresh Searcher ≤ 2 s after it writes, then previews (PROTOCOL §4) and F7.
 
 ### 2026-10-12 — Phase 4: Searcher + Linux evals (no macOS)
 

@@ -23,7 +23,7 @@ pub use embedder::{Embedder, Embedding, FakeEmbedder, SharedEmbedder, WorkerInfo
 pub use estimator::{CodeIndexSize, Costs, Estimate, Estimator};
 pub use extract::{
     AudioExtractor, CodeExtractor, CodeLookup, DocExtractor, ExtractError, Extractor,
-    ImageExtractor, Ocr, PdfExtractor, VideoExtractor,
+    ImageExtractor, MediaInfo, Ocr, PdfExtractor, VideoExtractor,
 };
 pub use folder_selection::{FolderSelection, Mark};
 pub use index_store::{FileRecord, IndexCounts, IndexStore};

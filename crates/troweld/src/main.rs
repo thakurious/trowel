@@ -1,9 +1,8 @@
-mod mock;
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use troweld::{engine, mock};
 
 #[derive(Parser, Debug)]
 #[command(name = "troweld", about = "Trowel daemon")]
@@ -20,21 +19,39 @@ struct Args {
     /// Artificial search latency, for superseded/cancel goldens.
     #[arg(long, default_value_t = 0)]
     latency_ms: u64,
+    /// Index directory (`index.sqlite`). Default from config.toml.
+    #[arg(long)]
+    index: Option<PathBuf>,
+    /// Path to `config.toml`.
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Use FakeEmbedder (tests). Never crawls `$HOME`.
+    #[arg(long)]
+    fake: bool,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
-    if !args.mock {
-        eprintln!("troweld is not implemented yet (Phase 5)");
-        return ExitCode::from(2);
+    if args.mock {
+        let opts = mock::MockOpts {
+            socket: args.socket,
+            fixture: args.fixture,
+            latency_ms: args.latency_ms,
+        };
+        if let Err(err) = mock::run(opts) {
+            eprintln!("troweld --mock: {err}");
+            return ExitCode::from(1);
+        }
+        return ExitCode::SUCCESS;
     }
-    let opts = mock::MockOpts {
+    let opts = engine::EngineOpts {
         socket: args.socket,
-        fixture: args.fixture,
-        latency_ms: args.latency_ms,
+        index: args.index,
+        config: args.config,
+        fake: args.fake,
     };
-    if let Err(err) = mock::run(opts) {
-        eprintln!("troweld --mock: {err}");
+    if let Err(err) = engine::run(opts) {
+        eprintln!("troweld: {err}");
         return ExitCode::from(1);
     }
     ExitCode::SUCCESS

@@ -125,6 +125,15 @@ enum Commands {
         #[arg(long)]
         base: Option<PathBuf>,
     },
+    /// Why isn't it working? (`ROBUSTNESS.md` §3).
+    Doctor {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        index: Option<PathBuf>,
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
     /// The app's indexing helper (JSON lines on stdout).
     IndexService {
         #[arg(required = true)]
@@ -177,6 +186,13 @@ fn default_index_dir() -> PathBuf {
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
     PathBuf::from(home).join(".local/share/trowel/index")
+}
+
+fn default_socket_path() -> PathBuf {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    runtime.join("trowel/troweld.sock")
 }
 
 fn options_from(
@@ -325,6 +341,31 @@ fn main() {
             ) {
                 eprintln!("{err}");
                 std::process::exit(1);
+            }
+        }
+        Commands::Doctor {
+            json,
+            index,
+            socket,
+        } => {
+            let sock = socket.unwrap_or_else(default_socket_path);
+            let idx = index.unwrap_or_else(default_index_dir);
+            let report = troweld::doctor::run(Some(&idx), Some(&sock));
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&troweld::doctor::json_report(&report)).unwrap()
+                );
+            } else {
+                for check in &report.checks {
+                    println!("{:<10} {:<4}  {}", check.name, check.status, check.detail);
+                    if let Some(fix) = &check.fix {
+                        println!("           fix: {fix}");
+                    }
+                }
+                if !report.ok {
+                    std::process::exit(1);
+                }
             }
         }
         Commands::IndexService {
