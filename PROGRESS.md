@@ -6,7 +6,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 - **Phase:** 8 (`phase-8-launcher`, from `main` @ `9b3f4d5`, the P7 merge). D18–D24 are approved. L0 spikes are in progress. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) are still open and independent. Before Phase 8, Phase 7 ran on `phase-7-hardening` (from `origin/main` @ P6 merge). Packaging + `trowel setup` done on this machine. 72 h soak and full TESTING §7 suite are **not** done.
 - **Live:** `troweld.socket` **enabled**. Plugin `io.github.thakurious.trowel` enabled. `onboarded=true`. Index has **5478 files in FTS, 0 document vectors** (battery backfill gated). `sd_notify` datagram READY is fixed (Type=notify no longer times out). Super+D search works for prefix keywords (`bitw` → `bitwig_cinematic_album_workbook.pdf`); hybrid no longer wipes those hits before embeddings exist.
-- **Next step:** finish the L0 spikes (`LAUNCHER-PLAN.md` §4 L0), then L1 (protocol v2 + `state.sqlite` + mock).
+- **Next step:** interactive L0.1–L0.6 with the human present (L0.7 is done), then L1 (protocol v2 + `state.sqlite` + mock).
 
 ## Gates
 
@@ -61,6 +61,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **`trowel debug ui-trace` / `snapshot`:** IPC timings vs `--mock` are the measurable PROTOCOL/UI-DESIGN §5 proxy. Live QSG frame times need a keepLoaded omarchy-shell restart (not done). Snapshots write layout+results JSON under `design/linux/`; no grim, no macOS references.
 - **Quickshell 0.3.1 qmlscanner:** QML modules must live **inside** the `-p` config folder. `import "../qml/Trowel"` is rejected (`Client is not a type`; log: `Module path is outside of the config folder` / `qrc:/qs-blackhole`). Fix: `ui/{app,gallery,omarchy-plugin}/Trowel` → symlink `../qml/Trowel` and `import "Trowel"`. Verified: `quickshell -p ui/app` → `Configuration Loaded`. `font.pixelSize` must be int (9.5 broke `WeakerFold`).
 
+- **fend-core 1.5.8** (MIT, `cargo tree`: **zero** transitive deps). API: `Context::new()`, `evaluate_preview_with_interrupt(&str, &Context, &impl Interrupt) -> FendResult` (clones context, no RNG, drops empty / >50 chars / multiline / == input), `Interrupt::should_interrupt`, `get_main_result()`, `set_exchange_rate_handler_v{1,2}` (left unset → `5 USD to EUR` = no card). Spike output (release, preview mode): `5 ft to cm`→`152.4 cm` 111 µs, `3 GiB in MB`→`3221.225472 MB`, `90 min to hours`→`1.5 hours`, `0xff to binary`→`11111111`, `2^64`→`18446744073709551616`, `10/3`→`approx. 3.3333333333`, `10^10^10` interrupted at **20.0 ms**. `200 + 15%` natively = `200.15` (Raycast = 230 → rewrite). **Dice (`5d66`) ignores the interrupt**: `a-5d66-4b5c` 67 ms. False positives without the gate: URLs (lambda results), `key:2026-06-30`, `M-417`. **With the LAUNCHER-PLAN L2c gate:** apps 179 / files 509 / eval queries 126 / clipboard lines 807 → **0 cards**, worst 347 µs; 50 k random strings → no panic, max 20.03 ms. Spike code in the session scratchpad only (not committed); the rules are recorded in L2c.
+- **Icon theme:** `gsettings get org.gnome.desktop.interface icon-theme` → `'Yaru-purple'` (Omarchy sets it per theme). Omarchy's own `AppLibrary` icon scan ignores the theme (first hit across all `*/apps/*`). L2 should walk `Inherits=` from the current theme → hicolor, then fall back to Omarchy's scan order.
+
 ## Open questions for the human
 
 1. **`wl-clipboard-rs`:** decide after spike L0.3 (does file paste need a multi-MIME offer?).
@@ -101,6 +104,14 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-13 — Phase 8 approved; L0.7 (fend-core) done
+
+- Human accepted every recommendation. D18–D24 are in `DECISIONS.md`, `EXECUTION-PLAN.md` has Phase 8, and `PROTOCOL.md` notes D21. Branch `phase-8-launcher` from `main` @ `9b3f4d5`, commit `4522da9`.
+- L0.7 ✅ fend-core verified (see Verified facts), and the L2c gate rules and percent/base rewrites were added to the plan.
+- L0.1–L0.6 ⏳ **not run**: they launch apps, overwrite the live clipboard, or send keystrokes into windows, so they wait for the human (open question 2).
+- `crates/troweld/src/engine.rs` has an uncommitted +10-line change that this session did not make. It was left untouched and was not included in commits.
+- **Next step:** run L0.1–L0.6 with the human present. Then L1: `trowel-proto` v2 types, `state.sqlite`, and mock fixtures.
 
 ### 2026-10-13 — Phase 8 proposal: launcher + clipboard (plan only, no code)
 

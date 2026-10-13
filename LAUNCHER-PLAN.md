@@ -416,6 +416,31 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
   3. The result's text differs from the input.
 
   The `=` view sets `force` and skips rule 1.
+
+  **Reject rules from the L0.7 spike** (applied before evaluation; each fixed a real false
+  positive or stall):
+  - inputs containing `://`, or starting with `/` or `~`: URLs evaluate to lambdas (`\https.(…)`);
+  - an ISO date `dddd-dd-dd`: `key:2026-06-30` evaluates as subtraction;
+  - an ID token (letters, `-`, then a digit, with no spaces, where the left part is not a numeric
+    literal): `M-417` evaluates as mega − 417. `1e3-5` still evaluates;
+  - dice tokens (`d` + digit at a word start, e.g. `5d66`). fend computes dice distributions
+    **without checking the interrupt**: `a-5d66-4b5c` took 67 ms against a 20 ms deadline;
+  - inputs with no digit and no known constant or function name.
+
+  Results containing `\` (function values) are dropped.
+- **Rewrites before evaluation**:
+  - Raycast percent: fend reads `200 + 15%` as `200.15`, so a trailing `A ± B%` is rewritten to
+    `(A) * (1 ± B/100)`, which gives 230. `15% of 80` = 12 already works natively.
+  - A bare base literal (`0b1010`, `0xff`) gets ` to decimal` appended. Otherwise fend echoes it in
+    the same base, and the preview filter hides it.
+- **API**: use `fend_core::evaluate_preview_with_interrupt(input, &ctx, &deadline)`. It clones the
+  context (no variable leakage between keystrokes), disables RNG, and already drops output that is
+  empty, over 50 chars, multi-line or equal to the input. An `approx. ` prefix maps to
+  `approx: true`.
+- **Hard deadline**: because the interrupt is not honored everywhere (dice), `calc` runs on a
+  dedicated daemon thread. The connection gets its reply (no card) at 20 ms regardless, and an
+  overrunning evaluation is abandoned, which is safe because preview mode works on a context
+  clone. While one is still running, new `calc` requests return no card instead of queueing.
 - **Pretty print**: `*` → `×`, `/` → `÷`, and thin-space grouping in `pretty_expr`.
 - **History**: append to `calc_history` in `state.sqlite` when a result is copied or pasted.
   Keystrokes are never recorded.
