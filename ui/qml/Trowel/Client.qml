@@ -9,6 +9,9 @@ QtObject {
 
   property string clientName: "panel"
   property string socketPath: {
+    var override = Quickshell.env("TROWEL_SOCKET")
+    if (override && override.length)
+      return override
     var runtime = Quickshell.env("XDG_RUNTIME_DIR")
     if (!runtime || runtime.length === 0)
       runtime = "/tmp"
@@ -344,8 +347,21 @@ QtObject {
     if (msg.groups !== undefined && msg.gen !== undefined) {
       if (msg.gen < root.gen)
         return
+      var incoming = msg.groups || []
+      var incomingRows = 0
+      for (var gi = 0; gi < incoming.length; gi++)
+        incomingRows += (incoming[gi].rows || []).length
+      // Hybrid (prefix_last false) can return nothing for a half-typed last
+      // word before document vectors exist. Keep the keyword hits.
+      if (incomingRows === 0 && root.rows.count > 0) {
+        root.appliedGen = msg.gen
+        root.meaning = msg.meaning || root.meaning
+        root.tookMs = msg.took_ms || root.tookMs
+        root.searchArrived(msg.gen, root.meaning)
+        return
+      }
       root.appliedGen = msg.gen
-      root.groups = msg.groups || []
+      root.groups = incoming
       root.weaker = msg.weaker || []
       root.meaning = msg.meaning || ""
       root.tookMs = msg.took_ms || 0

@@ -156,6 +156,12 @@ impl Searcher {
         Ok(())
     }
 
+    /// True when at least one document embedding is in memory so hybrid
+    /// meaning search can score. Filename FTS still works when this is false.
+    pub fn has_document_vectors(&self) -> bool {
+        self.matrix.is_some() && !self.row_file.is_empty()
+    }
+
     /// Frees the vectors' memory; keyword search keeps working.
     pub fn release_vectors(&mut self) {
         self.matrix = None;

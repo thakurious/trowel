@@ -4,9 +4,9 @@ use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::io::{self, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -150,19 +150,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
     let store = IndexStore::open(&index_dir).map_err(io_err)?;
     let searcher = Searcher::new(store, true).map_err(io_err)?;
     let socket = opts.socket.unwrap_or_else(|| dir.join("troweld.sock"));
-    if let Some(parent) = socket.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
-            let mut perms = fs::metadata(parent)?.permissions();
-            perms.set_mode(0o700);
-            fs::set_permissions(parent, perms)?;
-        }
-    }
-    let _ = fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket)?;
-    let mut sock_perms = fs::metadata(&socket)?.permissions();
-    sock_perms.set_mode(0o600);
-    fs::set_permissions(&socket, sock_perms)?;
+    let listener = bind_listener(&socket)?;
 
     let status = Status {
         vectors_loaded: searcher.vectors_loaded,
@@ -261,14 +249,83 @@ fn reject_foreign_uid(stream: &UnixStream) -> io::Result<()> {
     Ok(())
 }
 
+/// systemd socket activation (`LISTEN_FDS`) or bind `$XDG_RUNTIME_DIR/trowel/troweld.sock`.
+fn bind_listener(socket: &Path) -> io::Result<UnixListener> {
+    if let Some(listener) = take_systemd_listener() {
+        return Ok(listener);
+    }
+    if let Some(parent) = socket.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+            let mut perms = fs::metadata(parent)?.permissions();
+            perms.set_mode(0o700);
+            fs::set_permissions(parent, perms)?;
+        }
+    }
+    let _ = fs::remove_file(socket);
+    let listener = UnixListener::bind(socket)?;
+    let mut sock_perms = fs::metadata(socket)?.permissions();
+    sock_perms.set_mode(0o600);
+    fs::set_permissions(socket, sock_perms)?;
+    Ok(listener)
+}
+
+fn take_systemd_listener() -> Option<UnixListener> {
+    let fds: u32 = std::env::var("LISTEN_FDS").ok()?.parse().ok()?;
+    if fds == 0 {
+        return None;
+    }
+    if let Ok(pid) = std::env::var("LISTEN_PID") {
+        let pid: u32 = pid.parse().ok()?;
+        if pid != std::process::id() {
+            return None;
+        }
+    }
+    // SD_LISTEN_FDS_START == 3
+    let fd = 3i32;
+    unsafe { Some(UnixListener::from_raw_fd(fd)) }
+}
+
 fn sd_notify(msg: &str) {
-    let Some(path) = std::env::var_os("NOTIFY_SOCKET") else {
+    // systemd's notify socket is SOCK_DGRAM (often `@abstract` or a path).
+    // A stream connect silently fails, so Type=notify never sees READY and
+    // kills troweld after TimeoutStartSec.
+    let Ok(raw) = std::env::var("NOTIFY_SOCKET") else {
         return;
     };
-    let Ok(mut sock) = UnixStream::connect(PathBuf::from(path)) else {
+    if raw.is_empty() {
+        return;
+    }
+    let Ok(sock) = UnixDatagram::unbound() else {
         return;
     };
-    let _ = sock.write_all(msg.as_bytes());
+    let _ = sock.set_nonblocking(true);
+    if let Some(name) = raw.strip_prefix('@') {
+        let mut addr = libc::sockaddr_un {
+            sun_family: libc::AF_UNIX as libc::sa_family_t,
+            sun_path: [0; 108],
+        };
+        let bytes = name.as_bytes();
+        if bytes.len() + 1 >= addr.sun_path.len() {
+            return;
+        }
+        for (i, b) in bytes.iter().enumerate() {
+            addr.sun_path[i + 1] = *b as libc::c_char;
+        }
+        let len = std::mem::offset_of!(libc::sockaddr_un, sun_path) + 1 + bytes.len();
+        unsafe {
+            libc::sendto(
+                sock.as_raw_fd(),
+                msg.as_ptr().cast(),
+                msg.len(),
+                0,
+                std::ptr::from_ref(&addr).cast(),
+                len as libc::socklen_t,
+            );
+        }
+        return;
+    }
+    let _ = sock.send_to(msg.as_bytes(), Path::new(&raw));
 }
 
 fn handle_conn(stream: UnixStream, engine: Arc<Engine>) -> io::Result<()> {
@@ -687,10 +744,20 @@ fn start_search(
             q = rest;
             use_code = true;
         }
-        let vector = if mode == SearchMode::Keyword {
-            None
-        } else {
+        // Hybrid with prefix_last=false is upstream-correct once document
+        // vectors exist. With none yet (first crawl / battery backfill), that
+        // path drops prefix keyword hits like "bitw"→bitwig.pdf and the UI
+        // shows "No good matches". Keep words+prefix until embeddings land.
+        let has_doc_vectors = engine
+            .searcher
+            .lock()
+            .expect("searcher")
+            .has_document_vectors();
+        let (use_query_vector, fts_prefix) = search_plan(mode, prefix_last, has_doc_vectors);
+        let vector = if use_query_vector {
             query_vector(&engine, &q, use_code)
+        } else {
+            None
         };
         let meaning = if vector.is_some() {
             Meaning::Used
@@ -708,7 +775,7 @@ fn start_search(
                 limit as usize,
                 Searcher::Z_GATE,
                 None,
-                prefix_last,
+                fts_prefix,
             ) {
                 Ok(h) => h,
                 Err(err) => {
@@ -787,6 +854,16 @@ fn query_vector(engine: &Engine, text: &str, code: bool) -> Option<Vec<f32>> {
         engine.query_cache.insert(key, values.clone());
     }
     vector
+}
+
+/// `(embed_query, fts_prefix_last)`. Hybrid without document vectors must not
+/// claim meaning-search or drop the in-progress last token.
+fn search_plan(mode: SearchMode, prefix_last: bool, has_doc_vectors: bool) -> (bool, bool) {
+    match mode {
+        SearchMode::Keyword => (false, prefix_last),
+        SearchMode::Hybrid if has_doc_vectors => (true, prefix_last),
+        SearchMode::Hybrid => (false, true),
+    }
 }
 
 fn reload_searcher(engine: &Engine, force: bool) {
@@ -1343,4 +1420,37 @@ fn model_status_json() -> Value {
         "total": ModelFiles::TOTAL_BYTES,
         "downloading": false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hybrid_without_vectors_keeps_prefix() {
+        assert_eq!(search_plan(SearchMode::Keyword, true, false), (false, true));
+        assert_eq!(search_plan(SearchMode::Hybrid, false, false), (false, true));
+        assert_eq!(search_plan(SearchMode::Hybrid, false, true), (true, false));
+        assert_eq!(search_plan(SearchMode::Hybrid, true, true), (true, true));
+    }
+
+    #[test]
+    fn sd_notify_sends_datagram() {
+        let path = std::env::temp_dir().join(format!("trowel-notify-{}.sock", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let sock = UnixDatagram::bind(&path).expect("bind notify sock");
+        sock.set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("read timeout");
+        let prev = std::env::var_os("NOTIFY_SOCKET");
+        unsafe { std::env::set_var("NOTIFY_SOCKET", &path) };
+        sd_notify("READY=1");
+        match prev {
+            Some(p) => unsafe { std::env::set_var("NOTIFY_SOCKET", p) },
+            None => unsafe { std::env::remove_var("NOTIFY_SOCKET") },
+        }
+        let mut buf = [0u8; 32];
+        let n = sock.recv(&mut buf).expect("recv READY");
+        let _ = fs::remove_file(&path);
+        assert_eq!(&buf[..n], b"READY=1");
+    }
 }

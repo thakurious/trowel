@@ -2,6 +2,7 @@ mod autostart;
 mod debug_ui;
 mod index_service;
 mod parity;
+mod setup;
 mod worker;
 
 use std::collections::{BTreeMap, HashSet};
@@ -174,6 +175,22 @@ enum Commands {
     },
     /// Start troweld at login (`systemctl --user enable troweld.socket`).
     Autostart { action: AutostartAction },
+    /// Install plugin, hotkey, and user systemd units (DECISIONS D12).
+    Setup {
+        /// Repo checkout to copy QML from (defaults to walking up from this binary).
+        #[arg(long)]
+        from_tree: Option<PathBuf>,
+        /// Write files only; do not systemctl enable or rescan the live shell.
+        #[arg(long)]
+        no_enable: bool,
+    },
+    /// Remove the user plugin and units. `--purge` also deletes the index.
+    Uninstall {
+        #[arg(long)]
+        purge: bool,
+        #[arg(long)]
+        no_enable: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -478,6 +495,26 @@ fn main() {
                 AutostartAction::Off => autostart::set(false),
             };
             if let Err(e) = err {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Setup {
+            from_tree,
+            no_enable,
+        } => {
+            let mut dirs = setup::SetupDirs::from_env();
+            dirs.from_tree = from_tree;
+            dirs.enable_live = !no_enable;
+            if let Err(e) = setup::setup(&dirs) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Uninstall { purge, no_enable } => {
+            let mut dirs = setup::SetupDirs::from_env();
+            dirs.enable_live = !no_enable;
+            if let Err(e) = setup::uninstall(&dirs, purge) {
                 eprintln!("{e}");
                 std::process::exit(1);
             }

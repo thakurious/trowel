@@ -3,12 +3,12 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
-import "../qml/Trowel"
+import "Trowel"
 
 // StatusMenu.swift → bar-widget. Popup: search, open, pause, folders, settings, quit.
 BarWidget {
   id: root
-  moduleName: (manifest && manifest.id) ? String(manifest.id) : "io.github.thakurious.trowel-dev"
+  moduleName: (manifest && manifest.id) ? String(manifest.id) : "io.github.thakurious.trowel"
 
   property var manifest: null
   property var shell: null

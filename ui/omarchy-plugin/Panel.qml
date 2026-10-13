@@ -5,9 +5,9 @@ import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
-import "../qml/Trowel"
+import "Trowel"
 
-// UI-DESIGN §3 quick panel. Plugin id stays trowel-dev until Phase 7 packaging.
+// UI-DESIGN §3 quick panel. Production plugin id (DECISIONS D12/D17).
 Item {
   id: root
 
@@ -21,8 +21,10 @@ Item {
   property bool codeMode: false
   property var preview: ({})
   property var selectedRow: null
+  property bool configKnown: false
 
-  readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "io.github.thakurious.trowel-dev"
+  readonly property bool needsOnboarding: root.configKnown && client.config && client.config.onboarded === false
+  readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "io.github.thakurious.trowel"
   readonly property int panelWidth: 780
   readonly property int listWidth: 330
   readonly property real topFraction: 0.16
@@ -31,6 +33,8 @@ Item {
   function open(payloadJson) {
     root.opened = true
     root.navigated = false
+    if (root.needsOnboarding)
+      return
     query.queryFieldForce()
     client.panelOpened()
     Qt.callLater(function () {
@@ -175,6 +179,19 @@ Item {
     id: client
     clientName: "panel"
     showWeaker: root.showWeaker
+    onConfigArrived: function (cfg) {
+      root.configKnown = true
+      if (root.opened && root.needsOnboarding)
+        Qt.callLater(function () {
+          onboard.forceActiveFocus()
+        })
+    }
+    onHelloOkChanged: function () {
+      if (client.helloOk && root.opened && !root.needsOnboarding && query.text.length)
+        Qt.callLater(function () {
+          root.onQueryEdited()
+        })
+    }
     onSearchArrived: function (g, meaning) {
       if (meaning === "used")
         root.phase = "meaning"
@@ -231,10 +248,24 @@ Item {
       onClicked: root.dismiss()
     }
 
+    Shortcut {
+      sequence: "Escape"
+      enabled: root.opened && root.needsOnboarding
+      onActivated: root.dismiss()
+    }
+    Shortcut {
+      sequences: ["Return", "Enter"]
+      enabled: root.opened && root.needsOnboarding
+      onActivated: onboard.next()
+    }
+
     Item {
       id: card
       width: Math.min(root.panelWidth, panel.width - 24)
-      height: Math.min(root.maxPanelHeight, fieldCol.implicitHeight + bodyCol.implicitHeight + footer.implicitHeight + 8)
+      // Hidden search chrome still reports implicitHeight, so onboarding
+      // must size the card itself (UI-DESIGN §3 max 560). Empty search is
+      // the query field only; results expand to maxPanelHeight.
+      height: root.needsOnboarding ? Math.min(root.maxPanelHeight, Math.max(360, onboard.implicitHeight)) : (root.phase === "empty" ? Math.min(root.maxPanelHeight, fieldCol.implicitHeight + 8) : root.maxPanelHeight)
       x: Math.round((panel.width - width) / 2)
       readonly property int restY: Math.round(panel.height * root.topFraction)
       y: root.opened ? restY : restY - 6
@@ -281,8 +312,29 @@ Item {
 
         MouseArea {
           anchors.fill: parent
-          onClicked: query.forceActiveFocus()
+          onClicked: {
+            if (!root.needsOnboarding)
+              query.forceActiveFocus()
+          }
         }
+
+        Onboarding {
+          id: onboard
+          visible: root.needsOnboarding
+          anchors.fill: parent
+          client: client
+          onFinished: {
+            root.configKnown = true
+            client.configGet()
+            query.forceActiveFocus()
+            client.panelOpened()
+          }
+        }
+
+        Column {
+          id: searchCol
+          visible: !root.needsOnboarding
+          width: parent.width
 
         Column {
           id: fieldCol
@@ -487,6 +539,7 @@ Item {
               size: 11
             }
           }
+        }
         }
       }
     }

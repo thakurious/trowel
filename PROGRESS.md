@@ -4,9 +4,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 6 complete on `phase-6-ui` (acceptance demonstrated). Phase 5 is on `main` (PR **#6** merged, `52f274d`).
-- **Branch:** `phase-6-ui` (from `main` @ `52f274d`)
-- **Next step:** merge Phase 6, then start Phase 7 (`phase-7-hardening`) from that `main`. Do not index `$HOME`. Do not `systemctl enable`. Do not `hyprctl reload` / Mozc / wtype. fcitx5 stays on `keyboard-us`. Production plugin id `io.github.thakurious.trowel` is Phase 7; keep `-dev` until then.
+- **Phase:** 7 on `phase-7-hardening` (from `origin/main` @ P6 merge). Packaging + `trowel setup` done on this machine. 72 h soak and full TESTING §7 suite are **not** done.
+- **Live:** `troweld.socket` **enabled**. Plugin `io.github.thakurious.trowel` enabled. `onboarded=true`. Index has **5478 files in FTS, 0 document vectors** (battery backfill gated). `sd_notify` datagram READY is fixed (Type=notify no longer times out). Super+D search works for prefix keywords (`bitw` → `bitwig_cinematic_album_workbook.pdf`); hybrid no longer wipes those hits before embeddings exist.
+- **Next step:** Merging `phase-7-hardening` to `main` (this session). Soak / `makepkg -si` on a fresh account remain open.
 
 ## Gates
 
@@ -21,7 +21,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P4 evals meet TESTING §3 | ✅ | Linux testbed `/tmp/trowel-eval` (no Mac). `synthetic.json` ALL **37/37 R@1=1.00** (TESTING: 0.88). `code.json` **41/41**. `multilingual.json` ALL **R@1=0.92** / R@5=0.98 / R@10=1.00. 0 expected answers folded on all three. `real/` not run (CLAUDE.md: no `$HOME` until Phase 5). |
 | P5 daemon + robustness + doctor | ✅ | `cargo test -p troweld --test daemon` **9/9** (folder-change, overflow SIGUSR1, suspend/resume SIGUSR2, idle RSS ≤120 MB + `release_vectors`, estimate+subscribe+doctor). `trowel doctor` exit 0, no FAIL (daemon/index WARN: units not enabled, `$HOME` not indexed). systemd written, **not enabled**. F7 via `gdbus` PrepareForSleep + sysfs, no zbus. |
 | P6 UI checklist + budgets + visual QA | ✅ | `cargo test --workspace` green including `ui_phase6` **3/3** (two-phase place badges `p. 3` / `0:06` / `L12–40`, F18 SIGSTOP stall + CONT reconnect, kill connect fails &lt;2s) and `cli_ui` **4/4** (`ui-trace` vs `--mock` meets IPC budgets). `trowel debug ui-trace --json`: hello 0.75 ms / panel_opened 0.29 ms / keyword_refund 0.57 ms / hybrid_zebra 0.56 ms (budgets 50/50/40/200). Layout snapshots in `design/linux/*.json`. Honest gaps: no macOS refs, no live QSG on keepLoaded shell, IME not retested this phase. |
-| P7 fault injection + packaging + soak | ⬜ | |
+| P7 fault injection + packaging + soak | 🟡 | `trowel setup` installed plugin+socket on this user. `cargo test` includes `setup --no-enable` and F10 corrupt-index quarantine. **Not done:** 72 h `$HOME` soak, `makepkg -si` on a fresh account, SYCL vs Vulkan bench, remaining TESTING §7 rows (hang stub, device-lost ×3, tmpfs disk-full, unmount). |
 
 ## Verified facts
 
@@ -59,6 +59,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **set_hotkey** writes `$XDG_CONFIG_HOME/hypr/trowel.lua` and does **not** `hyprctl reload`.
 - **Hyprland 0.56 `hl.window_rule`** (`/usr/share/hypr/hyprland.lua`): `{ name, match = { class, title, float }, float, size, move, ... }`. `packaging/hypr/trowel-app.lua` matches class `trowel-app` **and** title `Trowel` because Quickshell `appId` is readonly and the window class may be `quickshell`.
 - **`trowel debug ui-trace` / `snapshot`:** IPC timings vs `--mock` are the measurable PROTOCOL/UI-DESIGN §5 proxy. Live QSG frame times need a keepLoaded omarchy-shell restart (not done). Snapshots write layout+results JSON under `design/linux/`; no grim, no macOS references.
+- **Quickshell 0.3.1 qmlscanner:** QML modules must live **inside** the `-p` config folder. `import "../qml/Trowel"` is rejected (`Client is not a type`; log: `Module path is outside of the config folder` / `qrc:/qs-blackhole`). Fix: `ui/{app,gallery,omarchy-plugin}/Trowel` → symlink `../qml/Trowel` and `import "Trowel"`. Verified: `quickshell -p ui/app` → `Configuration Loaded`. `font.pixelSize` must be int (9.5 broke `WeakerFold`).
 
 ## Open questions for the human
 
@@ -99,6 +100,49 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-13 — Phase 7 start: Trowel name, Super+D onboarding, setup
+
+Human: why DigUp; want end-user Super+D; do Phase 7.
+
+- User-facing copy is **Trowel** (D17), not DigUp/Mac.
+- Onboarding lives in `ui/qml/Trowel/Onboarding.qml` and the **panel** shows it when `onboarded=false`.
+- Production plugin id `io.github.thakurious.trowel`. `trowel setup --from-tree` writes user systemd units, plugin symlink, Super+D bind. `LISTEN_FDS` so socket activation works.
+- Live: `troweld.socket` enabled/active; doctor daemon OK, 0 vectors. Plugin enabled (`listPlugins` name Trowel, kinds panel+bar-widget). `-dev` disabled.
+- Backups: `~/.config/omarchy/shell.json.bak.trowel-20261013-131021`, `~/.config/hypr/bindings.lua.bak.trowel-20261013-131021`.
+- **Did not restart omarchy-shell** (lock/bar). Super+D picks up the new panel after one shell restart or logout.
+
+```
+$ trowel setup --from-tree /home/saurabh/Projects/digup-linux
+Trowel is installed.
+  plugin  io.github.thakurious.trowel
+  hotkey  SUPER+D
+  daemon  troweld.socket (user)
+
+$ systemctl --user is-enabled troweld.socket
+enabled
+$ trowel doctor
+daemon OK  model OK  tools OK  worker OK  index OK vectors=0
+```
+
+### 2026-10-13 — trowel-app `Client is not a type`
+
+Human: `quickshell -p ui/app` failed with `Client is not a type`.
+
+- Quickshell 0.3.1 qmlscanner ignores QML outside the config dir. Added `Trowel` symlinks under app/gallery/plugin and `import "Trowel"`.
+- `WeakerFold` `font.pixelSize: 9.5` is invalid (int required) → 10.
+- Recheck: `timeout 3s quickshell -p ui/app` prints **Configuration Loaded**.
+
+### 2026-10-13 — Using Trowel on Linux (no macOS)
+
+Human: macos should not be needed; how to start using it now.
+
+- Runtime is Linux-only. macOS was never a run dependency; `design/linux/*.json` is the visual oracle because this machine has no Mac for screenshot diffs.
+- Started `target/debug/troweld` by hand (pid in `/tmp/troweld.log`). `trowel doctor`: daemon/model/tools/worker/index OK (0 vectors). **Not** `systemctl enable`.
+- Plugin `io.github.thakurious.trowel-dev` is enabled; SUPER+D is bound. omarchy-shell still lists the old spike manifest (`kinds: panel` only) until a shell restart — keepLoaded. `trowel-app` (`quickshell -p ui/app`) does not need that restart.
+- Indexing does not start until onboarding sets `onboarded=true`.
+
+Stop the hand-started daemon: `pkill -f target/debug/troweld`
 
 ### 2026-10-13 — Phase 6 complete (UI)
 

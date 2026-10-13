@@ -1,6 +1,6 @@
 import QtQuick
 import Quickshell.Io
-import "../qml/Trowel"
+import "Trowel"
 
 Item {
   id: root
@@ -92,7 +92,7 @@ Item {
         }
       }
       Text {
-        text: "Open DigUp when you log in"
+        text: "Open Trowel when you log in"
         color: Theme.foreground
         font.pixelSize: Theme.rowTitleSize
         font.weight: Font.DemiBold
@@ -138,7 +138,7 @@ Item {
       }
       Text {
         visible: !(client.config && client.config.roots && client.config.roots.length)
-        text: "No folders yet. Add the ones DigUp should search."
+        text: "No folders yet. Add the ones Trowel should search."
         color: Theme.secondary
       }
       Text {
@@ -160,7 +160,7 @@ Item {
       Text {
         width: parent.width
         wrapMode: Text.Wrap
-        text: "DigUp only reads pictures, PDFs, documents (txt, md, rtf, docx, odt, html), audio and video here; code is read only in the code folders (the Code tab). Keys, certificates and password files are never read, nor are hidden folders like ~/.ssh."
+        text: "Trowel only reads pictures, PDFs, documents (txt, md, rtf, docx, odt, html), audio and video here; code is read only in the code folders (the Code tab). Keys, certificates and password files are never read, nor are hidden folders like ~/.ssh."
         color: Theme.secondary
         font.pixelSize: Theme.captionSize
       }
@@ -249,7 +249,7 @@ Item {
       Text {
         width: parent.width
         wrapMode: Text.Wrap
-        text: "DigUp reads the folders you choose and keeps what it learns in its index, on this Mac. It goes online only to download its model, once, and to check for updates (General), which sends nothing about your files."
+        text: "Trowel reads the folders you choose and keeps what it learns in its index, on this computer. It goes online only to download its model, once, and nothing about your files is sent."
         color: Theme.secondary
         font.pixelSize: Theme.captionSize
       }
