@@ -19,6 +19,12 @@ Item {
     field.forceActiveFocus()
   }
 
+  // Like Spotlight: the panel opens on the last query, selected, so typing replaces it.
+  // `upstream/Sources/DigUpApp/SearchPanel.swift:106`.
+  function selectAll() {
+    field.selectAll()
+  }
+
   function composing() {
     try {
       return String(field.preeditText || "").length > 0

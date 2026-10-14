@@ -206,6 +206,7 @@ Item {
           height: parent.height
           preview: session.preview
           row: session.selectedRow
+          query: session.query
         }
       }
     }

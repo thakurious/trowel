@@ -37,7 +37,14 @@ QtObject {
   property bool showWeaker: false
   property bool stalled: false
   property int stallMs: 2000
+  // A slow reply (a cold hybrid search, a video frame) is not a dead daemon: when nothing has come
+  // back for stallMs, ask for `status`, and only call it stalled if that goes unanswered too (F18).
+  property bool probing: false
+  // Query text per search gen, and the text whose rows are on screen.
+  property var genText: ({})
+  property string rowsText: ""
   property var kinds: []
+  property bool lastSearchCode: false
 
   readonly property string weakerId: "\u0000weaker"
   readonly property string bannerText: {
@@ -93,6 +100,12 @@ QtObject {
   function search(text, mode, code, prefixLast) {
     root.gen += 1
     var g = root.gen
+    var texts = ({})
+    texts[g] = String(text) + (mode === "hybrid" ? "\u0000hybrid" : "")
+    if (root.genText[g - 1] !== undefined)
+      texts[g - 1] = root.genText[g - 1]
+    root.genText = texts
+    root.lastSearchCode = !!code
     var req = {
       op: "search",
       text: text,
@@ -171,10 +184,19 @@ QtObject {
   function openRow(row) {
     if (!row)
       return
+    var loc = null
+    if (row.focus)
+      loc = row.focus
+    else if (row.raw && row.raw.focus)
+      loc = row.raw.focus
+    else if (row.loc !== undefined && row.loc !== null)
+      loc = row.loc
     send({
       op: "open",
       path: row.rowId || row.id || row.path,
-      segment_id: row.segment_id || null
+      segment_id: row.segment_id || null,
+      code: root.lastSearchCode,
+      loc: loc
     })
   }
 
@@ -200,7 +222,8 @@ QtObject {
     send({
       op: "preview",
       segment_id: segmentId,
-      width: width || 450
+      width: width || 450,
+      code: root.lastSearchCode
     })
   }
 
@@ -208,7 +231,8 @@ QtObject {
     send({
       op: "thumbnail",
       segment_id: segmentId,
-      size: size || 132
+      size: size || 132,
+      code: root.lastSearchCode
     })
   }
 
@@ -221,6 +245,11 @@ QtObject {
 
   function startDaemon() {
     starter.running = true
+    reconnectSoon()
+  }
+
+  function reconnectSoon() {
+    reconnectTimer.restart()
   }
 
   function flatten() {
@@ -273,6 +302,7 @@ QtObject {
       matched_meaning: !!r.matched_meaning,
       segment_id: r.segment_id || 0,
       loc: r.loc,
+      focus: r.focus,
       weak: !!weak,
       raw: r
     }
@@ -316,6 +346,7 @@ QtObject {
 
   function onLine(line) {
     root.stalled = false
+    root.probing = false
     stallTimer.stop()
     var msg
     try {
@@ -352,8 +383,12 @@ QtObject {
       for (var gi = 0; gi < incoming.length; gi++)
         incomingRows += (incoming[gi].rows || []).length
       // Hybrid (prefix_last false) can return nothing for a half-typed last
-      // word before document vectors exist. Keep the keyword hits.
-      if (incomingRows === 0 && root.rows.count > 0) {
+      // word before document vectors exist. Keep the keyword hits of that
+      // same text; a query that matches nothing must still clear the list.
+      var asked = root.genText[msg.gen] || ""
+      var hybridOfShown = asked.indexOf("\u0000hybrid") > 0
+          && asked.split("\u0000")[0] === root.rowsText
+      if (incomingRows === 0 && root.rows.count > 0 && hybridOfShown) {
         root.appliedGen = msg.gen
         root.meaning = msg.meaning || root.meaning
         root.tookMs = msg.took_ms || root.tookMs
@@ -361,12 +396,18 @@ QtObject {
         return
       }
       root.appliedGen = msg.gen
+      root.rowsText = asked.split("\u0000")[0]
       root.groups = incoming
       root.weaker = msg.weaker || []
       root.meaning = msg.meaning || ""
       root.tookMs = msg.took_ms || 0
       syncModel()
       root.searchArrived(msg.gen, root.meaning)
+      return
+    }
+    if (msg.present !== undefined && msg.total !== undefined) {
+      // model_status / model_download replies are not events.
+      root.lineEvent(msg)
       return
     }
     if (msg.roots !== undefined) {
@@ -376,7 +417,9 @@ QtObject {
       root.config = msg.config
       root.configArrived(msg.config)
     }
-    if (msg.type && (msg.file || msg.lines || msg.text || msg.peaks || msg.frame || msg.band))
+    // type is enough: an image thumb may have file=null until the pane
+    // falls back to the original path.
+    if (msg.type)
       root.previewArrived(msg)
   }
 
@@ -384,8 +427,27 @@ QtObject {
     interval: root.stallMs
     repeat: false
     onTriggered: {
-      if (root.connected)
+      if (!root.connected)
+        return
+      if (root.probing) {
         root.stalled = true
+        return
+      }
+      root.probing = true
+      root.send({
+        op: "status"
+      })
+    }
+  }
+
+  // Quickshell Socket drops `connected` when troweld restarts and does not
+  // retry on its own. Must be a property: Client is a QtObject.
+  property Timer reconnectTimer: Timer {
+    interval: 400
+    repeat: false
+    onTriggered: {
+      if (root.wantConnected && !root.sock.connected)
+        root.sock.connected = true
     }
   }
 
@@ -403,19 +465,25 @@ QtObject {
     onConnectionStateChanged: {
       if (connected) {
         root.lastError = ""
+        root.reconnectTimer.stop()
         root.hello()
       } else {
         root.helloOk = false
         root.state = "offline"
+        if (root.wantConnected)
+          root.reconnectTimer.restart()
       }
     }
     onError: function () {
       root.state = "offline"
+      if (root.wantConnected)
+        root.reconnectTimer.restart()
     }
   }
 
   property Process starter: Process {
     command: ["systemctl", "--user", "start", "troweld"]
     running: false
+    onExited: root.reconnectSoon()
   }
 }

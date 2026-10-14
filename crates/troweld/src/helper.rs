@@ -1,15 +1,18 @@
 //! Indexing helper: `trowel index-service`. `upstream/Sources/DigUpApp/Engine.swift` `startHelper`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::config_file::expand_tilde;
 use trowel_proto::Config;
+
+const STOP_GRACE: Duration = Duration::from_secs(15);
 
 pub struct HelperOpts {
     pub index_dir: PathBuf,
@@ -30,7 +33,7 @@ impl Helper {
         on_event: impl Fn(Value) + Send + 'static,
     ) -> std::io::Result<Arc<Self>> {
         let bin = locate_trowel();
-        let mut cmd = Command::new(&bin);
+        let mut cmd = index_command(&bin);
         cmd.arg("index-service")
             .arg("--index")
             .arg(&opts.index_dir)
@@ -78,13 +81,15 @@ impl Helper {
         unsafe {
             use std::os::unix::process::CommandExt;
             cmd.pre_exec(|| {
-                // SAFETY: called in the child after fork, before exec.
+                // SAFETY: called in the child after fork, before exec. Only async-signal-safe
+                // syscalls. Priority and the death signal survive the exec of `systemd-run --scope`
+                // into the helper, and the worker it starts inherits the priority.
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0);
+                lower_priority();
                 Ok(())
             });
         }
-        let mut child = cmd
-            .spawn()
+        let mut child = spawn_from_lasting_thread(cmd)
             .map_err(|err| std::io::Error::other(format!("spawn {}: {err}", bin.display())))?;
         let stdin = child.stdin.take();
         let stdout = child.stdout.take();
@@ -102,12 +107,17 @@ impl Helper {
                         on_event(event);
                     }
                 }
+                let mut signal = None;
                 if let Ok(mut slot) = helper_exit.child.lock() {
                     if let Some(mut child) = slot.take() {
-                        let _ = child.wait();
+                        use std::os::unix::process::ExitStatusExt;
+                        signal = child.wait().ok().and_then(|s| s.signal());
                     }
                 }
-                on_event(serde_json::json!({"event": "exited"}));
+                if let Some(sig) = signal {
+                    eprintln!("troweld: helper ended by signal {sig}");
+                }
+                on_event(serde_json::json!({"event": "exited", "signal": signal}));
             });
         }
         Ok(helper)
@@ -126,8 +136,133 @@ impl Helper {
         self.child.lock().ok().is_some_and(|c| c.is_some())
     }
 
-    pub fn stop(&self) {
+    /// Asks the helper to stop (it does between files) and ends it if it is still there 15 s
+    /// later: a helper stuck in one file never gets to the next, and Pause or a change of folders
+    /// has to work anyway. What it was reading is read again next time.
+    /// `upstream/Sources/DigUpApp/Engine.swift` `stopHelper(within:)` (809f185).
+    pub fn stop(self: &Arc<Self>) {
+        self.stop_within(STOP_GRACE);
+    }
+
+    pub fn stop_within(self: &Arc<Self>, grace: Duration) {
         self.send("stop");
+        let helper = Arc::clone(self);
+        thread::spawn(move || {
+            thread::sleep(grace);
+            let Ok(mut slot) = helper.child.lock() else {
+                return;
+            };
+            if let Some(child) = slot.as_mut() {
+                if matches!(child.try_wait(), Ok(None)) {
+                    eprintln!(
+                        "troweld: helper still running {} s after stop; ending it",
+                        grace.as_secs()
+                    );
+                    // SAFETY: our own child's pid, not yet reaped (try_wait said it runs).
+                    unsafe {
+                        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// `PR_SET_PDEATHSIG` fires when the *thread* that forked the child exits, not the process
+/// (prctl(2)). `start_helper` runs on whatever thread asked — a client connection, the old
+/// helper's event reader — and the new helper got SIGTERM the moment that thread ended (a CLI
+/// `resume`, a closed panel connection, the end of the previous helper): indexing stopped with
+/// no error. Every helper is forked from this one thread, which lives as long as troweld.
+fn spawn_from_lasting_thread(mut cmd: Command) -> std::io::Result<Child> {
+    type Job = (Command, std::sync::mpsc::Sender<std::io::Result<Child>>);
+    static SPAWNER: OnceLock<Mutex<std::sync::mpsc::Sender<Job>>> = OnceLock::new();
+    let tx = SPAWNER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Job>();
+        thread::Builder::new()
+            .name("troweld-spawner".into())
+            .spawn(move || {
+                for (mut cmd, reply) in rx {
+                    let _ = reply.send(cmd.spawn());
+                }
+            })
+            .expect("spawner thread");
+        Mutex::new(tx)
+    });
+    let (reply, result) = std::sync::mpsc::channel();
+    let sent = tx
+        .lock()
+        .map_err(|_| std::io::Error::other("spawner lock"))?
+        .send((cmd, reply));
+    if let Err(std::sync::mpsc::SendError((back, _))) = sent {
+        cmd = back;
+        return cmd.spawn();
+    }
+    result
+        .recv()
+        .map_err(|_| std::io::Error::other("spawner thread gone"))?
+}
+
+/// Slice the helper and its worker run in. ROBUSTNESS §2: the daemon's `MemoryHigh=400M` is for
+/// the daemon alone; a helper in its cgroup (with a Vulkan worker) was throttled at that line.
+pub const INDEX_SLICE: &str = "trowel-index.slice";
+
+/// `systemd-run --user --scope` around the helper when the user manager answers, else a plain
+/// spawn (tests, CI, no systemd). The limits go on the scope itself so they hold even before
+/// `trowel setup` has installed the slice unit. `TROWEL_NO_SCOPE=1` turns it off.
+fn index_command(bin: &Path) -> Command {
+    if scopes_work() {
+        let mut cmd = Command::new("systemd-run");
+        cmd.args(["--user", "--scope", "--quiet", "--collect"])
+            .arg(format!("--slice={INDEX_SLICE}"))
+            .args([
+                "-p",
+                "MemoryHigh=3G",
+                "-p",
+                "MemoryMax=4G",
+                "-p",
+                "CPUWeight=20",
+            ])
+            .arg("--")
+            .arg(bin);
+        cmd
+    } else {
+        Command::new(bin)
+    }
+}
+
+fn scopes_work() -> bool {
+    static WORKS: OnceLock<bool> = OnceLock::new();
+    *WORKS.get_or_init(|| {
+        if std::env::var_os("TROWEL_NO_SCOPE").is_some_and(|v| v != "0") {
+            return false;
+        }
+        Command::new("systemd-run")
+            .args(["--user", "--scope", "--quiet", "--collect"])
+            .arg(format!("--slice={INDEX_SLICE}"))
+            .arg("true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+}
+
+/// Nice 10 and the idle I/O class (ROBUSTNESS §2). A slice can't carry these: systemd ignores
+/// `Nice=` / `IOSchedulingClass=` in `[Slice]`.
+fn lower_priority() {
+    const IOPRIO_CLASS_IDLE: libc::c_int = 3;
+    const IOPRIO_CLASS_SHIFT: libc::c_int = 13;
+    const IOPRIO_WHO_PROCESS: libc::c_int = 1;
+    // SAFETY: plain syscalls on the calling process; failures are ignored.
+    unsafe {
+        libc::setpriority(libc::PRIO_PROCESS, 0, 10);
+        libc::syscall(
+            libc::SYS_ioprio_set,
+            IOPRIO_WHO_PROCESS,
+            0,
+            IOPRIO_CLASS_IDLE << IOPRIO_CLASS_SHIFT,
+        );
     }
 }
 

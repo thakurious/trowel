@@ -382,7 +382,7 @@ fn handle_op(req: Request, conn: &mut Conn, state: &Arc<MockState>) {
         }
         Op::Thumbnail { .. } => reply_ok(conn, id, json!({"file": "/tmp/trowel-mock/thumb.png"})),
         Op::Preview { .. } => reply_ok(conn, id, json!({"type": "text", "text": "mock preview"})),
-        Op::TextOfSegment { segment_id } => {
+        Op::TextOfSegment { segment_id, .. } => {
             match state.fixture.segments.get(&segment_id.to_string()) {
                 Some(text) => reply_ok(conn, id, json!({"text": text})),
                 None => reply_error(conn, Some(id), ErrorCode::NotFound, "unknown segment"),

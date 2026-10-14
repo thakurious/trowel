@@ -154,6 +154,29 @@ fn index_note(root: &Path) {
     indexer.finish();
 }
 
+fn index_code_file(root: &Path) {
+    let files = root.join("src");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("RouteValidator.rs"), "fn route_validator() {}\n").unwrap();
+    let store =
+        trowel_core::IndexStore::open_named(root.join("index"), trowel_core::IndexStore::CODE_FILE)
+            .unwrap();
+    let mut indexer = trowel_core::Indexer::new(
+        store,
+        trowel_core::IndexOptions {
+            code: true,
+            ..trowel_core::IndexOptions::default()
+        },
+        Box::new(|| {
+            Ok(Box::new(trowel_core::FakeEmbedder::new()) as Box<dyn trowel_core::Embedder>)
+        }),
+    )
+    .unwrap();
+    indexer.sync(&[files]).unwrap();
+    indexer.run(None, None, &|| false, |_| {}).unwrap();
+    indexer.finish();
+}
+
 #[test]
 fn second_instance_exits_zero() {
     let root = temp();
@@ -215,6 +238,74 @@ fn hello_and_keyword_search() {
         }),
         "{hit}"
     );
+}
+
+#[test]
+fn code_search_uses_code_index_and_preview() {
+    let root = temp();
+    fs::write(
+        root.join("config.toml"),
+        "roots=[]\nexcluded_folders=[]\nexcluded_types=[]\nindex_dir=\"index\"\nmodels_dir=\"models\"\nhotkey=\"SUPER + D\"\nindex_on_battery=false\nencoder_idle_seconds=600\nonboarded=false\ncode_roots=[]\ncode_excluded=[]\ncode_editor=\"\"\ncode_quiet_seconds=2\n[ui]\nreduce_motion=false\n",
+    )
+    .unwrap();
+    index_note(&root);
+    index_code_file(&root);
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"search","text":"route_validator","mode":"keyword","code":true,"prefix_last":true,"gen":1}),
+    );
+    let mut reader = BufReader::new(stream);
+    let hi = recv(&mut reader);
+    assert_eq!(hi["ok"], true);
+    let hit = recv(&mut reader);
+    assert_eq!(hit["ok"], true, "{hit}");
+    let groups = hit["groups"].as_array().cloned().unwrap_or_default();
+    let mut segment_id = None;
+    let mut saw_code = false;
+    for g in &groups {
+        for row in g["rows"].as_array().cloned().unwrap_or_default() {
+            let name = row["name"].as_str().unwrap_or("");
+            let path = row["id"].as_str().unwrap_or("");
+            assert!(
+                !name.ends_with("notes.txt") && !path.ends_with("notes.txt"),
+                "code search leaked the document index: {hit}"
+            );
+            if name == "RouteValidator.rs" || path.ends_with("RouteValidator.rs") {
+                saw_code = true;
+                segment_id = row["segment_id"].as_i64();
+            }
+        }
+    }
+    assert!(saw_code, "expected RouteValidator.rs in code search: {hit}");
+    let sid = segment_id.expect("segment_id");
+    send(
+        reader.get_mut(),
+        &json!({"id":3,"op":"preview","segment_id":sid,"width":450,"code":true}),
+    );
+    let preview = recv(&mut reader);
+    assert_eq!(preview["ok"], true, "{preview}");
+    let ptype = preview["type"].as_str().unwrap_or("");
+    assert!(
+        ptype == "code" || ptype == "text",
+        "preview type {ptype}: {preview}"
+    );
+    let has_body = preview["text"]
+        .as_str()
+        .is_some_and(|t| t.contains("route_validator"))
+        || preview["lines"].as_array().is_some_and(|lines| {
+            lines.iter().any(|line| {
+                line["text"]
+                    .as_str()
+                    .is_some_and(|t| t.contains("route_validator"))
+            })
+        });
+    assert!(has_body, "{preview}");
 }
 
 #[test]
@@ -578,4 +669,140 @@ fn estimate_and_status_subscribe() {
             .unwrap_or_else(|| panic!("missing {name} check in {checks:?}"));
         assert_ne!(check["status"], "FAIL", "{check}");
     }
+}
+
+/// Asks until a keyword search for `word` finds a file, or `secs` pass.
+fn finds(
+    stream: &mut UnixStream,
+    reader: &mut BufReader<UnixStream>,
+    word: &str,
+    secs: u64,
+    id: &mut u64,
+) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        *id += 1;
+        let n = *id;
+        send(
+            stream,
+            &json!({"id":n,"op":"search","text":word,"mode":"keyword","prefix_last":false,"gen":n}),
+        );
+        let reply = loop {
+            let v = recv(reader);
+            if v.get("id") == Some(&json!(n)) {
+                break v;
+            }
+        };
+        let rows = reply["groups"]
+            .as_array()
+            .map(|g| {
+                g.iter()
+                    .map(|g| g["rows"].as_array().map_or(0, Vec::len))
+                    .sum::<usize>()
+            })
+            .unwrap_or(0);
+        if rows > 0 {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
+/// Pause stops the helper; Resume must start a new one that indexes what changed meanwhile
+/// (live: after pause → helper exit → resume, no helper ever came back).
+#[test]
+fn resume_indexes_again_after_the_helper_stopped() {
+    let root = temp();
+    let files = root.join("files");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("a.txt"), "the harbour meeting notes\n").unwrap();
+    write_cfg(&root, true, std::slice::from_ref(&files));
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let mut id = 10;
+    assert!(
+        finds(&mut stream, &mut reader, "harbour", 20, &mut id),
+        "first pass"
+    );
+    send(&mut stream, &json!({"id":2,"op":"pause"}));
+    // The helper stops between files and exits.
+    thread::sleep(Duration::from_millis(2500));
+    fs::write(files.join("b.txt"), "a zebra crossing near the station\n").unwrap();
+    thread::sleep(Duration::from_millis(1200));
+    send(&mut stream, &json!({"id":3,"op":"resume"}));
+    assert!(
+        finds(&mut stream, &mut reader, "zebra", 20, &mut id),
+        "a helper must index again after resume"
+    );
+}
+
+/// The helper must outlive the connection that asked for it: `PR_SET_PDEATHSIG` is per thread,
+/// and a helper forked on a client's thread died when that client hung up.
+#[test]
+fn helper_outlives_the_connection_that_resumed_it() {
+    let root = temp();
+    let files = root.join("files");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("a.txt"), "the harbour meeting notes\n").unwrap();
+    write_cfg(&root, true, std::slice::from_ref(&files));
+    let d = start(root, &[]);
+    {
+        let mut stream = connect(&d);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        send(
+            &mut stream,
+            &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        );
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        assert_eq!(recv(&mut reader)["ok"], true);
+        let mut id = 10;
+        assert!(
+            finds(&mut stream, &mut reader, "harbour", 20, &mut id),
+            "first pass"
+        );
+        send(&mut stream, &json!({"id":2,"op":"pause"}));
+        assert_eq!(recv(&mut reader)["ok"], true);
+    }
+    thread::sleep(Duration::from_millis(2500));
+    // Nothing changed meanwhile: no watcher sync can start a helper from a lasting thread.
+    {
+        // A one-shot client, like `trowel resume`: it hangs up right after the reply.
+        let mut stream = connect(&d);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        send(
+            &mut stream,
+            &json!({"id":1,"op":"hello","protocol":1,"client":"cli","pid":1}),
+        );
+        send(&mut stream, &json!({"id":2,"op":"resume"}));
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        assert_eq!(recv(&mut reader)["ok"], true);
+        assert_eq!(recv(&mut reader)["ok"], true);
+    }
+    // A helper forked on the client's thread got SIGTERM when that thread ended.
+    thread::sleep(Duration::from_millis(1500));
+    let mut d = d;
+    let _ = d.child.kill();
+    let _ = d.child.wait();
+    let mut err = String::new();
+    if let Some(mut stderr) = d.child.stderr.take() {
+        let _ = stderr.read_to_string(&mut err);
+    }
+    assert!(
+        !err.contains("helper ended by signal 15"),
+        "the helper must outlive the connection that resumed it:\n{err}"
+    );
 }

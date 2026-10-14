@@ -51,7 +51,7 @@ Row {
         text: {
           var key = modelData.countKey
           var n = key ? root.counts[key] : 0
-          modelData.label + (n ? " " + n : "")
+          return modelData.label + (n ? " " + n : "")
         }
         color: Theme.foreground
         font.pixelSize: Theme.captionSize

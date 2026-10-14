@@ -13,7 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use trowel_core::{Embedder, FakeEmbedder, FileKind, IndexStore, Prompts, Searcher};
+use trowel_core::{Embedder, FakeEmbedder, FileKind, IndexStore, Prompts, Rules, Searcher};
 use trowel_proto::ops::KNOWN_OPS;
 use trowel_proto::{
     Config, ErrorBody, ErrorCode, Meaning, Op, Request, SearchMode, Status, MAX_LINE_BYTES,
@@ -56,6 +56,10 @@ struct Engine {
     config: Mutex<Config>,
     status: Mutex<Status>,
     searcher: Mutex<Searcher>,
+    /// Separate `code.sqlite` searcher. CLI `cmd_search` already opens
+    /// `IndexStore::CODE_FILE` for `code:` queries; the daemon must too.
+    /// `upstream/Sources/DigUpKit/Searcher.swift` `isCode`.
+    code_searcher: Mutex<Option<Searcher>>,
     last_reload: Mutex<Instant>,
     paused: AtomicBool,
     sync_wanted: AtomicBool,
@@ -63,6 +67,7 @@ struct Engine {
     helper_starting: AtomicBool,
     subscribers: Mutex<Vec<Arc<Outbox>>>,
     query_cache: QueryCache,
+    preview_cache: Mutex<PreviewCache>,
     newest_typed: Mutex<Option<String>>,
     last_use: Mutex<Instant>,
     watch: Mutex<Option<FolderWatch>>,
@@ -72,6 +77,7 @@ struct Engine {
     overflow: Arc<AtomicBool>,
     sleeping: Arc<AtomicBool>,
     was_sleeping: AtomicBool,
+    was_on_battery: AtomicBool,
 }
 
 enum Queued {
@@ -130,6 +136,8 @@ struct Conn {
     out: Arc<Outbox>,
     inflight: Arc<Mutex<Option<u64>>>,
     epoch: Arc<AtomicU64>,
+    /// Bumped by each `preview`; a queued render that is no longer the newest is skipped.
+    preview_epoch: Arc<AtomicU64>,
     last_status: Mutex<Option<Instant>>,
 }
 
@@ -165,6 +173,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         config: Mutex::new(cfg.clone()),
         status: Mutex::new(status),
         searcher: Mutex::new(searcher),
+        code_searcher: Mutex::new(open_code_searcher(&index_dir)),
         last_reload: Mutex::new(Instant::now()),
         paused: AtomicBool::new(false),
         sync_wanted: AtomicBool::new(false),
@@ -172,6 +181,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         helper_starting: AtomicBool::new(false),
         subscribers: Mutex::new(Vec::new()),
         query_cache: QueryCache::default(),
+        preview_cache: Mutex::new(PreviewCache::default()),
         newest_typed: Mutex::new(None),
         last_use: Mutex::new(Instant::now()),
         watch: Mutex::new(None),
@@ -181,6 +191,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         overflow: Arc::new(AtomicBool::new(false)),
         sleeping: Arc::new(AtomicBool::new(false)),
         was_sleeping: AtomicBool::new(false),
+        was_on_battery: AtomicBool::new(power::on_battery()),
     });
 
     logind::bind_signals(&engine.overflow, &engine.sleeping);
@@ -338,6 +349,7 @@ fn handle_conn(stream: UnixStream, engine: Arc<Engine>) -> io::Result<()> {
         out: Arc::clone(&out),
         inflight: Arc::new(Mutex::new(None)),
         epoch: Arc::new(AtomicU64::new(0)),
+        preview_epoch: Arc::new(AtomicU64::new(0)),
         last_status: Mutex::new(None),
     };
     let mut reader = BufReader::new(stream);
@@ -485,8 +497,10 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
         }
         Op::PanelOpened => {
             engine.touch();
-            reload_searcher(engine, true);
+            // Reply at once: the reload takes the searcher lock (60–80 ms with vectors), and the
+            // panel's first `typing`/`search` lines are queued right behind this one.
             reply_ok(conn, id, json!({}));
+            prewarm(engine);
         }
         Op::Pause => {
             engine.paused.store(true, Ordering::SeqCst);
@@ -620,48 +634,77 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             let report = doctor::run(Some(&engine.index_dir), Some(&engine.socket));
             reply_ok(conn, id, doctor::json_report(&report));
         }
-        Op::CopyPath { path } => reply_ok(conn, id, json!({"text": path.display()})),
+        Op::CopyPath { path } => {
+            let dest = PathBuf::from(path.display());
+            thread::spawn(move || actions::copy(&dest));
+            reply_ok(conn, id, json!({"text": path.display()}));
+        }
+        // Renders (vips, pdftoppm, ffmpeg: 80–500 ms) run off the connection thread, so a
+        // keystroke's `search` never waits behind the previews of the rows it is arrowing over.
         Op::Thumbnail {
             segment_id,
             path,
             size,
+            code,
         } => {
-            let searcher = engine.searcher.lock().expect("searcher");
             let file = path.as_ref().map(|p| PathBuf::from(p.display()));
-            reply_preview(
-                conn,
-                id,
-                previews::thumbnail(&searcher, segment_id, file.as_deref(), size),
-            );
+            let prefer_code = prefer_code_store(engine, code);
+            let (out, eng) = (Arc::clone(&conn.out), Arc::clone(engine));
+            render_pool().run(move || {
+                let body = thumbnail_body(&eng, segment_id, file.as_deref(), size, prefer_code);
+                reply_preview_line(&out, id, body);
+            });
         }
-        Op::Preview { segment_id, width } => {
+        Op::Preview {
+            segment_id,
+            width,
+            code,
+        } => {
             let query = engine
                 .newest_typed
                 .lock()
                 .expect("typed")
                 .clone()
                 .and_then(|k| k.split('\u{0}').next_back().map(str::to_string));
-            let searcher = engine.searcher.lock().expect("searcher");
-            reply_preview(
-                conn,
-                id,
-                previews::preview(&searcher, segment_id, width, query.as_deref()),
-            );
+            let prefer_code = prefer_code_store(engine, code);
+            // Only the newest preview of a connection is worth rendering: arrowing down a list
+            // asks for one per row.
+            let ticket = conn.preview_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+            let epoch = Arc::clone(&conn.preview_epoch);
+            let (out, eng) = (Arc::clone(&conn.out), Arc::clone(engine));
+            render_pool().run(move || {
+                if epoch.load(Ordering::SeqCst) != ticket {
+                    reply_error_line(&out, id, ErrorCode::Superseded, "superseded");
+                    return;
+                }
+                let body = cached_preview(&eng, segment_id, width, query.as_deref(), prefer_code);
+                reply_preview_line(&out, id, body);
+            });
         }
-        Op::TextOfSegment { segment_id } => {
-            let searcher = engine.searcher.lock().expect("searcher");
-            reply_preview(conn, id, previews::text_of(&searcher, segment_id));
+        Op::TextOfSegment { segment_id, code } => {
+            let prefer_code = prefer_code_store(engine, code);
+            let (out, eng) = (Arc::clone(&conn.out), Arc::clone(engine));
+            render_pool().run(move || {
+                reply_preview_line(&out, id, text_of_body(&eng, segment_id, prefer_code));
+            });
         }
-        Op::Open { segment_id, path } => {
-            let searcher = engine.searcher.lock().expect("searcher");
-            let meta = segment_id.and_then(|id| previews::segment_meta(&searcher, id));
+        Op::Open {
+            segment_id,
+            path,
+            code,
+            loc,
+        } => {
+            let prefer_code = prefer_code_store(engine, code);
+            let meta = segment_id.and_then(|sid| segment_meta_any(engine, sid, prefer_code));
             let dest = meta
                 .as_ref()
                 .map(|m| m.path.clone())
                 .or_else(|| path.as_ref().map(|p| PathBuf::from(p.display())));
-            let kind = meta.as_ref().map(|m| m.file_kind).unwrap_or(FileKind::Doc);
-            let loc = meta.as_ref().and_then(|m| m.loc);
-            drop(searcher);
+            let mut kind = meta.as_ref().map(|m| m.file_kind).unwrap_or(FileKind::Doc);
+            if prefer_code {
+                kind = FileKind::Code;
+            }
+            let loc = loc.or_else(|| meta.as_ref().and_then(|m| m.loc));
             let editor = engine.config.lock().expect("config").code_editor.clone();
             if let Some(dest) = dest {
                 thread::spawn(move || actions::open(&dest, kind, loc, &editor));
@@ -735,7 +778,6 @@ fn start_search(
         }
         let started = Instant::now();
         engine.touch();
-        reload_searcher(&engine, false);
         let kind_set: Option<HashSet<FileKind>> =
             kinds.map(|list| list.into_iter().filter_map(|s| s.parse().ok()).collect());
         let mut q = text.clone();
@@ -748,11 +790,26 @@ fn start_search(
         // vectors exist. With none yet (first crawl / battery backfill), that
         // path drops prefix keyword hits like "bitw"→bitwig.pdf and the UI
         // shows "No good matches". Keep words+prefix until embeddings land.
-        let has_doc_vectors = engine
-            .searcher
-            .lock()
-            .expect("searcher")
-            .has_document_vectors();
+        if mode == SearchMode::Hybrid {
+            // Meaning search needs the vectors; usually `panel_opened` loaded them already.
+            ensure_vectors(&engine, use_code);
+        }
+        let has_doc_vectors = if use_code {
+            ensure_code_searcher(&engine);
+            engine
+                .code_searcher
+                .lock()
+                .expect("code_searcher")
+                .as_ref()
+                .map(Searcher::has_document_vectors)
+                .unwrap_or(false)
+        } else {
+            engine
+                .searcher
+                .lock()
+                .expect("searcher")
+                .has_document_vectors()
+        };
         let (use_query_vector, fts_prefix) = search_plan(mode, prefix_last, has_doc_vectors);
         let vector = if use_query_vector {
             query_vector(&engine, &q, use_code)
@@ -767,21 +824,39 @@ fn start_search(
             Meaning::Unavailable
         };
         let hits = {
-            let mut searcher = engine.searcher.lock().expect("searcher");
-            match searcher.search(
-                &q,
-                vector.as_deref(),
-                kind_set.as_ref(),
-                limit as usize,
-                Searcher::Z_GATE,
-                None,
-                fts_prefix,
-            ) {
-                Ok(h) => h,
-                Err(err) => {
+            let searched = if use_code {
+                ensure_code_searcher(&engine);
+                let mut slot = engine.code_searcher.lock().expect("code_searcher");
+                slot.as_mut().map(|searcher| {
+                    searcher.search(
+                        &q,
+                        vector.as_deref(),
+                        kind_set.as_ref(),
+                        limit as usize,
+                        Searcher::Z_GATE,
+                        None,
+                        fts_prefix,
+                    )
+                })
+            } else {
+                let mut searcher = engine.searcher.lock().expect("searcher");
+                Some(searcher.search(
+                    &q,
+                    vector.as_deref(),
+                    kind_set.as_ref(),
+                    limit as usize,
+                    Searcher::Z_GATE,
+                    None,
+                    fts_prefix,
+                ))
+            };
+            match searched {
+                Some(Ok(h)) => h,
+                Some(Err(err)) => {
                     reply_error_line(&out, id, ErrorCode::Internal, err.to_string());
                     return;
                 }
+                None => Vec::new(),
             }
         };
         let took_ms = started.elapsed().as_millis() as u64;
@@ -818,30 +893,14 @@ fn query_vector(engine: &Engine, text: &str, code: bool) -> Option<Vec<f32>> {
         let mut embedder = FakeEmbedder::new();
         embedder.embed_texts(&[prompt]).ok()?.into_iter().next()
     } else {
-        let source = engine
-            .searcher
-            .lock()
-            .expect("searcher")
-            .vector_source
-            .clone();
+        let source = vector_source_for(engine, code);
         if source.as_deref().is_some_and(|s| s.starts_with("fake@")) {
             let mut embedder = FakeEmbedder::new();
             embedder.embed_texts(&[prompt]).ok()?.into_iter().next()
         } else {
             let mut slot = engine.encoder.lock().expect("encoder");
-            if slot.is_none() {
-                engine.status.lock().expect("status").worker = "starting".into();
-                match QueryEncoder::spawn() {
-                    Ok(enc) => {
-                        engine.status.lock().expect("status").worker = "ready".into();
-                        *slot = Some(enc);
-                    }
-                    Err(err) => {
-                        engine.status.lock().expect("status").worker = "down".into();
-                        engine.status.lock().expect("status").last_error = Some(err);
-                        return None;
-                    }
-                }
+            if !start_encoder(engine, &mut slot) {
+                return None;
             }
             slot.as_mut()?
                 .embed_texts(&[prompt])
@@ -866,6 +925,70 @@ fn search_plan(mode: SearchMode, prefix_last: bool, has_doc_vectors: bool) -> (b
     }
 }
 
+fn start_encoder(engine: &Engine, slot: &mut Option<QueryEncoder>) -> bool {
+    if slot.is_some() {
+        return true;
+    }
+    engine.status.lock().expect("status").worker = "starting".into();
+    match QueryEncoder::spawn() {
+        Ok(enc) => {
+            engine.status.lock().expect("status").worker = "ready".into();
+            *slot = Some(enc);
+            true
+        }
+        Err(err) => {
+            let mut status = engine.status.lock().expect("status");
+            status.worker = "down".into();
+            status.last_error = Some(err);
+            false
+        }
+    }
+}
+
+/// Gets meaning search ready as the panel opens: starts the query encoder (~1 s cold here) and
+/// loads the vectors, in parallel, so both are usually done by the time a few words are typed.
+/// Vectors already loaded are not read again. `upstream/Sources/DigUpApp/Engine.swift:847` `prewarm`.
+fn prewarm(engine: &Arc<Engine>) {
+    let eng = Arc::clone(engine);
+    thread::spawn(move || {
+        ensure_vectors(&eng, false);
+        ensure_vectors(&eng, true);
+    });
+    if engine.fake {
+        return;
+    }
+    let eng = Arc::clone(engine);
+    thread::spawn(move || {
+        let fake_vectors = vector_source_for(&eng, false).is_some_and(|s| s.starts_with("fake@"));
+        if !fake_vectors {
+            if let Ok(mut slot) = eng.encoder.lock() {
+                start_encoder(&eng, &mut slot);
+            }
+        }
+    });
+}
+
+/// Loads the vectors of one searcher if they aren't (released when idle, or never loaded).
+fn ensure_vectors(engine: &Engine, code: bool) {
+    if code {
+        ensure_code_searcher(engine);
+        if let Ok(mut slot) = engine.code_searcher.lock() {
+            if let Some(searcher) = slot.as_mut().filter(|s| !s.vectors_loaded) {
+                let _ = searcher.reload();
+            }
+        }
+    } else if let Ok(mut searcher) = engine.searcher.lock() {
+        if !searcher.vectors_loaded {
+            let _ = searcher.reload();
+        }
+        engine.status.lock().expect("status").vectors_loaded = searcher.vectors_loaded;
+    }
+}
+
+/// New vectors reach search, at most every 2 s during a long pass. A searcher whose vectors
+/// aren't loaded (the panel hasn't been used lately) only re-reads its files; its vectors load
+/// fresh when the panel opens. Reloading them all here kept ~all vectors in memory through an
+/// index pass and re-read them every 2 s. `upstream/Sources/DigUpApp/Engine.swift:673`.
 fn reload_searcher(engine: &Engine, force: bool) {
     {
         let mut last = engine.last_reload.lock().expect("reload");
@@ -874,9 +997,137 @@ fn reload_searcher(engine: &Engine, force: bool) {
         }
         *last = Instant::now();
     }
+    let refresh = |searcher: &mut Searcher| {
+        let _ = if searcher.vectors_loaded {
+            searcher.reload()
+        } else {
+            searcher.refresh_files()
+        };
+    };
     if let Ok(mut searcher) = engine.searcher.lock() {
-        let _ = searcher.reload();
+        refresh(&mut searcher);
         engine.status.lock().expect("status").vectors_loaded = searcher.vectors_loaded;
+    }
+    ensure_code_searcher(engine);
+    if let Ok(mut slot) = engine.code_searcher.lock() {
+        if let Some(searcher) = slot.as_mut() {
+            refresh(searcher);
+        }
+    }
+}
+
+fn open_code_searcher(index_dir: &Path) -> Option<Searcher> {
+    IndexStore::open_named(index_dir, IndexStore::CODE_FILE)
+        .and_then(|store| Searcher::new(store, true))
+        .ok()
+}
+
+fn ensure_code_searcher(engine: &Engine) {
+    let mut slot = engine.code_searcher.lock().expect("code_searcher");
+    if slot.is_none() {
+        *slot = open_code_searcher(&engine.index_dir);
+    }
+}
+
+fn vector_source_for(engine: &Engine, code: bool) -> Option<String> {
+    if code {
+        if let Ok(slot) = engine.code_searcher.lock() {
+            if let Some(source) = slot.as_ref().and_then(|s| s.vector_source.clone()) {
+                return Some(source);
+            }
+        }
+    }
+    engine
+        .searcher
+        .lock()
+        .ok()
+        .and_then(|s| s.vector_source.clone())
+}
+
+fn prefer_code_store(engine: &Engine, explicit: bool) -> bool {
+    if explicit {
+        return true;
+    }
+    engine
+        .newest_typed
+        .lock()
+        .ok()
+        .and_then(|k| k.clone())
+        .is_some_and(|k| k.starts_with("code\u{0}"))
+}
+
+fn preview_body(
+    engine: &Engine,
+    segment_id: i64,
+    width: u32,
+    query: Option<&str>,
+    prefer_code: bool,
+) -> Value {
+    lookup_segment(engine, segment_id, prefer_code, |searcher| {
+        previews::preview(searcher, segment_id, width, query)
+    })
+    .unwrap_or_else(|| json!({"error": {"code": "not_found", "message": "unknown segment"}}))
+}
+
+fn text_of_body(engine: &Engine, segment_id: i64, prefer_code: bool) -> Value {
+    lookup_segment(engine, segment_id, prefer_code, |searcher| {
+        previews::text_of(searcher, segment_id)
+    })
+    .unwrap_or_else(|| json!({"error": {"code": "not_found", "message": "unknown segment"}}))
+}
+
+fn thumbnail_body(
+    engine: &Engine,
+    segment_id: Option<i64>,
+    path: Option<&Path>,
+    size: u32,
+    prefer_code: bool,
+) -> Value {
+    if let Some(id) = segment_id {
+        if let Some(body) = lookup_segment(engine, id, prefer_code, |searcher| {
+            previews::thumbnail(searcher, Some(id), path, size)
+        }) {
+            return body;
+        }
+        if path.is_none() {
+            return json!({"error": {"code": "not_found", "message": "no file"}});
+        }
+    }
+    let searcher = engine.searcher.lock().expect("searcher");
+    previews::thumbnail(&searcher, segment_id, path, size)
+}
+
+fn segment_meta_any(
+    engine: &Engine,
+    segment_id: i64,
+    prefer_code: bool,
+) -> Option<previews::SegmentMeta> {
+    lookup_segment(engine, segment_id, prefer_code, |searcher| {
+        previews::segment_meta(searcher, segment_id)
+    })
+    .flatten()
+}
+
+fn lookup_segment<T>(
+    engine: &Engine,
+    segment_id: i64,
+    prefer_code: bool,
+    mut f: impl FnMut(&Searcher) -> T,
+) -> Option<T> {
+    let try_main = |engine: &Engine, f: &mut dyn FnMut(&Searcher) -> T| -> Option<T> {
+        let searcher = engine.searcher.lock().expect("searcher");
+        previews::segment_meta(&searcher, segment_id).map(|_| f(&searcher))
+    };
+    let try_code = |engine: &Engine, f: &mut dyn FnMut(&Searcher) -> T| -> Option<T> {
+        ensure_code_searcher(engine);
+        let slot = engine.code_searcher.lock().expect("code_searcher");
+        slot.as_ref()
+            .and_then(|searcher| previews::segment_meta(searcher, segment_id).map(|_| f(searcher)))
+    };
+    if prefer_code {
+        try_code(engine, &mut f).or_else(|| try_main(engine, &mut f))
+    } else {
+        try_main(engine, &mut f).or_else(|| try_code(engine, &mut f))
     }
 }
 
@@ -904,7 +1155,7 @@ fn push_status_event(conn: &Conn, engine: &Engine) {
     conn.out.push_status(v);
 }
 
-fn reply_preview(conn: &Conn, id: u64, body: Value) {
+fn reply_preview_line(out: &Outbox, id: u64, body: Value) {
     if let Some(err) = body.get("error") {
         let code = match err.get("code").and_then(Value::as_str) {
             Some("not_found") => ErrorCode::NotFound,
@@ -915,10 +1166,118 @@ fn reply_preview(conn: &Conn, id: u64, body: Value) {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("preview failed");
-        reply_error(conn, Some(id), code, message);
+        reply_error_line(out, id, code, message);
         return;
     }
-    reply_ok(conn, id, body);
+    let mut body = body;
+    if let Value::Object(map) = &mut body {
+        map.insert("id".into(), json!(id));
+        map.insert("ok".into(), json!(true));
+    }
+    out.push_line(body.to_string());
+}
+
+/// A few threads for renders, so ten thumbnails don't start ten ffmpegs at once.
+struct RenderPool {
+    tx: Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+}
+
+impl RenderPool {
+    fn run(&self, job: impl FnOnce() + Send + 'static) {
+        if let Ok(tx) = self.tx.lock() {
+            let _ = tx.send(Box::new(job));
+        }
+    }
+}
+
+fn render_pool() -> &'static RenderPool {
+    static POOL: std::sync::OnceLock<RenderPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let rx = Arc::new(Mutex::new(rx));
+        for n in 0..3 {
+            let rx = Arc::clone(&rx);
+            let _ = thread::Builder::new()
+                .name(format!("troweld-render-{n}"))
+                .spawn(move || loop {
+                    let job = match rx.lock() {
+                        Ok(rx) => rx.recv(),
+                        Err(_) => return,
+                    };
+                    match job {
+                        Ok(job) => job(),
+                        Err(_) => return,
+                    }
+                });
+        }
+        RenderPool { tx: Mutex::new(tx) }
+    })
+}
+
+/// Previews already rendered, by what was asked and the file's mtime: going back up the list
+/// (or an audio waveform, 450 ms each time) is instant. Upstream keeps `Previews.shared`.
+#[derive(Default)]
+struct PreviewCache {
+    entries: VecDeque<(PreviewKey, Value)>,
+}
+
+#[derive(PartialEq, Eq, Clone)]
+struct PreviewKey {
+    code: bool,
+    segment: i64,
+    width: u32,
+    query: Option<String>,
+    path: PathBuf,
+    mtime: Option<std::time::SystemTime>,
+}
+
+const PREVIEW_CACHE_ENTRIES: usize = 48;
+
+fn cached_preview(
+    engine: &Engine,
+    segment_id: i64,
+    width: u32,
+    query: Option<&str>,
+    prefer_code: bool,
+) -> Value {
+    let Some(meta) = segment_meta_any(engine, segment_id, prefer_code) else {
+        return preview_body(engine, segment_id, width, query, prefer_code);
+    };
+    let key = PreviewKey {
+        code: prefer_code,
+        segment: segment_id,
+        width,
+        query: query.map(str::to_string),
+        mtime: fs::metadata(&meta.path).and_then(|m| m.modified()).ok(),
+        path: meta.path,
+    };
+    if let Ok(cache) = engine.preview_cache.lock() {
+        if let Some((_, body)) = cache.entries.iter().find(|(k, _)| *k == key) {
+            if rendered_files_exist(body) {
+                return body.clone();
+            }
+        }
+    }
+    let body = preview_body(engine, segment_id, width, query, prefer_code);
+    if body.get("error").is_none() {
+        if let Ok(mut cache) = engine.preview_cache.lock() {
+            cache.entries.retain(|(k, _)| *k != key);
+            cache.entries.push_back((key, body.clone()));
+            while cache.entries.len() > PREVIEW_CACHE_ENTRIES {
+                cache.entries.pop_front();
+            }
+        }
+    }
+    body
+}
+
+/// Rendered files may have been cleaned up since (`previews` keeps a bounded folder).
+fn rendered_files_exist(body: &Value) -> bool {
+    ["file", "frame", "thumb"].iter().all(|k| {
+        body.get(*k)
+            .and_then(Value::as_str)
+            .is_none_or(|p| Path::new(p).exists())
+    })
 }
 
 fn reply_ok(conn: &Conn, id: u64, body: Value) {
@@ -1006,6 +1365,35 @@ impl Engine {
         self.start_helper();
     }
 
+    /// Tell a running helper to start or stop the backfill, or spawn one when
+    /// AC (or `index_on_battery`) now allows it.
+    /// `upstream/Sources/DigUpApp/Engine.swift:707` `setBackfillBlocker`.
+    fn apply_backfill_policy(self: &Arc<Self>) {
+        if !self.onboarded() || self.paused.load(Ordering::SeqCst) {
+            return;
+        }
+        let index_on_battery = self
+            .config
+            .lock()
+            .ok()
+            .map(|c| c.index_on_battery)
+            .unwrap_or(false);
+        let allowed = power::backfill_blocker(index_on_battery).is_none();
+        if let Some(helper) = self.helper.lock().expect("helper").clone() {
+            if helper.running() {
+                helper.send(if allowed {
+                    "backfill on"
+                } else {
+                    "backfill off"
+                });
+                return;
+            }
+        }
+        if allowed {
+            self.start_helper();
+        }
+    }
+
     fn request_code_sync(self: &Arc<Self>) {
         if self.paused.load(Ordering::SeqCst) {
             return;
@@ -1022,12 +1410,19 @@ impl Engine {
 
     fn start_helper(self: &Arc<Self>) {
         if self.paused.load(Ordering::SeqCst) || !self.onboarded() {
+            eprintln!(
+                "troweld: not starting the helper: paused={} onboarded={}",
+                self.paused.load(Ordering::SeqCst),
+                self.onboarded()
+            );
             return;
         }
         if self.sleeping.load(Ordering::SeqCst) {
+            eprintln!("troweld: not starting the helper: the system is going to sleep");
             return;
         }
         if let Some(reason) = disk::too_full(&self.index_dir) {
+            eprintln!("troweld: not starting the helper: {reason}");
             let mut status = self.status.lock().expect("status");
             status.paused_reason = Some(reason);
             status.phase = "paused".into();
@@ -1035,11 +1430,13 @@ impl Engine {
         }
         if let Some(helper) = self.helper.lock().expect("helper").clone() {
             if helper.running() {
+                eprintln!("troweld: helper running; asked it to sync");
                 helper.send("sync");
                 return;
             }
         }
         if self.helper_starting.swap(true, Ordering::SeqCst) {
+            eprintln!("troweld: not starting the helper: one is starting");
             return;
         }
         let cfg = self.config.lock().expect("config").clone();
@@ -1145,8 +1542,16 @@ impl Engine {
                     status.phase = "error".into();
                 }
             }
+            "reindex" => {
+                let from = event.get("from").and_then(Value::as_str).unwrap_or("?");
+                let to = event.get("to").and_then(Value::as_str).unwrap_or("?");
+                eprintln!("troweld indexer: model or settings changed, reindexing (was: {from}; now: {to})");
+            }
             "exit" | "exited" => {
                 *self.helper.lock().expect("helper") = None;
+                // Must drop this before start_helper(); otherwise the next
+                // spawn is skipped forever after the first helper exits.
+                self.helper_starting.store(false, Ordering::SeqCst);
                 {
                     let mut status = self.status.lock().expect("status");
                     if status.phase == "indexing"
@@ -1201,6 +1606,11 @@ impl Engine {
         if let Ok(mut searcher) = self.searcher.lock() {
             searcher.release_vectors();
             self.status.lock().expect("status").vectors_loaded = false;
+        }
+        if let Ok(mut slot) = self.code_searcher.lock() {
+            if let Some(searcher) = slot.as_mut() {
+                searcher.release_vectors();
+            }
         }
         if let Ok(mut slot) = self.encoder.lock() {
             if let Some(mut enc) = slot.take() {
@@ -1260,7 +1670,8 @@ fn start_watch(engine: &Arc<Engine>) {
         *engine.watch.lock().expect("watch") = None;
     } else {
         let eng = Arc::clone(engine);
-        match FolderWatch::start(local, DEBOUNCE, move |_| {
+        let walks = crawl_walks(&cfg.excluded_folders, false);
+        match FolderWatch::start_scoped(local, DEBOUNCE, walks, move |_| {
             if !eng.paused.load(Ordering::SeqCst) && !eng.sleeping.load(Ordering::SeqCst) {
                 eng.request_sync();
             }
@@ -1281,11 +1692,18 @@ fn start_watch(engine: &Arc<Engine>) {
         *engine.code_watch.lock().expect("code_watch") = None;
     } else {
         let eng = Arc::clone(engine);
-        match FolderWatch::start_code(local_code, CODE_QUIET, CODE_LONGEST_WAIT, move |_| {
-            if !eng.paused.load(Ordering::SeqCst) && !eng.sleeping.load(Ordering::SeqCst) {
-                eng.request_code_sync();
-            }
-        }) {
+        let walks = crawl_walks(&cfg.code_excluded, true);
+        match FolderWatch::start_code(
+            local_code,
+            CODE_QUIET,
+            CODE_LONGEST_WAIT,
+            walks,
+            move |_| {
+                if !eng.paused.load(Ordering::SeqCst) && !eng.sleeping.load(Ordering::SeqCst) {
+                    eng.request_code_sync();
+                }
+            },
+        ) {
             Ok(watch) => *engine.code_watch.lock().expect("code_watch") = Some(watch),
             Err(err) => eprintln!("troweld code watcher: {err}"),
         }
@@ -1301,6 +1719,22 @@ fn start_watch(engine: &Arc<Engine>) {
     }
 }
 
+/// The folders the crawl walks, for the watcher (`Rules::walks_into`). Skipped folders are
+/// matched as written and as real paths, as upstream `startWatching` does.
+fn crawl_walks(excluded: &[String], code: bool) -> crate::watcher::Walks {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let mut skips: Vec<String> = Vec::new();
+    for folder in excluded {
+        let path = expand_tilde(folder).to_string_lossy().into_owned();
+        let real = trowel_core::folder_selection::real_path(&path);
+        skips.push(path);
+        if !skips.contains(&real) {
+            skips.push(real);
+        }
+    }
+    Arc::new(move |folder: &Path| Rules::walks_into(folder, &home, &skips, code))
+}
+
 fn start_config_watch(engine: &Arc<Engine>) {
     let path = engine.config_path.clone();
     let Some(parent) = path.parent().map(PathBuf::from) else {
@@ -1311,14 +1745,21 @@ fn start_config_watch(engine: &Arc<Engine>) {
     }
     let name = path.file_name().map(|s| s.to_os_string());
     let eng = Arc::clone(engine);
-    match FolderWatch::start(vec![parent], Duration::from_millis(400), move |paths| {
-        if paths.iter().any(|p| {
-            name.as_ref()
-                .is_some_and(|n| p.file_name() == Some(n.as_os_str()))
-        }) {
-            eng.reload_config_file();
-        }
-    }) {
+    // Only the config folder itself, not what is below it.
+    let only_root: crate::watcher::Walks = Arc::new(|_| false);
+    match FolderWatch::start_scoped(
+        vec![parent],
+        Duration::from_millis(400),
+        only_root,
+        move |paths| {
+            if paths.iter().any(|p| {
+                name.as_ref()
+                    .is_some_and(|n| p.file_name() == Some(n.as_os_str()))
+            }) {
+                eng.reload_config_file();
+            }
+        },
+    ) {
         Ok(watch) => *engine.config_watch.lock().expect("config_watch") = Some(watch),
         Err(err) => eprintln!("troweld config watch: {err}"),
     }
@@ -1353,6 +1794,12 @@ fn spawn_idle_reaper(engine: Arc<Engine>) {
         }
         if !sleep && was {
             engine.leave_sleep();
+        }
+        let on_battery = power::on_battery();
+        let was_battery = engine.was_on_battery.swap(on_battery, Ordering::SeqCst);
+        if was_battery != on_battery {
+            // upstream/Sources/DigUpApp/Engine.swift setBackfillBlocker
+            engine.apply_backfill_policy();
         }
     });
 }

@@ -21,6 +21,19 @@ struct Flags {
     code_sync_requested: bool,
     stop_requested: bool,
     backfill_allowed: bool,
+    /// A sync asked for while files are being indexed waits until then. A crawl of a big folder can take a
+    /// while, and a folder that keeps changing asks for the next one meanwhile: yielding at once, every pass
+    /// went back to crawling before a file was read. Indexing gets at least as long as the sync before it
+    /// (2 s at the least). `upstream/Sources/digup/IndexService.swift:55` `yieldAt` (75d95d0).
+    yield_at: Option<Instant>,
+}
+
+impl Flags {
+    /// A new sync may interrupt indexing now (`Date() >= yieldAt` upstream).
+    fn sync_due(&self, code: bool) -> bool {
+        self.yield_at.is_none_or(|at| Instant::now() >= at)
+            && (self.sync_requested || (code && self.code_sync_requested))
+    }
 }
 
 pub struct IndexService {
@@ -58,6 +71,7 @@ impl IndexService {
                 code_sync_requested: true,
                 stop_requested: false,
                 backfill_allowed: backfill,
+                yield_at: None,
             })),
             wake: Arc::new(Condvar::new()),
             unavailable: BTreeMap::new(),
@@ -100,6 +114,7 @@ impl IndexService {
         self.spawn_commands();
         let mut new_files: HashSet<i64> = HashSet::new();
         let mut new_code: HashSet<i64> = HashSet::new();
+        let mut code_counted = self.code.is_none();
         loop {
             let sync_now = {
                 let mut g = self.flags.lock().unwrap();
@@ -109,6 +124,19 @@ impl IndexService {
             };
             if sync_now {
                 self.sync_main(&mut new_files);
+            }
+            // The code folders are crawled with the first sync, so their counts show from the start
+            // (a big first pass of the main index takes hours); their files are read once the main
+            // index has nothing waiting, below. `upstream/Sources/digup/IndexService.swift` (bb7e753).
+            if !code_counted {
+                code_counted = true;
+                let code_sync = {
+                    let mut g = self.flags.lock().unwrap();
+                    std::mem::take(&mut g.code_sync_requested)
+                };
+                if code_sync {
+                    self.sync_code(&mut new_code);
+                }
             }
             if self.flags.lock().unwrap().stop_requested {
                 break;
@@ -246,12 +274,19 @@ impl IndexService {
             new_files,
             self.new_files_limit,
             &mut self.unavailable,
+            &self.flags,
         );
     }
 
     fn sync_code(&mut self, new_files: &mut HashSet<i64>) {
         if let Some(code) = &mut self.code {
-            sync_part(code, new_files, self.new_files_limit, &mut self.unavailable);
+            sync_part(
+                code,
+                new_files,
+                self.new_files_limit,
+                &mut self.unavailable,
+                &self.flags,
+            );
         }
     }
 
@@ -284,10 +319,7 @@ impl IndexService {
         let result = self.main.indexer.finish_long_files(
             &|| {
                 let g = flags.lock().unwrap();
-                g.sync_requested
-                    || (g.code_sync_requested && has_code)
-                    || g.stop_requested
-                    || !g.backfill_allowed
+                g.stop_requested || !g.backfill_allowed || g.sync_due(has_code)
             },
             |step| {
                 emit(&json!({
@@ -406,8 +438,10 @@ fn sync_part(
     new_files: &mut HashSet<i64>,
     new_files_limit: usize,
     unavailable: &mut BTreeMap<bool, (Vec<String>, Vec<String>)>,
+    flags: &Arc<Mutex<Flags>>,
 ) {
     let started = Instant::now();
+    let _yield_later = YieldAfter { started, flags };
     let started_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
@@ -437,6 +471,21 @@ fn sync_part(
                 "message": format!("sync failed: {err}"),
                 "code": part.code,
             }));
+        }
+    }
+}
+
+/// Sets `yield_at` when the sync returns, however it returns (`defer` upstream).
+struct YieldAfter<'a> {
+    started: Instant,
+    flags: &'a Arc<Mutex<Flags>>,
+}
+
+impl Drop for YieldAfter<'_> {
+    fn drop(&mut self) {
+        let took = self.started.elapsed().max(Duration::from_secs(2));
+        if let Ok(mut g) = self.flags.lock() {
+            g.yield_at = Some(Instant::now() + took);
         }
     }
 }
@@ -493,10 +542,7 @@ fn run_part(part: &mut Part, only: Option<HashSet<i64>>, flags: &Arc<Mutex<Flags
         let flags = flags.clone();
         move || {
             let g = flags.lock().unwrap();
-            g.sync_requested
-                || g.stop_requested
-                || (!is_new && !g.backfill_allowed)
-                || (code && g.code_sync_requested)
+            g.stop_requested || (!is_new && !g.backfill_allowed) || g.sync_due(code)
         }
     };
     let only_ref = only.as_ref();

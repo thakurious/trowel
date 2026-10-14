@@ -50,19 +50,29 @@ pub enum Op {
         #[serde(default)]
         path: Option<PathValue>,
         size: u32,
+        #[serde(default)]
+        code: bool,
     },
     Preview {
         segment_id: i64,
         width: u32,
+        #[serde(default)]
+        code: bool,
     },
     TextOfSegment {
         segment_id: i64,
+        #[serde(default)]
+        code: bool,
     },
     Open {
         #[serde(default)]
         segment_id: Option<i64>,
         #[serde(default)]
         path: Option<PathValue>,
+        #[serde(default)]
+        code: bool,
+        #[serde(default)]
+        loc: Option<f64>,
     },
     Reveal {
         path: PathValue,

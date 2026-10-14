@@ -96,9 +96,9 @@ Groups: `{"kind":"screenshots","title":"Screenshots","rows":[...],"total":N}` in
 
 | op | params | result |
 |---|---|---|
-| `thumbnail` | `{segment_id or path, size}` | `{file}` is a PNG/JPEG path in `$XDG_CACHE_HOME/trowel/thumbs/` (sizes 64/132/264/528). For whole files, check the freedesktop thumbnail cache (`~/.cache/thumbnails/{normal,large,x-large}`) first. |
-| `preview` | `{segment_id, width}` | `{type:"image"\|"pdf_page"\|"code"\|"text"\|"audio"\|"video", file?, band?:[y0,y1], lines?:[{n,text}], focus_line?, text?, peaks?:[...], frame?, start?, end?, duration?}` For a PDF page, `band` is the matched band in page coordinates 0–1. For audio, `peaks` holds about 400 normalized values for the waveform. |
-| `text_of_segment` | `{segment_id}` | `{text, original?}` |
+| `thumbnail` | `{segment_id or path, size, code?}` | `{file}` is a PNG/JPEG path in `$XDG_CACHE_HOME/trowel/thumbs/` (sizes 64/132/264/528). For whole files, check the freedesktop thumbnail cache (`~/.cache/thumbnails/{normal,large,x-large}`) first. `code:true` looks up the segment in `code.sqlite` (ids are per-store). |
+| `preview` | `{segment_id, width, code?}` | `{type:"image"\|"pdf_page"\|"code"\|"text"\|"audio"\|"video", file?, band?:[y0,y1], lines?:[{n,text}], focus_line?, text?, peaks?:[...], frame?, start?, end?, duration?}` For a PDF page, `band` is the matched band in page coordinates 0–1. For audio, `peaks` holds about 400 normalized values for the waveform. `code:true` uses the code index; segment ids do not cross `index.sqlite` / `code.sqlite`. |
+| `text_of_segment` | `{segment_id, code?}` | `{text, original?}` |
 
 The daemon caches previews (LRU, 256 MB on disk under `$XDG_CACHE_HOME/trowel/previews`) and serves
 repeat requests in under 5 ms.
@@ -107,9 +107,9 @@ repeat requests in under 5 ms.
 
 | op | params | effect |
 |---|---|---|
-| `open` | `{segment_id\|path}` | Opens at the matched place: `evince -p` / `zathura -P` for PDF pages, `mpv --start=` for media, the editor at the line for code, otherwise `xdg-open`. The daemon picks the command; see `PORT-MAP.md` §D `CodeEditors`. |
+| `open` | `{segment_id\|path, code?, loc?}` | Opens at the matched place: `evince -p` / `zathura -P` for PDF pages, `mpv --start=` for media, the editor at the line for code, otherwise `xdg-open`. Neovim (and Helix) run in `xdg-terminal-exec`. If the chosen editor is missing, the next installed one, then `xdg-open`. See `PORT-MAP.md` §D `CodeEditors`. |
 | `reveal` | `{path}` | `org.freedesktop.FileManager1.ShowItems`, falling back to opening the parent folder. |
-| `copy_path` | `{path}` | Returns `{text}`. The UI copies it with `wl-copy`. (v1 rule. From v2 the daemon may write the clipboard for `clip_paste` / `calc_copy`, see DECISIONS D21.) |
+| `copy_path` | `{path}` | Returns `{text}`. The daemon also copies the file to the clipboard with `wl-copy` (D21): `image/*` for pictures, `text/uri-list` for everything else. |
 | `quick_look` | `{segment_id}` | Asks `trowel-app` to open the large preview at the place, starting the app if needed. |
 
 ### Indexing control & settings

@@ -14,6 +14,9 @@ Item {
   property var shell: null
   property var manifest: null
   property bool opened: false
+  // The layer surface stays mapped until the close fade ends (UI-DESIGN §4: 90 ms). Unmapping on
+  // `opened` cut the fade off, and the next open could start from a half-faded card.
+  property bool mapped: false
   property bool navigated: false
   property bool showWeaker: false
   property string selection: ""
@@ -22,8 +25,43 @@ Item {
   property var preview: ({})
   property var selectedRow: null
   property bool configKnown: false
+  // Stays true until Done even after folders Continue sets onboarded
+  // (indexing starts then; the wizard must not flip to search).
+  property bool wizardOpen: false
 
-  readonly property bool needsOnboarding: root.configKnown && client.config && client.config.onboarded === false
+  // Footer, left: `upstream/Sources/DigUpApp/SearchPanelView.swift:131` statusText.
+  readonly property string statusText: {
+    if (root.phase === "words") {
+      var st = client.status || {}
+      return st.worker === "starting" ? "Matching words; meaning search is warming up…" : "Matching words…"
+    }
+    if (root.phase === "empty")
+      return ""
+    var code = root.codeMode || client.lastSearchCode
+    var prog = (client.status && client.status.code) ? client.status.code : null
+    if (code && prog && prog.total > 0 && prog.done < prog.total)
+      return "Still reading code (" + Math.floor(prog.done / prog.total * 100) + "%): some isn't in yet"
+    var count = 0
+    var groups = client.groups || []
+    for (var i = 0; i < groups.length; i++)
+      count += (groups[i].rows || []).length
+    var weaker = (client.weaker || []).length
+    return (count === 1 ? "1 result" : count + " results") + (code ? " in your code" : "") + (weaker > 0 ? " · " + weaker + " weaker" : "")
+  }
+
+  // Field badge: what indexing is doing, not a result count.
+  // `upstream/Sources/DigUpApp/AppModel.swift:99` activityBadge.
+  readonly property string activityBadge: {
+    var st = client.status || {}
+    if (st.paused_reason)
+      return "Indexing paused"
+    var main = st.main || {}
+    if ((st.phase === "indexing" || st.phase === "syncing") && main.total > 0)
+      return "Indexing " + Math.floor((main.done || 0) / main.total * 100) + "%"
+    return ""
+  }
+
+  readonly property bool needsOnboarding: root.wizardOpen || (root.configKnown && client.config && client.config.onboarded === false)
   readonly property string pluginId: (manifest && manifest.id) ? String(manifest.id) : "io.github.thakurious.trowel"
   readonly property int panelWidth: 780
   readonly property int listWidth: 330
@@ -31,23 +69,27 @@ Item {
   readonly property int maxPanelHeight: Math.min(560, Math.round(panel.height * 0.6))
 
   function open(payloadJson) {
+    unmapTimer.stop()
+    root.mapped = true
     root.opened = true
     root.navigated = false
     if (root.needsOnboarding)
       return
-    query.queryFieldForce()
     client.panelOpened()
     Qt.callLater(function () {
       query.forceActiveFocus()
+      query.selectAll()
     })
   }
 
   function close() {
     root.opened = false
+    unmapTimer.restart()
   }
 
   function dismiss() {
     root.opened = false
+    unmapTimer.restart()
     if (root.shell && typeof root.shell.hide === "function")
       root.shell.hide(root.pluginId)
   }
@@ -57,9 +99,6 @@ Item {
       root.dismiss()
     else
       root.open("{}")
-  }
-
-  function queryFieldForce() {
   }
 
   function onQueryEdited() {
@@ -129,6 +168,7 @@ Item {
       var it = client.rows.get(i)
       if (it.rowId === root.selection && it.rowType === "row") {
         root.selectedRow = it
+        root.preview = ({})
         if (it.segment_id)
           client.preview(it.segment_id, 450)
         return
@@ -181,6 +221,8 @@ Item {
     showWeaker: root.showWeaker
     onConfigArrived: function (cfg) {
       root.configKnown = true
+      if (cfg && cfg.onboarded === false)
+        root.wizardOpen = true
       if (root.opened && root.needsOnboarding)
         Qt.callLater(function () {
           onboard.forceActiveFocus()
@@ -207,8 +249,11 @@ Item {
       }
       pickSelected()
     }
+    onPreviewArrived: function (msg) {
+      root.preview = msg
+    }
     onLineEvent: function (msg) {
-      if (msg.type && (msg.file || msg.lines || msg.text || msg.peaks || msg.frame))
+      if (msg.type)
         root.preview = msg
     }
   }
@@ -228,14 +273,26 @@ Item {
     onTriggered: root.runHybrid()
   }
 
+  Timer {
+    id: unmapTimer
+    // One frame past the close animation.
+    interval: Motion.closeMs + 17
+    repeat: false
+    onTriggered: {
+      if (!root.opened)
+        root.mapped = false
+    }
+  }
+
   PanelWindow {
     id: panel
-    visible: root.opened
+    visible: root.mapped
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "trowel-panel"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: visible ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    // Keyboard goes back to the app at the *start* of the close (UI-DESIGN §4).
+    WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     anchors {
       top: true
       bottom: true
@@ -245,6 +302,7 @@ Item {
 
     MouseArea {
       anchors.fill: parent
+      enabled: root.opened
       onClicked: root.dismiss()
     }
 
@@ -265,7 +323,7 @@ Item {
       // Hidden search chrome still reports implicitHeight, so onboarding
       // must size the card itself (UI-DESIGN §3 max 560). Empty search is
       // the query field only; results expand to maxPanelHeight.
-      height: root.needsOnboarding ? Math.min(root.maxPanelHeight, Math.max(360, onboard.implicitHeight)) : (root.phase === "empty" ? Math.min(root.maxPanelHeight, fieldCol.implicitHeight + 8) : root.maxPanelHeight)
+      height: root.needsOnboarding ? root.maxPanelHeight : (root.phase === "empty" ? Math.min(root.maxPanelHeight, fieldCol.implicitHeight + 8) : root.maxPanelHeight)
       x: Math.round((panel.width - width) / 2)
       readonly property int restY: Math.round(panel.height * root.topFraction)
       y: root.opened ? restY : restY - 6
@@ -279,6 +337,7 @@ Item {
       }
 
       Behavior on height {
+        enabled: !root.needsOnboarding
         NumberAnimation {
           duration: Motion.heightMs
           easing.type: Motion.heightEasing
@@ -320,10 +379,12 @@ Item {
 
         Onboarding {
           id: onboard
+          z: 2
           visible: root.needsOnboarding
           anchors.fill: parent
           client: client
           onFinished: {
+            root.wizardOpen = false
             root.configKnown = true
             client.configGet()
             query.forceActiveFocus()
@@ -334,6 +395,7 @@ Item {
         Column {
           id: searchCol
           visible: !root.needsOnboarding
+          enabled: !root.needsOnboarding
           width: parent.width
 
         Column {
@@ -345,7 +407,7 @@ Item {
             width: parent.width
             codeMode: root.codeMode
             hybridPending: root.phase === "words"
-            countText: client.appliedGen > 0 && root.phase !== "empty" ? String(Math.max(0, client.rows.count)) : ""
+            countText: root.activityBadge
             placeholder: root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…"
             onTextEdited: root.onQueryEdited()
             onKeyPressed: function (event) {
@@ -500,6 +562,7 @@ Item {
               height: parent.height
               preview: root.preview
               row: root.selectedRow
+              query: query.text
             }
           }
         }
@@ -514,7 +577,7 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: 16
             anchors.verticalCenter: parent.verticalCenter
-            text: root.phase === "words" ? "Matching words…" : (client.weaker.length ? (client.groups.length + " groups") : "")
+            text: root.statusText
             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.62)
             font.pixelSize: Math.round(Style.font.body * 0.92)
           }
@@ -524,19 +587,24 @@ Item {
             anchors.rightMargin: 16
             anchors.verticalCenter: parent.verticalCenter
             spacing: 6
-            Keycap {
-              label: "↵"
-              size: 11
-            }
-            Text {
-              text: "Open"
-              color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.62)
-              font.pixelSize: 11
-              anchors.verticalCenter: parent.verticalCenter
-            }
-            Keycap {
-              label: "esc"
-              size: 11
+            // `SearchPanelView.swift` keysText, with Ctrl for ⌘.
+            Repeater {
+              model: [["↵", "Open"], ["ctrl ↵", "Reveal"], ["space", "Quick Look"], ["ctrl C", "Copy"]]
+              delegate: Row {
+                spacing: 4
+                anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+                Keycap {
+                  label: modelData[0]
+                  size: 11
+                }
+                Text {
+                  text: modelData[1]
+                  color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.62)
+                  font.pixelSize: 11
+                  anchors.verticalCenter: parent.verticalCenter
+                  rightPadding: 6
+                }
+              }
             }
           }
         }
