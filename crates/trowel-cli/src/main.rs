@@ -620,10 +620,10 @@ fn cmd_index(
     }
     let mut indexer = Indexer::new(store, options, Box::new(move || make_embedder(fake)))
         .map_err(|e| e.to_string())?;
-    // Fingerprint is written from the live worker in Indexer::full_worker. Do not
-    // pre-check a guessed `worker_source()` string — it does not match the
-    // worker's `google/embeddinggemma-2@… llama.cpp-vectors1 …` line, so a
-    // second `trowel index` would refuse to resume.
+    // Fingerprint is written from the live worker in Indexer::full_worker.
+    // `worker_source()` now matches that line (`cpp/embedder.h`); index-service
+    // uses it for `check_model`. `trowel index` still waits for the live worker
+    // so a missing binary cannot pre-fail a resume.
     let summary = indexer.sync(paths).map_err(|e| e.to_string())?;
     if json {
         println!(
