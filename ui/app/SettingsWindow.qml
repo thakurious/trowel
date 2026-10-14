@@ -134,6 +134,18 @@ Item {
           width: parent.width
           path: modelData
           checked: true
+          estimate: modelData
+          onToggled: {
+            var roots = (client.config && client.config.roots) ? client.config.roots.slice() : []
+            var next = []
+            for (var i = 0; i < roots.length; i++) {
+              if (roots[i] !== modelData)
+                next.push(roots[i])
+            }
+            client.configSet({
+                "roots": next
+              })
+          }
         }
       }
       Text {
@@ -141,9 +153,20 @@ Item {
         text: "No folders yet. Add the ones Trowel should search."
         color: Theme.secondary
       }
-      Text {
-        text: "Add Folders…"
-        color: Theme.accent
+      Rectangle {
+        width: parent.width
+        height: 42
+        radius: 10
+        color: "transparent"
+        border.color: Theme.hairline
+        border.width: 1
+        Text {
+          anchors.centerIn: parent
+          text: "+  Add Folder…"
+          color: Theme.secondary
+          font.pixelSize: 13
+          font.weight: Font.Medium
+        }
         MouseArea {
           anchors.fill: parent
           onClicked: picker.running = true
