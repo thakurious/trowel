@@ -5,8 +5,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 ## Current state
 
 - **Phase:** 8 (`phase-8-launcher`, from `main` @ `9b3f4d5`, the P7 merge). D18–D24 are approved. L0 spikes are in progress. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) are still open and independent. Before Phase 8, Phase 7 ran on `phase-7-hardening` (from `origin/main` @ P6 merge). Packaging + `trowel setup` done on this machine. 72 h soak and full TESTING §7 suite are **not** done.
-- **Live:** `troweld.socket` **enabled**. Plugin `io.github.thakurious.trowel` enabled. `onboarded=true`. Index has **5478 files in FTS, 0 document vectors** (battery backfill gated). `sd_notify` datagram READY is fixed (Type=notify no longer times out). Super+D search works for prefix keywords (`bitw` → `bitwig_cinematic_album_workbook.pdf`); hybrid no longer wipes those hits before embeddings exist.
-- **Next step:** interactive L0.1–L0.6 with the human present (L0.7 is done), then L1 (protocol v2 + `state.sqlite` + mock).
+- **Live:** `troweld.socket` **enabled**. Plugin enabled. Human finished onboarding (`onboarded=true`). Code index is **actively embedding** Work + Projects (`index-service --backfill --code-root …`; status `code done=88/total=11877` after the daemon restart; `code.sqlite` already has ~12k files). Query-encoder `worker` may show `down` until the first hybrid search; the helper has its own Vulkan worker.
+- **Bugs just fixed (uncommitted):** (1) `troweld` searched only `index.sqlite`, so `code: RouteValidato` returned Downloads/Pictures docs. Daemon now opens `code.sqlite` for `code:` / `code:true`. (2) Overlay PreviewPane stayed EmptyState because Panel listened to `lineEvent` and Client only emitted `previewArrived`. (3) Segment ids collide across stores — preview/open take optional `code`. (4) Name-hits on screenshots/images returned `{type:text}` so the pane never showed a picture; DigUp loads a Quick Look image from the *file*. `preview_type_for` now uses file kind. Text/code pane was a clipped `Text` with `elide` (no scroll); PreviewPane is now DigUp CodeLines (numbered, focus row, ListView) + Passage (wrap + Flickable, ~900 char window) + image card. Not an embedded nvim — DigUp isn't either; `nvim` is the Open handler. Live PNG Name preview: `type=image` + thumb 9 KB. `troweld` rebuilt+restarted; `omarchy restart shell`.
+- **Uncommitted on `phase-8-launcher`:** embedding helper/AC/fingerprint + onboarding rewrite + reconnect + model_status routing + code searcher + preview wiring + **Enter opens nvim in `xdg-terminal-exec`** (the `cursor` PATH shim is not an IDE, so auto-detect skipped it and spawned a no-op; nvim without a TTY also failed). Missing editor → next installed → `xdg-open`. **Ctrl+C** `copy_path` now `wl-copy`s the file (image MIME / `text/uri-list`). Not committed.
+- **Next step:** Super+D → Enter on a `.ts`/`.tsx` should open Neovim in the default terminal. Ctrl+C copies the selected file (image bytes or `file://` URI). Commit when asked. L0.1–L0.6 wait for the human.
 
 ## Gates
 
@@ -61,8 +63,13 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **`trowel debug ui-trace` / `snapshot`:** IPC timings vs `--mock` are the measurable PROTOCOL/UI-DESIGN §5 proxy. Live QSG frame times need a keepLoaded omarchy-shell restart (not done). Snapshots write layout+results JSON under `design/linux/`; no grim, no macOS references.
 - **Quickshell 0.3.1 qmlscanner:** QML modules must live **inside** the `-p` config folder. `import "../qml/Trowel"` is rejected (`Client is not a type`; log: `Module path is outside of the config folder` / `qrc:/qs-blackhole`). Fix: `ui/{app,gallery,omarchy-plugin}/Trowel` → symlink `../qml/Trowel` and `import "Trowel"`. Verified: `quickshell -p ui/app` → `Configuration Loaded`. `font.pixelSize` must be int (9.5 broke `WeakerFold`).
 
+- **`worker_source()` must equal the live worker hello line.** The old guess was `embeddinggemma-2@bfcd298 llama.cpp-vulkan q8_0`. Live is `google/embeddinggemma-2@bfcd298 llama.cpp-vectors1 text-q8_0+mmproj-q8_0` (`cpp/embedder.h`). `index-service` sets `embedder_source` and `reset_on_model_change`, so `check_model` called `reset_all()` on every helper start after the first embed — vectors vanished, fingerprint dropped. Fixed to the C++ `WorkerInfo` string (backend must not appear). Tests: `matching_embedder_source_keeps_vectors`, `guessed_backend_source_resets_when_callback_is_set`, `worker_source_matches_llama_cpp_hello`.
+- **Power:** plug-in must send `backfill on` (or start a helper with `--backfill`), not only `sync`. A helper started on battery keeps `backfill_allowed=false` until that command. `apply_backfill_policy` matches upstream `setBackfillBlocker`. Clear `helper_starting` on helper exit or the next spawn is skipped forever.
 - **fend-core 1.5.8** (MIT, `cargo tree`: **zero** transitive deps). API: `Context::new()`, `evaluate_preview_with_interrupt(&str, &Context, &impl Interrupt) -> FendResult` (clones context, no RNG, drops empty / >50 chars / multiline / == input), `Interrupt::should_interrupt`, `get_main_result()`, `set_exchange_rate_handler_v{1,2}` (left unset → `5 USD to EUR` = no card). Spike output (release, preview mode): `5 ft to cm`→`152.4 cm` 111 µs, `3 GiB in MB`→`3221.225472 MB`, `90 min to hours`→`1.5 hours`, `0xff to binary`→`11111111`, `2^64`→`18446744073709551616`, `10/3`→`approx. 3.3333333333`, `10^10^10` interrupted at **20.0 ms**. `200 + 15%` natively = `200.15` (Raycast = 230 → rewrite). **Dice (`5d66`) ignores the interrupt**: `a-5d66-4b5c` 67 ms. False positives without the gate: URLs (lambda results), `key:2026-06-30`, `M-417`. **With the LAUNCHER-PLAN L2c gate:** apps 179 / files 509 / eval queries 126 / clipboard lines 807 → **0 cards**, worst 347 µs; 50 k random strings → no panic, max 20.03 ms. Spike code in the session scratchpad only (not committed); the rules are recorded in L2c.
 - **Icon theme:** `gsettings get org.gnome.desktop.interface icon-theme` → `'Yaru-purple'` (Omarchy sets it per theme). Omarchy's own `AppLibrary` icon scan ignores the theme (first hit across all `*/apps/*`). L2 should walk `Inherits=` from the current theme → hicolor, then fall back to Omarchy's scan order.
+- **`troweld` must open `code.sqlite` for `code:` searches.** CLI `cmd_search` already did (`IndexStore::CODE_FILE`); the daemon only had a main `Searcher`. `code: RouteValidato` therefore ranked Downloads/Pictures docs. Live after the fix: keyword `RouteValidator` + `code:true` returns `RouteValidator.tsx` etc., and `preview` with `code:true` is `{type:"code", lines:…}`. Segment ids are per-store; preview/open need `code` (or the last `typing` code flag) so they do not bind the same integer in `index.sqlite`.
+- **This machine's `cursor` is the agent shim**, not the IDE (`cursor --help` → "No Cursor IDE installation found"). Auto editor skipped it and now picks **nvim**, launched as `xdg-terminal-exec nvim +LINE FILE`. If nvim is missing: hx, then `xdg-open` (the file's default app). TUI editors must not be spawned with stdin/stdout/stderr null.
+- **Panel preview:** `Client.previewArrived` is how PROTOCOL preview replies are delivered (`ok` replies are not `event`s). `SearchWindow.qml` already used `onPreviewArrived`; `Panel.qml` only watched `onLineEvent`, so PreviewPane stayed on EmptyState (`row.name` + `row.reason` — matches the screenshot “filename + Matches what's on screen”).
 
 ## Open questions for the human
 
@@ -104,6 +111,84 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-14 — Pre-Phase-8 audit: bugs fixed, upstream 0.6.1 fixes ported
+
+Human: before Phase 8, analyze + test thoroughly, fix bugs, pull DigUp for new work, match DigUp polish.
+
+Upstream fetched (submodule **not** re-pinned; still `6faa29e`, origin/main `f9b8106` = v0.6.1, 40 commits). Ported fixes: 75d95d0 (stalls), 836ea4a (words in no file match as prefixes), 809f185 (stop then terminate after 15 s), bb7e753 (code counts on first sync), `prewarm` (Engine.swift:847) + loaded-only `refreshSearcher` (Engine.swift:673), panel fade (855adc0 → our Motion spec already had it, but it never ran), Passage/CodeLines word marking (Previews.swift:401). 637d276 (NFD / `/private` spellings) is n/a on Linux.
+
+Bugs found + fixed (all uncommitted):
+1. Helper + Vulkan worker ran **inside troweld's cgroup** (MemoryHigh=400M hit 3166×, 189 MB swapped). Now `systemd-run --user --scope --slice=trowel-index.slice -p MemoryHigh=3G -p MemoryMax=4G -p CPUWeight=20` (probed once; plain spawn fallback, `TROWEL_NO_SCOPE=1`). `trowel-index.slice` had `Nice=`/`IOSchedulingClass=` which systemd ignores in `[Slice]`; now nice 10 + idle IO via `setpriority`/`ioprio_set` in `pre_exec`. `trowel setup` writes the slice.
+2. **Code index stalled / went backwards** (done 2019→2018 in 45 s): every write in `~/Projects/*/target` asked `sync code`, the helper yielded at once and re-crawled. Fix: `yield_at` gate + watcher only on folders the crawl walks (`Rules::walks_into`/`is_walked`), new folders watched as they appear. inotify watches 49,248 → 3,305.
+3. Crawl walked into skipped folders (`skip_prefixes`); now `skip_current_dir`. Code crawl of Work+Projects 3.32 s → 0.48 s, output byte-identical.
+4. Config watcher dropped every event (`is_hidden` saw `.config` in the absolute path) → hand edits to config.toml never reloaded. Hidden now means below the root only.
+5. `open`/`reveal`/`copy` leaked zombies (a `[ghostty] <defunct>` was live). Children are reaped.
+6. `file://` URIs not percent-encoded (reveal GVariant broke on `'`; uri-list paste broke on spaces). `actions::file_uri`.
+7. **Every Super+D threw** `TypeError: queryFieldForce is not a function` → `panel_opened` never sent, focus call skipped. Removed.
+8. Panel close fade never ran (`visible: opened` unmapped instantly). Now mapped until `closeMs`+1 frame; focus released at start.
+9. Previews/thumbnails (80–500 ms: ffmpeg/pdftoppm/audio peaks) ran on the connection thread and blocked searches; `panel_opened` reloaded all vectors synchronously. Now a 3-thread render pool, newest preview wins (`superseded`), preview cache (48, mtime-checked), `panel_opened` = prewarm (vectors only if unloaded + encoder start).
+10. Helper `file` events reloaded **all** vectors every 2 s during indexing even with the panel closed (defeated idle release). Now reload only loaded searchers; others `refresh_files()`.
+11. Client: "Trowel isn't responding" on any reply > 2 s (cold hybrid). Now a `status` probe first; stalled only if that is unanswered too. Keep-keyword-rows guard applied to keyword replies too → stale rows on no-match; now only for the hybrid of the same text.
+12. FilterBar binding without `return` (lint).
+13. **Helper killed when the thread that started it ended.** `PR_SET_PDEATHSIG` is per *thread* (prctl(2)); `start_helper` ran on a client connection's thread or the old helper's event thread, so a CLI `resume`, a closed panel connection, or the previous helper's exit SIGTERMed the new helper within ms (no log, no scope). Explains earlier "helper exited / not embedding" reports. Now every helper forks from one lasting `troweld-spawner` thread; helpers ending by a signal are logged (`helper ended by signal N`). Test `helper_outlives_the_connection_that_resumed_it` fails on the old code (`signal 15`) and passes now; `resume_indexes_again_after_the_helper_stopped` added. Live: pause → 20 s → `resume` from a one-shot client → helper alive at +5/+10/+15 s (before: 0).
+
+Live: `~/.local/bin/{trowel,troweld}` now → `target/release` (were debug). `trowel-index.slice` copied to `~/.config/systemd/user/`. troweld restarted several times (index resumed each time). Shell restarted; installed `Panel.qml` copied.
+
+Evidence:
+- `cargo fmt --check` ok; `cargo clippy --workspace --all-targets -D warnings` ok; `cargo test --workspace` all green (core 87, long_files 13, troweld lib 24, daemon 10, ui_phase6 3, proto_replay 3, cli tests …). New tests: `changes_count_only_where_the_crawl_goes`, `code_changes_skip_built_and_vendored_folders`, `a_word_in_no_file_is_found_at_the_start_of_longer_ones`, watcher `root_inside_a_hidden_folder_reports_changes`, `skipped_folders_are_not_watched_and_new_ones_are`, `file_uris_are_percent_encoded`.
+- Evals (rebuilt `/tmp/trowel-eval`): synthetic ALL R@1 **1.00**; multilingual R@1 **0.92** / R@5 0.98 / R@10 1.00; code **1.00**; 0 folded. Same as P4.
+- Live probe (cold daemon): keyword replies 0.6–15 ms from first keystroke; `panel_opened` 0.2 ms (was 64 ms blocking); hybrid cold 1.25 s (encoder Vulkan init; prewarm overlaps typing). Warm search 15 ms while 3 previews render; repeat preview 1.2 ms (was 175 ms).
+- After restart: helper/worker `nice 10`, `io idle`, in `trowel-index.slice`; troweld 83 MB / 400 MB.
+
+Failed-file retry (human asked): paused, backed up (`index.sqlite.bak-20261014-134130`, `code.sqlite.bak-…`), reset 36 + 14 `Couldn't be read safely` to pending, resumed. Main: 26 indexed (OCR'd screenshots), 2 PDFs genuinely corrupt (xref), 8 re-poisoned by this session's daemon restarts → reset again after the last restart. Note: a failed file's `detail` stores pdfinfo's whole multi-line stderr; trim to the first line (todo).
+
+Panel check: `invoice` → 20 results + PDF page preview OK, no QML warnings. The code-query capture did not run cleanly: Escape first clears the query (by design), so the test script's `toggle` closed the panel and **its keystrokes (Ctrl+A, `code: RouteValidator`, Esc) went to the human's focused Slack window** (screenshot showed the reply box empty). A guarded retry typed only with the panel layer mapped, but the human was using the machine. GUI automation stopped. Never script keystrokes into the live session without the human's go-ahead and a layer guard; close with `toggle`, not Escape.
+
+Phase 8 backlog: upstream v0.6.1 items are in `EXECUTION-PLAN.md` §8U (U1–U12, with acceptance lines).
+
+Supervised panel run (human: "you can now run tests"), every keystroke guarded by `hyprctl -j layers` showing `trowel-panel`, closed with `toggle`:
+- Found + fixed: reopen kept the last query **unselected**, so typing appended (`code: Routevalidacode: RouteValidator`). Now selected on open (`SearchPanel.swift:106`). Footer said `1 groups` → upstream `statusText` (`N results [in your code] · N weaker`, `Matching words; meaning search is warming up…`, `Still reading code (N%)`) + key hints (↵ Open, ctrl ↵ Reveal, space Quick Look, ctrl C Copy). Field badge showed the row-model count (headers included) → upstream `activityBadge` (`Indexing N%` / `Indexing paused`).
+- Verified on screen: `code: router push` → 60 results in your code, `router`/`push` marked yellow in code lines, focus band L595. `invoice paid` → passage with whole-word `invoice` marked, footer `18 results · 19 weaker`. `screenshot payment` → screenshots first, picture preview, badge `Indexing 50%`. No QML warnings after each shell restart.
+- F18 live: `kill -STOP troweld` with the panel open → field still types; no banner at +2 s (status probe pending), `Trowel isn't responding` at +5 s; `kill -CONT` → banner clears, `harbour notes` results arrive.
+
+Open / not done:
+- Stale results stay on screen while the daemon is frozen (only the banner changes); acceptable, matches F18 wording.
+- Not ported (features, need human OK): SVG images (1a8834e), OCR of scanned PDF pages (ebe8232), index-only-at-set-hours (ae99c1c), measured time estimates (ce6c765), settings scroll for long folder lists (6155d80 — check SettingsWindow). Re-pinning `upstream/` to `f9b8106` changes D15 → ask.
+- Hybrid on nonsense text still returns meaning hits (e.g. a hex-key .txt) — same math as upstream.
+
+**Next step:** commit on `phase-8-launcher` when asked (all gates green, panel verified); then Phase 8 L0 spikes and §8U (U1 first).
+
+### 2026-10-14 — Onboarding UX to match DigUp
+
+Human: onboarding UX/UI is not prod-ready; need to pick more folders than the defaults; learn from macOS DigUp.
+
+- Ported `Onboarding.swift` / `FolderChoices.swift` chrome: welcome features + privacy, folder cards, **Add Folder…** (zenity portal), skip folders/types, live `estimate` summary, code opt-in + add, shortcut keycaps, ready switches, step dots, Get Started / Continue / Done. Defaults are XDG **Desktop, Documents, Downloads, Pictures, Videos, Music** (macOS Movies/Music). Continue disabled until a folder is checked.
+- `FolderRow` is a 54 px card (checkbox, icon, basename). Settings → Folders uses the same Add Folder button.
+- Window 680×600 (`OnboardingView.size`); panel onboarding uses full `maxPanelHeight`. `TROWEL_ONBOARDING_LOCATIONS` / `TROWEL_ONBOARDING_STEP` for tests.
+- Evidence: `cargo test -p trowel-cli --test onboarding_ui` ok; `quickshell -p ui/app` Configuration Loaded; grim of welcome + folders (six dirs + Add Folder…).
+- This user is already `onboarded=true` — do not flip that (it would pause the helper). Extra folders go through Settings.
+
+### 2026-10-14 — Fix embeddings on AC (fingerprint wipe)
+
+Human: laptop is on AC, fix embeddings properly.
+
+- Root cause of overnight wipe: `trowel index-service` set `embedder_source` to a **guessed** `worker_source()` (`llama.cpp-vulkan q8_0`). First helper wrote the live fingerprint (`llama.cpp-vectors1 text-q8_0+mmproj-q8_0`), later helper `check_model` mismatched → `reset_all()` (all pending, fingerprint gone, vectors deleted). Same troweld pid, so it looked like a silent in-process reset.
+- Also: helper exit left `helper_starting=true` (no respawn); AC plug sent `sync` but not `backfill on`.
+- Fix: `worker_source()` = C++ `WorkerInfo`; `apply_backfill_policy` on AC/battery change; clear `helper_starting` on exit; log `reindex` events.
+- Evidence: `cargo test` fingerprint + worker_source + troweld lib + pipeline 4/4. Live after `systemctl --user restart troweld.service`: phase indexing, **vec 144→160** over 12 s, fingerprint stable, helper `--backfill`, worker vulkan.
+- **Next step:** leave on AC. Commit when asked. L0.1–L0.6 still wait for the human.
+
+### 2026-10-14 — Compress: live index, embeddings, disk
+
+Human: laptop on charge, is embedding happening? Then: how much disk will embeddings take? Then `/compress`.
+
+- **Was not embedding** even on AC. Helper had exited; `helper_starting` stayed true so it never respawned; plugging in did not `request_sync`. All 5478 files `pending`, `vec=0`.
+- Patched `engine.rs` (uncommitted): clear `helper_starting` on helper exit; AC-plug → `request_sync()`. Rebuilt troweld, `systemctl --user restart troweld.service` → pid **1039692**. Helper + full Vulkan worker started. At +20 s: `done` 16, `failed` 8 (`Couldn't be read safely` screenshots), `vec=16`, current `~/Pictures` screenshots.
+- **Now (2026-10-14 ~10:56, on battery):** same troweld pid, **no helper, no worker**, phase `idle`, `main done=5478/5478`, sqlite **all 5478 `pending` again, `vec=0`**, only `name` segments. `meta.fingerprint` gone (only `vector_source`). `indexer.log` still the 13 Oct 17:29 llama.cpp ready line. Overnight vectors from the helper run are **not** in the DB. Cause not diagnosed (same process, no restart). Backfill gated by battery.
+- **Disk:** models **865 MB** (fixed). Each vector **768×fp16 = 1536 B**. This library after a full pass: **~15–40 MB** typical, **<~80 MB** worst (videos/PDFs). Code index off (`code.sqlite` absent). F9 pauses at <500 MB free or <5%. `~/.cache/trowel` empty. `apply_counts` still a stub (UI kind counts stay 0).
+- Constraints unchanged: no `hyprctl reload` / Mozc / wtype unless asked; no Raycast until they say go; no P7 soak claim; Jira skip unless a key is given.
+- **Next step:** L0.1–L0.6 with the human. Commit helper/AC patch when asked. On AC, confirm helper actually writes vectors and they persist.
 
 ### 2026-10-13 — Phase 8 approved; L0.7 (fend-core) done
 

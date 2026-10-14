@@ -245,6 +245,48 @@ Phase 7 soak is open.
 **Acceptance:** each L-phase acceptance line in `LAUNCHER-PLAN.md` is demonstrated with output in
 `PROGRESS.md`, and the P4 evals re-run with identical numbers after L4.
 
+### 8U. Upstream DigUp parity (6faa29e → v0.6.1 `f9b8106`)
+
+Upstream moved 40 commits past our pin (fetched 2026-10-14). Port each item below the usual way:
+read the commit side by side, port its tests first, cite `upstream/<path>:<line>`. **Re-pinning
+`upstream/` to `f9b8106` changes D15 and needs the human's OK**; until then, read the commits with
+`git -C upstream show <sha>`. Items that change what gets indexed (U1–U3) change the settings
+fingerprint, so every affected file re-indexes once: say so in the release note.
+
+Already ported (2026-10-14, see PROGRESS):
+
+| Commit | What | Where |
+|---|---|---|
+| 836ea4a | A word in no file matches as the start of longer words | `Searcher::search` + `is_indexed` |
+| 75d95d0 | Indexing yields to a sync only after ~as long as the last sync; watcher ignores skipped folders | `index_service` `yield_at`, `Rules::is_walked`, scoped `FolderWatch` |
+| 809f185 (part) | Stop the helper, end it 15 s later if still running | `Helper::stop_within` |
+| bb7e753 | Code folders crawled on the first sync so their counts show | `index_service` `code_counted` |
+| 855adc0 | Panel fades in and out | `Panel.qml` `mapped` + `unmapTimer` |
+| `prewarm` / `refreshSearcher` | Encoder + vectors warmed on panel open; reload only loaded vectors | `engine.rs` `prewarm`, `reload_searcher` |
+| Previews.swift:401 | Query words marked in passages and code lines | `PreviewPane.qml` `marked()` (visual check still open) |
+
+To do (in this order; each its own small PR):
+
+| # | Commit | Upstream change | Linux port notes | Acceptance |
+|---|---|---|---|---|
+| U1 | ebe8232 | OCR scanned PDF pages (pages with no text layer) for keyword search | `pdftoppm` page → tesseract (the screenshot OCR path); same per-page steps as long PDFs; power-gated like OCR | Port `LongFilesTests` scanned-page case; a scanned testbed PDF is found by a word on page 2 |
+| U2 | 1a8834e | SVG images indexed as pictures | rasterize with `vips` (already used for thumbnails) or `rsvg-convert`; add `svg` to image extensions; preview/thumbnail paths | Port `ImageTests` SVG + `IndexStoreTests` cases; an SVG in the testbed matches a picture query |
+| U3 | 536f17f, 9900c1e | HEIC/WebP/TIFF/AVIF read on Linux; EXIF orientation (`EXIF.swift`) | we already list the extensions; verify each decodes via `vips` and that EXIF orientation is applied before embedding (port the `pattern-o6.*` fixtures and `ImageTests`) | All five `Tests/DigUpKitTests/Pictures/pattern*` fixtures embed upright |
+| U4 | 809f185 (rest) | Watchdog: per-file time limit (15 min) and memory limit; a file that runs away is marked "couldn't be read" and the helper restarts (≤3 times / 10 min) | memory is already capped by the `trowel-index.slice` scope (MemoryMax=4G, OOM → F5c poison); add the per-file time limit + `stopped` event + restart throttle | Port `IndexStoreTests.markStopped`; a `sleep`-forever fake extractor is stopped and skipped |
+| U5 | ae99c1c | Index only at set hours (Settings) | `IndexHours` in core; config key + Settings row; engine gates backfill like the power policy | Port `IndexHoursTests`; outside the hours the helper only syncs new files |
+| U6 | ce6c765 | Time estimates calibrated from measured per-kind costs on this machine | port `MeasuredCosts` (the Apple speed probe has no Linux equivalent: measure from `indexer` events) | Port `MeasuredCostsTests`; onboarding estimate within 2× of the real first pass |
+| U7 | 6155d80 | Settings scrolls with long folder lists | `SettingsWindow.qml` folders list in a Flickable/ListView | 30 folders: every row reachable, no clipped buttons |
+| U8 | 1cf003d | Don't overwrite the field while an IME composes | check `QueryField.qml` never writes `text` back while `inputMethodComposing`; re-run the fcitx5/Mozc test from P0 | Typing 사업 / にほんご in the panel commits whole |
+| U9 | 2d0c83c, 47d0196 | Model download from the helper, and "Use Files…" for downloaded model files | Settings/onboarding: pick existing `.gguf` files, verify SHA-256 (`ModelFiles`) and copy into `models_dir` | Wrong file is refused with a reason; right files make `model_status` complete |
+| U10 | a5c3e24 | llama.cpp uses up to 8 threads on Linux | set `n_threads`/`n_threads_batch` (and mtmd) in `cpp/` worker to min(8, logical CPUs); CPU backend only matters | CPU parity still ≥ 0.999; CPU-backend encode time recorded in BENCHMARKS |
+| U11 | 052ad4d | Retry the WAL switch when two helpers open a new index | wrap `PRAGMA journal_mode=WAL` in the busy retry | Two `trowel index` on a fresh dir both succeed |
+| U12 | f2e1dcf, 8107bd8, 7366d9d, 2662dd0, 9c131c5, 94f4791 | Upstream's own Linux/Windows "shell" (Tauri) + search service in the helper | **Reference only**, not a port target (D-decisions keep troweld + Quickshell). Read for Linux behavior upstream chose (process priority, model download, status in the panel) | Notes in PROGRESS §Verified facts |
+| — | 637d276 | NFD / `/private/var` path spellings | n/a on Linux (byte paths, no firmlinks) | — |
+| — | 5de3145, f130253, 2c48b70, b475d68, c1281d4, 5054acd, 8dd80c6 | quit helpers with the app; build pinning; dev env; Homebrew/DMG | covered (PDEATHSIG + lasting spawner thread) or macOS release tooling | — |
+
+**8U acceptance:** each row's line demonstrated in `PROGRESS.md`; P4 evals identical after U1–U3
+(they add files to the testbed only if the eval JSON gains entries, which needs the human).
+
 ---
 
 ## Cross-cutting workstreams
