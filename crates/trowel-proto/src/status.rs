@@ -20,7 +20,7 @@ pub struct Status {
     pub last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Progress {
     pub done: u64,
     pub total: u64,
@@ -28,7 +28,7 @@ pub struct Progress {
     pub current: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Counts {
     pub screenshots: u64,
     pub images: u64,

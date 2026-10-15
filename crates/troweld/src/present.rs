@@ -39,7 +39,18 @@ pub fn result_set(hits: &[SearchHit], gen: u64, took_ms: u64, meaning: Meaning) 
         weaker,
         took_ms,
         meaning,
+        counts: kind_counts(hits),
     }
+}
+
+/// Strong hits per group kind: the kind tabs' counts.
+/// `upstream/Sources/DigUpApp/SearchWindow.swift:317` (`all.prefix(strongCount(all))`).
+pub fn kind_counts(hits: &[SearchHit]) -> BTreeMap<String, u64> {
+    let mut counts = BTreeMap::new();
+    for hit in hits.iter().take(Searcher::strong_count(hits, 0.5)) {
+        *counts.entry(group_kind(hit.kind.as_str())).or_insert(0) += 1;
+    }
+    counts
 }
 
 fn group_kind(kind: &str) -> String {

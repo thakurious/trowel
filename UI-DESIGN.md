@@ -161,7 +161,8 @@ hl.layer_rule({ match = { namespace = "^trowel-(panel|popup)$" }, no_anim = true
 | `Ctrl+Y` | Toggle Quick Look | upstream `⌘Y` |
 | `Ctrl+C` | Copy the path (when there is no text selection in the field) | |
 | `Ctrl+O` | Open the query in the main window | |
-| `Tab` | Toggle code mode | |
+| `Tab` / `Shift+Tab` | Next / previous kind tab: All · Screenshots · Images · Documents · Video · Audio · Code. Skips kinds with no strong result for the query (All and Code always stop). Each tab re-runs the query with `search.kinds`; counts are the unfiltered query's strong results | Port of DigUp's window kind filters (`SearchWindow.swift:133`) into the panel; Code replaces the old code-mode toggle, and typing `code:` selects it |
+| `Ctrl+1` … `Ctrl+7` | All, Screenshots, Images, Documents, Video, Audio, Code | DigUp ⌘1…⌘7 |
 
 **Focus loss** hides the panel (upstream hides on `didResignActive`, Spotlight-style). Also hide
 when another Trowel window comes forward. On Hyprland, watch `HyprlandFocusedMonitor` and

@@ -52,12 +52,11 @@ Item {
   // Field badge: what indexing is doing, not a result count.
   // `upstream/Sources/DigUpApp/AppModel.swift:99` activityBadge.
   readonly property string activityBadge: {
-    var st = client.status || {}
-    if (st.paused_reason)
+    if (client.paused)
       return "Indexing paused"
-    var main = st.main || {}
-    if ((st.phase === "indexing" || st.phase === "syncing") && main.total > 0)
-      return "Indexing " + Math.floor((main.done || 0) / main.total * 100) + "%"
+    var pass = client.activePass
+    if (pass)
+      return (pass.code ? "Indexing code " : "Indexing ") + Math.floor(pass.done / pass.total * 100) + "%"
     return ""
   }
 
@@ -105,10 +104,17 @@ Item {
     root.navigated = false
     var raw = query.text
     var trimmed = raw.replace(/^\s+|\s+$/g, "")
-    root.codeMode = trimmed.indexOf("code:") === 0
-    var text = root.codeMode ? trimmed.replace(/^code:\s*/, "") : trimmed
+    // Typing "code:" picks the Code tab; the tab alone is enough too.
+    var prefixed = trimmed.indexOf("code:") === 0
+    if (prefixed && tabs.current !== "code")
+      tabs.current = "code"
+    root.codeMode = tabs.current === "code"
+    var text = prefixed ? trimmed.replace(/^code:\s*/, "") : trimmed
+    client.kinds = tabs.kindsFor(tabs.current)
     if (trimmed.length === 0) {
       root.phase = "empty"
+      client.counts = ({})
+      client.countsText = ""
       client.groups = []
       client.weaker = []
       client.syncModel()
@@ -130,19 +136,32 @@ Item {
 
   function runHybrid() {
     var trimmed = query.text.replace(/^\s+|\s+$/g, "")
-    var text = root.codeMode ? trimmed.replace(/^code:\s*/, "") : trimmed
+    var text = trimmed.replace(/^code:\s*/, "")
     if (text.length === 0)
       return
+    client.kinds = tabs.kindsFor(tabs.current)
     client.search(text, "hybrid", root.codeMode, false)
   }
 
-  function toggleCodeMode() {
-    var t = query.text
-    if (t.indexOf("code:") === 0)
-      query.text = t.replace(/^code:\s*/, "")
-    else
-      query.text = "code: " + t
-    onQueryEdited()
+  // A kind tab was picked (Tab, Ctrl+1…7 or a click): the same query again, filtered.
+  function onTabPicked(id) {
+    if (id !== "code" && query.text.replace(/^\s+/, "").indexOf("code:") === 0)
+      query.text = query.text.replace(/^\s*code:\s*/, "")
+    root.selection = ""
+    root.selectedRow = null
+    root.preview = ({})
+    root.navigated = false
+    root.codeMode = id === "code"
+    client.kinds = tabs.kindsFor(id)
+    var text = query.text.replace(/^\s+|\s+$/g, "").replace(/^code:\s*/, "")
+    if (!text.length) {
+      onQueryEdited()
+      return
+    }
+    // Same text: its vector is cached, so go straight to the full search. A keyword pass
+    // first showed other rows and counts for a moment.
+    hybridTimer.stop()
+    client.search(text, "hybrid", root.codeMode, false)
   }
 
   function moveSelection(step) {
@@ -448,9 +467,54 @@ Item {
               } else if (ctrl && event.key === Qt.Key_O) {
                 appProc.running = true
                 event.accepted = true
-              } else if (event.key === Qt.Key_Tab) {
-                root.toggleCodeMode()
+              } else if (event.key === Qt.Key_Tab && !ctrl) {
+                tabs.cycle(1)
                 event.accepted = true
+              } else if (event.key === Qt.Key_Backtab) {
+                tabs.cycle(-1)
+                event.accepted = true
+              } else if (ctrl && event.key >= Qt.Key_1 && event.key <= Qt.Key_7) {
+                // Ctrl+1 All, Ctrl+2…6 one kind, Ctrl+7 Code (`SearchWindow.swift:133`, ⌘ there).
+                tabs.pick(tabs.ids[event.key - Qt.Key_1] || tabs.current)
+                event.accepted = true
+              }
+            }
+          }
+
+          Item {
+            width: parent.width
+            height: visible ? 34 : 0
+            visible: root.phase !== "empty"
+            FilterBar {
+              id: tabs
+              anchors.left: parent.left
+              anchors.leftMargin: 14
+              anchors.verticalCenter: parent.verticalCenter
+              counts: client.counts
+              // Dim kinds with no result once the query's file counts are known (also on the Code
+              // tab, which keeps them); a query typed on the Code tab only knows the Code count.
+              dimEmpty: Object.keys(client.counts || {}).some(function (k) {
+                return k !== "code"
+              })
+              showCode: !!(client.config && client.config.code_roots && client.config.code_roots.length)
+              onPicked: function (id) {
+                root.onTabPicked(id)
+              }
+            }
+            Row {
+              anchors.right: parent.right
+              anchors.rightMargin: 16
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 4
+              Keycap {
+                label: "tab"
+                size: 11
+              }
+              Text {
+                text: "Type"
+                color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.62)
+                font.pixelSize: 11
+                anchors.verticalCenter: parent.verticalCenter
               }
             }
           }
@@ -509,6 +573,29 @@ Item {
               cacheBuffer: 240
               highlightMoveDuration: Motion.highlightMs
               highlightResizeDuration: 0
+
+              // Keep the selected row in view as the arrows move it (upstream ScrollViewReader
+              // scrollTo): the smallest scroll, with a group's header when its first row is picked.
+              function reveal(rowId) {
+                for (var i = 0; i < count; i++) {
+                  if (model.get(i).rowId !== rowId)
+                    continue
+                  if (i > 0 && model.get(i - 1).rowType === "header")
+                    positionViewAtIndex(i - 1, ListView.Contain)
+                  positionViewAtIndex(i, ListView.Contain)
+                  return
+                }
+              }
+
+              Connections {
+                target: root
+                function onSelectionChanged() {
+                  var id = root.selection
+                  Qt.callLater(function () {
+                    list.reveal(id)
+                  })
+                }
+              }
               delegate: Item {
                 width: list.width
                 height: {

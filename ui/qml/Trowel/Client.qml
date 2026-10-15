@@ -44,6 +44,36 @@ QtObject {
   property var genText: ({})
   property string rowsText: ""
   property var kinds: []
+  // The indexing pass that is running: the main index's, else the code index's (the helper
+  // reads code only once the main index has nothing waiting). {done, total, code} or null.
+  readonly property var activePass: {
+    var st = root.status || {}
+    if (st.phase !== "indexing" && st.phase !== "syncing")
+      return null
+    var main = st.main || {}
+    if (main.total > 0 && main.done < main.total)
+      return {
+        "done": main.done,
+        "total": main.total,
+        "code": false
+      }
+    var code = st.code || {}
+    if (code.total > 0)
+      return {
+        "done": code.done,
+        "total": code.total,
+        "code": true
+      }
+    return null
+  }
+  readonly property bool paused: !!(root.status && (root.status.paused_reason || root.status.phase === "paused"))
+
+  // Strong results per kind for the query without the kind filter (the tab counts),
+  // and the query text they belong to.
+  property var counts: ({})
+  property string countsText: ""
+  // Per search gen: {text, hybrid, code}, to place each reply's counts.
+  property var genMeta: ({})
   property bool lastSearchCode: false
 
   readonly property string weakerId: "\u0000weaker"
@@ -105,6 +135,13 @@ QtObject {
     if (root.genText[g - 1] !== undefined)
       texts[g - 1] = root.genText[g - 1]
     root.genText = texts
+    var metas = ({})
+    metas[g] = {
+      "text": String(text),
+      "hybrid": mode === "hybrid",
+      "code": !!code
+    }
+    root.genMeta = metas
     root.lastSearchCode = !!code
     var req = {
       op: "search",
@@ -344,6 +381,34 @@ QtObject {
     }
   }
 
+  // Tab counts: a reply without `counts` means none. A keyword pass never replaces the hybrid
+  // counts of the same text (they differ; switching tabs flickered); a code search only sets
+  // the Code count and keeps the file kinds' counts for the same text.
+  function applyCounts(msg) {
+    var meta = root.genMeta[msg.gen]
+    if (!meta)
+      return
+    var c = msg.counts || ({})
+    var same = meta.text === root.countsText
+    var next = ({})
+    var k
+    if (meta.code) {
+      if (same)
+        for (k in root.counts)
+          next[k] = root.counts[k]
+      next.code = c.code || 0
+    } else {
+      if (same && !meta.hybrid && Object.keys(root.counts).length)
+        return
+      for (k in c)
+        next[k] = c[k]
+      if (same && root.counts.code !== undefined)
+        next.code = root.counts.code
+    }
+    root.counts = next
+    root.countsText = meta.text
+  }
+
   function onLine(line) {
     root.stalled = false
     root.probing = false
@@ -388,6 +453,7 @@ QtObject {
       var asked = root.genText[msg.gen] || ""
       var hybridOfShown = asked.indexOf("\u0000hybrid") > 0
           && asked.split("\u0000")[0] === root.rowsText
+      applyCounts(msg)
       if (incomingRows === 0 && root.rows.count > 0 && hybridOfShown) {
         root.appliedGen = msg.gen
         root.meaning = msg.meaning || root.meaning

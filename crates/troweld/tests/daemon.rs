@@ -806,3 +806,116 @@ fn helper_outlives_the_connection_that_resumed_it() {
         "the helper must outlive the connection that resumed it:\n{err}"
     );
 }
+
+/// A kind tab filters the list, but the tab counts are the query's unfiltered strong results.
+/// `upstream/Sources/DigUpApp/SearchWindow.swift:311`.
+#[test]
+fn kind_filter_keeps_unfiltered_tab_counts() {
+    let root = temp();
+    let files = root.join("files");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("a.txt"), "the harbour meeting notes\n").unwrap();
+    write_cfg(&root, true, std::slice::from_ref(&files));
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let mut id = 10;
+    assert!(finds(&mut stream, &mut reader, "harbour", 20, &mut id));
+    let ask = |stream: &mut UnixStream,
+               reader: &mut BufReader<UnixStream>,
+               n: u64,
+               kinds: Value| {
+        send(
+            stream,
+            &json!({"id":n,"op":"search","text":"harbour","mode":"keyword","prefix_last":false,"gen":n,"kinds":kinds}),
+        );
+        loop {
+            let v = recv(reader);
+            if v.get("id") == Some(&json!(n)) {
+                return v;
+            }
+        }
+    };
+    let all = ask(&mut stream, &mut reader, 100, Value::Null);
+    assert_eq!(all["counts"]["documents"], 1, "{all}");
+    let images = ask(&mut stream, &mut reader, 101, json!(["image"]));
+    assert_eq!(
+        images["groups"].as_array().map(Vec::len),
+        Some(0),
+        "{images}"
+    );
+    assert_eq!(images["counts"]["documents"], 1, "{images}");
+}
+
+/// A code sync is the code pass's progress. It used to set `main` to 0/N, so the panel badge
+/// and the bar read "Indexing 0%" for the whole code pass.
+#[test]
+fn code_sync_progress_is_not_main_progress() {
+    let root = temp();
+    let code = root.join("code");
+    fs::create_dir_all(code.join("src")).unwrap();
+    fs::write(
+        code.join("src/route_validator.rs"),
+        "pub fn route_validator(path: &str) -> bool {\n    path.starts_with('/')\n}\n",
+    )
+    .unwrap();
+    let cfg = trowel_proto::Config {
+        roots: vec![],
+        code_roots: vec![code.to_string_lossy().into_owned()],
+        onboarded: true,
+        index_dir: root.join("index").to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    troweld::config_file::save(&root.join("config.toml"), &cfg).unwrap();
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"subscribe","topics":["status"]}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut statuses = 0;
+    let mut n = 100u64;
+    let mut found = false;
+    while Instant::now() < deadline && !found {
+        n += 1;
+        send(
+            &mut stream,
+            &json!({"id":n,"op":"search","text":"route_validator","mode":"keyword","code":true,"prefix_last":false,"gen":n}),
+        );
+        loop {
+            let v = recv(&mut reader);
+            if v["event"] == "status" {
+                statuses += 1;
+                assert_eq!(
+                    v["main"]["total"], 0,
+                    "code indexing reported as main progress: {v}"
+                );
+                continue;
+            }
+            if v.get("id") == Some(&json!(n)) {
+                found = v["groups"].as_array().is_some_and(|g| !g.is_empty());
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    assert!(found, "the code file must be indexed");
+    assert!(statuses > 0, "no status events seen");
+}

@@ -823,6 +823,7 @@ fn start_search(
         } else {
             Meaning::Unavailable
         };
+        let mut tab_counts = None;
         let hits = {
             let searched = if use_code {
                 ensure_code_searcher(&engine);
@@ -840,6 +841,22 @@ fn start_search(
                 })
             } else {
                 let mut searcher = engine.searcher.lock().expect("searcher");
+                // A kind tab: the counts on the tabs come from the same query unfiltered
+                // (`SearchWindow.swift:311`). The filter is applied after scoring, so the
+                // filtered list ranks exactly as the All tab does.
+                if kind_set.is_some() {
+                    if let Ok(all) = searcher.search(
+                        &q,
+                        vector.as_deref(),
+                        None,
+                        limit as usize,
+                        Searcher::Z_GATE,
+                        None,
+                        fts_prefix,
+                    ) {
+                        tab_counts = Some(present::kind_counts(&all));
+                    }
+                }
                 Some(searcher.search(
                     &q,
                     vector.as_deref(),
@@ -860,7 +877,10 @@ fn start_search(
             }
         };
         let took_ms = started.elapsed().as_millis() as u64;
-        let result = present::result_set(&hits, gen, took_ms, meaning);
+        let mut result = present::result_set(&hits, gen, took_ms, meaning);
+        if let Some(counts) = tab_counts {
+            result.counts = counts;
+        }
         if conn_epoch.load(Ordering::SeqCst) != epoch {
             return;
         }
@@ -1481,11 +1501,21 @@ impl Engine {
         let code = event.get("code").and_then(Value::as_bool).unwrap_or(false);
         match kind {
             "sync" => {
-                if event.get("new").and_then(Value::as_i64).unwrap_or(0) > 0 {
+                let new = event.get("new").and_then(Value::as_u64).unwrap_or(0);
+                if new > 0 {
+                    // A code sync is the code pass's progress, never the main one's: it set
+                    // main to 0/N, and nothing about the main index ever corrected it (the
+                    // badge and bar sat at 0% while code was indexed).
+                    // `upstream/Sources/DigUpApp/Engine.swift` handleCode "sync".
                     let mut status = self.status.lock().expect("status");
                     status.phase = "indexing".into();
-                    status.main.total = event.get("new").and_then(Value::as_u64).unwrap_or(0);
-                    status.main.done = 0;
+                    let pass = if code {
+                        &mut status.code
+                    } else {
+                        &mut status.main
+                    };
+                    pass.total = new;
+                    pass.done = 0;
                 } else {
                     self.status.lock().expect("status").phase = "syncing".into();
                 }
@@ -1495,6 +1525,9 @@ impl Engine {
                 let mut status = self.status.lock().expect("status");
                 status.phase = "indexing".into();
                 if code {
+                    // The helper reads code only once the main index has nothing waiting:
+                    // the main pass is over.
+                    status.main = Default::default();
                     status.code.done = event.get("done").and_then(Value::as_u64).unwrap_or(0);
                     status.code.total = event.get("total").and_then(Value::as_u64).unwrap_or(0);
                     status.code.current = event
@@ -1521,7 +1554,8 @@ impl Engine {
                 {
                     let mut status = self.status.lock().expect("status");
                     status.phase = "idle".into();
-                    status.main.current = None;
+                    status.main = Default::default();
+                    status.code = Default::default();
                 }
                 self.apply_counts(&event);
                 reload_searcher(self, true);
@@ -1571,8 +1605,41 @@ impl Engine {
         self.broadcast_status();
     }
 
-    fn apply_counts(&self, event: &Value) {
-        let _ = event.get("files");
+    /// `status.counts`: searchable files per kind in both indexes (PROTOCOL §5).
+    fn apply_counts(&self, _event: &Value) {
+        let mut counts = trowel_proto::status::Counts::default();
+        let mut add = |by_kind: &std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, usize>,
+        >| {
+            for (kind, states) in by_kind {
+                let n = states
+                    .iter()
+                    .filter(|(state, _)| state.as_str() == "done" || state.as_str() == "partial")
+                    .map(|(_, n)| *n as u64)
+                    .sum::<u64>();
+                match kind.as_str() {
+                    "screenshot" => counts.screenshots += n,
+                    "image" => counts.images += n,
+                    "pdf" | "doc" => counts.documents += n,
+                    "video" => counts.video += n,
+                    "audio" => counts.audio += n,
+                    "code" => counts.code += n,
+                    _ => {}
+                }
+            }
+        };
+        if let Ok(searcher) = self.searcher.lock() {
+            if let Ok(c) = searcher.store.counts() {
+                add(&c.by_kind_and_state);
+            }
+        }
+        if let Ok(slot) = self.code_searcher.lock() {
+            if let Some(c) = slot.as_ref().and_then(|s| s.store.counts().ok()) {
+                add(&c.by_kind_and_state);
+            }
+        }
+        self.status.lock().expect("status").counts = counts;
     }
 
     fn broadcast_status(&self) {

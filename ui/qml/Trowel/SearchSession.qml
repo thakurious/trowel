@@ -6,6 +6,8 @@ QtObject {
   property var client
   property string query: ""
   property bool codeMode: false
+  // The Code filter: a search of the code index without typing "code:".
+  property bool codeTab: false
   property string phase: "empty"
   property bool navigated: false
   property string selection: ""
@@ -17,8 +19,9 @@ QtObject {
     root.query = raw
     root.navigated = false
     var trimmed = String(raw).replace(/^\s+|\s+$/g, "")
-    root.codeMode = trimmed.indexOf("code:") === 0
-    var text = root.codeMode ? trimmed.replace(/^code:\s*/, "") : trimmed
+    var prefixed = trimmed.indexOf("code:") === 0
+    root.codeMode = root.codeTab || prefixed
+    var text = prefixed ? trimmed.replace(/^code:\s*/, "") : trimmed
     if (trimmed.length === 0) {
       root.phase = "empty"
       root.selection = ""
@@ -58,7 +61,7 @@ QtObject {
 
   function runHybrid() {
     var trimmed = String(root.query).replace(/^\s+|\s+$/g, "")
-    var text = root.codeMode ? trimmed.replace(/^code:\s*/, "") : trimmed
+    var text = trimmed.replace(/^code:\s*/, "")
     if (text.length && client)
       client.search(text, "hybrid", root.codeMode, false)
   }

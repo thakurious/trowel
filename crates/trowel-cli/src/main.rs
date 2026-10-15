@@ -139,7 +139,7 @@ enum Commands {
     },
     /// The app's indexing helper (JSON lines on stdout).
     IndexService {
-        #[arg(required = true)]
+        /// The folders to index. May be empty when only code folders (`--code-root`) are chosen.
         path: Vec<PathBuf>,
         #[arg(long)]
         index: Option<PathBuf>,
@@ -438,6 +438,10 @@ fn main() {
             exclude,
             exclude_ext,
         } => {
+            if path.is_empty() && code_root.is_empty() {
+                eprintln!("trowel index-service: no folders to index (give a PATH or --code-root)");
+                std::process::exit(2);
+            }
             let code = cmd_index_service(
                 path,
                 index.unwrap_or_else(default_index_dir),

@@ -1,6 +1,6 @@
 {"send": {"id": 1, "op": "hello", "protocol": 1, "client": "panel", "pid": 1}}
 {"recv": {"id": 1, "ok": true, "protocol": 1, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr"], "state": "ready"}}
 {"send": {"id": 2, "op": "search", "text": "notes", "mode": "keyword", "gen": 1}}
-{"recv": {"id": 2, "ok": true, "gen": 1, "groups": [{"kind": "documents", "title": "Documents", "total": 1, "rows": [{"id": {"b64": "L3RtcC9ub3Rlc/8udHh0", "display": "/tmp/notes\ufffd.txt"}, "name": "notes\ufffd.txt", "folder": "/tmp", "kind": "txt", "segment": "file", "segment_id": 1, "excerpt": "meeting notes", "matched_meaning": false, "matched_words": true, "info": {}}]}], "weaker": [], "took_ms": 0, "meaning": "skipped"}}
+{"recv": {"id": 2, "ok": true, "counts": {"documents": 1}, "gen": 1, "groups": [{"kind": "documents", "title": "Documents", "total": 1, "rows": [{"id": {"b64": "L3RtcC9ub3Rlc/8udHh0", "display": "/tmp/notes\ufffd.txt"}, "name": "notes\ufffd.txt", "folder": "/tmp", "kind": "txt", "segment": "file", "segment_id": 1, "excerpt": "meeting notes", "matched_meaning": false, "matched_words": true, "info": {}}]}], "weaker": [], "took_ms": 0, "meaning": "skipped"}}
 {"send": {"id": 3, "op": "copy_path", "path": {"b64": "L3RtcC9ub3Rlc/8udHh0", "display": "/tmp/notes\ufffd.txt"}}}
 {"recv": {"id": 3, "ok": true, "text": "/tmp/notes\ufffd.txt"}}

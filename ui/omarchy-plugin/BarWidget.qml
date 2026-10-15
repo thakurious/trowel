@@ -37,14 +37,10 @@ BarWidget {
     anchors.centerIn: parent
     width: Style.bar.iconCanvas
     height: Style.bar.iconCanvas
-    progress: {
-      var st = client.status || {}
-      var idx = st.index || st.indexing || {}
-      if (idx && idx.total > 0)
-        return idx.done / idx.total
-      return -1
-    }
-    paused: !!(client.status && (client.status.paused || client.status.phase === "paused"))
+    // Status has `main` / `code` progress; `index` / `indexing` never existed, so the ring
+    // always showed the idle mark.
+    progress: client.activePass ? client.activePass.done / client.activePass.total : -1
+    paused: client.paused
 
     MouseArea {
       anchors.fill: parent
@@ -81,7 +77,7 @@ BarWidget {
             "label": "Open window",
             "act": "window"
           }, {
-            "label": client.status && client.status.paused ? "Resume indexing" : "Pause indexing",
+            "label": client.paused ? "Resume indexing" : "Pause indexing",
             "act": "pause"
           }, {
             "label": "Choose folders…",
@@ -106,7 +102,7 @@ BarWidget {
               if (modelData.act === "search" && root.shell)
                 root.shell.summon(root.moduleName, "{}")
               else if (modelData.act === "pause") {
-                if (client.status && client.status.paused)
+                if (client.paused)
                   client.resume()
                 else
                   client.pause()

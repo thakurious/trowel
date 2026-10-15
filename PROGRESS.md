@@ -112,6 +112,36 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
 
 ## Session log
 
+### 2026-10-14 — Hubness experiment (not adopted)
+
+Human: `photo` returned `apiKey.txt` etc.; asked for a documented technical fix that doesn't hurt search.
+
+- Measured on the live index: 105 held-out probe queries, `apiKey.txt` in 63% of top-10s, `test.html` 45%, REAPER `lyrics.html` 42%, knob sprite PNGs 20–31%; k-occurrence skewness 6.30. Same in upstream (identical `classify` (secrets skipped only in `classifyCode`), `hasWords` passes hex keys, same math).
+- Built an opt-in experiment (env `TROWEL_HUB_BANK`/`_MODE`/`_BETA`/`_K`, CLI only; daemon never reads it): `Searcher::set_hub_bank_mode` with CSLS and QB-Norm Dynamic Inverted Softmax (Bogolin et al. CVPR 2022 Eq. 2), `trowel hubness` report, 1014-query bank with 0 eval overlap. Unit test `hub_correction_demotes_a_vector_close_to_every_query`.
+- Result (full table in `experiments/hubness/README.md`): CSLS β 0.5 → skewness 4.61, apiKey 36%, but synthetic R@1 1.00→0.97, multilingual R@10 1.00→0.98. DIS β 20 k 1 → skewness 3.71, apiKey out of the top, but multilingual R@1 0.92→0.81. **No setting passes the eval gate → not adopted**; defaults unchanged.
+- Why: testbed has 56 files with vectors, so most are in DIS's activation set and correct matches with many neighbours (Arabic Petra report, Bengali wallet screenshot, `M-417`) are punished like hubs.
+- Next candidate (not built): index-side — keep content-free text (hex/base64/UUID-like) keyword-only and skip degenerate images (sprite strips), so hubs never get vectors. Needs the human's OK (changes what DigUp embeds).
+
+### 2026-10-14 — Kind tabs in the panel
+
+Human: group results into tabs (All, Documents, Images…), Tab switches, each tab shows only its kinds.
+
+- Ported DigUp's search-window kind filters (`SearchWindow.swift:133/311`) into the panel: `FilterBar` under the field (All · Screenshots · Images · Documents · Video · Audio · Code). Tab / Shift+Tab cycle and skip kinds with no strong result (dimmed); Ctrl+1…7 jump (⌘1…7 upstream). Code is a tab and replaces the old Tab code-mode toggle; typing `code:` selects it; leaving it strips the prefix. A `tab Type` hint sits at the right of the strip.
+- Daemon: search replies carry `counts` (strong results per kind of the **unfiltered** query); with `kinds` it runs the unfiltered search too, under the same lock. `kinds` filters after scoring, so a tab ranks exactly as All. PROTOCOL §4 + UI-DESIGN keyboard map updated; `tests/proto/{search,search-superseded,non-utf8-path}.jsonl` now expect `counts` (additive field, exact matcher kept).
+- trowel-app window: Documents now sends `["doc","pdf"]` (PDFs were left out), Code switches to the code index (sent `kinds:["code"]` to the main index before), counts are per query instead of index totals.
+- Evidence: `cargo test --workspace` green incl. new `kind_filter_keeps_unfiltered_tab_counts`; fmt + clippy clean; qmllint clean on changed QML. Live (guarded): `payment` → All shows Screenshots 36 / Documents 19 with Images/Video/Audio dimmed; Tab → Screenshots (32 · 7 weaker); Tab → Documents (Images skipped); Ctrl+7 → Code (60 results, `</>` icon).
+- Known nit: on the Code tab the footer can say "Still reading code (0%)" while the helper is still on the main index (pass progress, not overall). Upstream sets code progress only once the main index has nothing waiting.
+- Follow-ups from the human, fixed and verified live (guarded run):
+  1. Tab counts blanked or jumped for a moment on a tab switch: the switch re-ran a keyword pass (other counts) before hybrid, a code reply replaced every count, and an omitted `counts` kept stale ones. Now a tab switch goes straight to hybrid (vector cached), a keyword reply never replaces the same text's hybrid counts, code replies only set Code, and no `counts` means zero. Live: Screenshots 32 / Documents 16 identical at +120 ms and +1.5 s after Tab; Ctrl+7 keeps them beside Code 60; Ctrl+1 keeps all.
+  2. Kind icons near-invisible: SVGs had `stroke="#000"` and `MultiEffect` colorization multiplies the tint by luminance (black stays black). `KindIcon` now draws the same geometry with `QtQuick.Shapes` in `Theme.foreground` (new `color` property); also fixes onboarding/settings folder icons. Offscreen render of all 8 glyphs checked.
+  3. Arrow keys did not scroll the list (selection was never given to the `ListView`). Panel and trowel-app lists now `reveal()` the selected row (`ListView.Contain`, with its group header when moving onto a group's first row). Live: 14 × Down keeps the selection in view.
+  4. Empty kinds lit up on the Code tab: `dimEmpty` was off whenever Code was current. Now it holds whenever the query's file counts are known (a query typed on the Code tab only knows Code, so nothing is dimmed then). Live: `payment` → Ctrl+7 keeps Images/Video/Audio dimmed beside Screenshots 32 / Documents 16 / Code 60.
+  5. "Indexing 0%" while code was being indexed (human). The engine's `sync` handler ignored `code`, so a code sync set `main` to 0/N and nothing corrected it (upstream routes it to `code.indexing`). Now code syncs set `status.code`, a code `file` event clears `main` (code is read only once main has nothing waiting), `idle` clears both. `Client.activePass` (main, else code) drives the badge (`Indexing N%` / `Indexing code N%`) and the bar ring. The bar ring had never shown progress: it read `status.index`/`status.indexing`, which don't exist; its paused state read `status.paused` (it is `paused_reason`). `apply_counts` was an empty stub: `status.counts` now has searchable files per kind from both stores (live: screenshots 222, images 156, documents 133, video 2, audio 1, code 12738; main sum = 514 done).
+  6. Found while testing 5: `trowel index-service` required at least one main folder, so a code-only setup never indexed (usage error). PATH is optional now; both empty is still an error.
+  - Test `code_sync_progress_is_not_main_progress` (code-only config, every status event must keep `main.total == 0`): passes; with the old routing restored it fails with "code indexing reported as main progress".
+  - Live code pass could not be watched: the code index finished (12738 done) while the session was paused.
+- Not committed (human asked for the feature, not a commit).
+
 ### 2026-10-14 — Pre-Phase-8 audit: bugs fixed, upstream 0.6.1 fixes ported
 
 Human: before Phase 8, analyze + test thoroughly, fix bugs, pull DigUp for new work, match DigUp polish.

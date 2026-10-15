@@ -515,6 +515,14 @@ fn canned_search(fixture: &FixtureFile, text: &str, gen: u64, latency: Duration)
         weaker: canned.map(|c| c.weaker.clone()).unwrap_or_default(),
         took_ms: latency.as_millis() as u64,
         meaning: canned.map(|c| c.meaning).unwrap_or(Meaning::Skipped),
+        counts: canned
+            .map(|c| {
+                c.groups
+                    .iter()
+                    .map(|g| (g.kind.clone(), g.rows.len() as u64))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

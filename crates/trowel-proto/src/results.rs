@@ -1,5 +1,7 @@
 //! Search result rows and groups. `PROTOCOL.md` §4.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -69,4 +71,9 @@ pub struct SearchResult {
     pub weaker: Vec<ResultRow>,
     pub took_ms: u64,
     pub meaning: Meaning,
+    /// Strong results per group kind (`screenshots`, `images`, `documents`, `video`, `audio`,
+    /// `code`) for the query **without** the `kinds` filter: the counts on the kind tabs.
+    /// `upstream/Sources/DigUpApp/SearchWindow.swift:316`. Absent from older daemons.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub counts: BTreeMap<String, u64>,
 }
