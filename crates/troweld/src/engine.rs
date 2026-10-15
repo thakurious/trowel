@@ -8,7 +8,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ use trowel_proto::{
 };
 
 use crate::actions;
+use crate::apps::{self, icons::IconIndex, AppIndex, AppsEnv, Launches};
 use crate::cache::QueryCache;
 use crate::calc::Calculator;
 use crate::config_file::{self, expand_tilde};
@@ -40,7 +41,8 @@ use crate::watcher::{FolderWatch, CODE_LONGEST_WAIT, CODE_QUIET, DEBOUNCE};
 
 const QUEUE_CAP: usize = 256;
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr"];
+/// v2: `apps` since L2 (`clipboard` arrives with L3).
+const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps"];
 const SEARCHER_REFRESH: Duration = Duration::from_secs(2);
 
 pub struct EngineOpts {
@@ -86,6 +88,11 @@ struct Engine {
     state_dir: PathBuf,
     /// Opened on first use, so a daemon that never launches or copies never creates the file.
     state: Mutex<Option<StateDb>>,
+    apps_env: AppsEnv,
+    apps: RwLock<AppIndex>,
+    /// `state.sqlite` launches, loaded on the first `apps_query`.
+    app_launches: Mutex<Option<std::collections::HashMap<String, Launches>>>,
+    apps_watch: Mutex<Option<notify::RecommendedWatcher>>,
 }
 
 enum Queued {
@@ -173,6 +180,8 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         worker: if opts.fake { "ready" } else { "down" }.into(),
         ..Default::default()
     };
+    // ~10 ms; icons follow on a thread (`start_apps`).
+    let apps_env = AppsEnv::from_env();
     let engine = Arc::new(Engine {
         config_path: config_path.clone(),
         index_dir: index_dir.clone(),
@@ -200,11 +209,16 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         sleeping: Arc::new(AtomicBool::new(false)),
         was_sleeping: AtomicBool::new(false),
         was_on_battery: AtomicBool::new(power::on_battery()),
+        apps: RwLock::new(AppIndex::scan(&apps_env).0),
+        apps_env,
+        app_launches: Mutex::new(None),
+        apps_watch: Mutex::new(None),
         calc: Calculator::default(),
         state_dir: opts.state_dir.unwrap_or_else(state::default_state_dir),
         state: Mutex::new(None),
     });
 
+    start_apps(&engine);
     logind::bind_signals(&engine.overflow, &engine.sleeping);
     let sleep_eng = Arc::clone(&engine);
     logind::start(move |going| {
@@ -755,6 +769,69 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err.to_string()),
         },
+        Op::AppsQuery { text, limit, gen } => {
+            let started = Instant::now();
+            let launches = engine.app_launches();
+            let rows = engine.apps.read().expect("apps").query(
+                &text,
+                limit.min(200) as usize,
+                &launches,
+                unix_now(),
+            );
+            reply_ok(
+                conn,
+                id,
+                json!(trowel_proto::AppsResult {
+                    gen,
+                    rows,
+                    took_us: Some(started.elapsed().as_micros() as u64),
+                }),
+            );
+        }
+        Op::AppLaunch { app_id, action } => {
+            let argv = {
+                let apps = engine.apps.read().expect("apps");
+                let Some(entry) = apps.get(&app_id) else {
+                    reply_error(
+                        conn,
+                        Some(id),
+                        ErrorCode::NotFound,
+                        format!("no app {app_id}"),
+                    );
+                    return;
+                };
+                apps::launch_argv(entry, action.as_deref(), apps::uwsm_available())
+            };
+            let argv = match argv {
+                Ok(argv) => argv,
+                Err(err) => {
+                    reply_error(conn, Some(id), ErrorCode::NotFound, err);
+                    return;
+                }
+            };
+            if let Err(err) = apps::spawn(&argv) {
+                reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
+                return;
+            }
+            match engine.with_state(|s| s.record_launch(&app_id, unix_now())) {
+                Ok(row) => {
+                    if let Some(cache) = engine.app_launches.lock().expect("launches").as_mut() {
+                        cache.insert(app_id, row);
+                    }
+                }
+                Err(err) => eprintln!("troweld: launch history: {err}"),
+            }
+            reply_ok(conn, id, json!({}));
+        }
+        Op::AppHide { app_id, hidden } => {
+            if let Err(err) = apps::write_hide(&engine.apps_env.trowel_hides, &app_id, hidden) {
+                reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
+                return;
+            }
+            // Rescan now so the next query reflects it; the watcher's rescan follows.
+            rescan_apps(engine);
+            reply_ok(conn, id, json!({}));
+        }
         Op::Calc { text, force, gen } => {
             let out = engine.calc.eval(&text, force);
             reply_ok(
@@ -790,7 +867,7 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             reply_ok(conn, id, json!({}));
         }
-        // Protocol v2 ops whose engines land in L2 (apps) and L3 (clipboard).
+        // Protocol v2 ops whose engine lands in L3 (clipboard).
         // `hello` does not advertise `apps`/`clipboard` until then.
         op => reply_error(
             conn,
@@ -1401,7 +1478,55 @@ fn unix_now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
+/// The watcher first, then a rescan for anything that changed since the startup scan, then
+/// icons (100–200 ms). Watching only after the icon walk missed installs in that window.
+fn start_apps(engine: &Arc<Engine>) {
+    let eng = Arc::clone(engine);
+    thread::Builder::new()
+        .name("troweld-apps".into())
+        .spawn(move || {
+            let watch_eng = Arc::clone(&eng);
+            let on_change = move || {
+                // Entries first (~10 ms) so a new app is searchable at once; icons follow.
+                rescan_apps(&watch_eng);
+                let icons = IconIndex::build();
+                watch_eng.apps.write().expect("apps").set_icons(icons);
+            };
+            match apps::watch(&eng.apps_env, on_change) {
+                Ok(w) => *eng.apps_watch.lock().expect("apps watch") = Some(w),
+                Err(err) => eprintln!("troweld: cannot watch application dirs: {err}"),
+            }
+            rescan_apps(&eng);
+            let icons = IconIndex::build();
+            eng.apps.write().expect("apps").set_icons(icons);
+        })
+        .ok();
+}
+
+/// Re-reads the entries, keeping the current icon index.
+fn rescan_apps(engine: &Engine) {
+    let (mut index, _) = AppIndex::scan(&engine.apps_env);
+    index.set_icons(engine.apps.read().expect("apps").icons().clone());
+    *engine.apps.write().expect("apps") = index;
+}
+
 impl Engine {
+    /// Launch counts for frecency, read from `state.sqlite` once.
+    fn app_launches(&self) -> std::collections::HashMap<String, Launches> {
+        let mut cache = self.app_launches.lock().expect("launches");
+        if cache.is_none() {
+            // A daemon that never launched anything has no state.sqlite; don't create one here.
+            let exists = self.state_dir.join(crate::state::STATE_FILE).is_file();
+            let loaded = if exists {
+                self.with_state(|s| s.launches()).unwrap_or_default()
+            } else {
+                Default::default()
+            };
+            *cache = Some(loaded);
+        }
+        cache.clone().unwrap_or_default()
+    }
+
     /// Runs `f` on `state.sqlite`, opening it on first use.
     fn with_state<T>(
         &self,

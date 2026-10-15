@@ -26,7 +26,7 @@ pub fn open(path: &Path, kind: FileKind, loc: Option<f64>, editor: &str) {
 
 /// Start `cmd` and wait for it on a thread, so a launcher that exits (`xdg-open`, a terminal
 /// that forks) doesn't stay a zombie of troweld for the life of the daemon.
-fn spawn_reaped(cmd: &mut Command) {
+pub(crate) fn spawn_reaped(cmd: &mut Command) {
     if let Ok(mut child) = cmd.spawn() {
         std::thread::spawn(move || {
             let _ = child.wait();
@@ -362,7 +362,7 @@ fn terminal_exec(args: &[&str]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
 }
 
-fn which(name: &str) -> bool {
+pub(crate) fn which(name: &str) -> bool {
     std::env::var_os("PATH")
         .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
 }

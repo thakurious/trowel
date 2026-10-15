@@ -11,8 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use trowel_core::{Database, DbError, IndexStore, SqlValue};
 use trowel_proto::CalcHistoryRow;
 
+use crate::apps::rank::decayed;
+use crate::apps::Launches;
+
 pub const STATE_FILE: &str = "state.sqlite";
-const SCHEMA_VERSION: i64 = 1;
+/// 1: L1. 2: `apps_launches.score` (decayed frecency sum, L2).
+const SCHEMA_VERSION: i64 = 2;
 
 pub struct StateDb {
     db: Database,
@@ -87,6 +91,16 @@ impl StateDb {
         if version == SCHEMA_VERSION {
             return Ok(());
         }
+        if version == 1 {
+            // Old rows only know their count; treat each as launched at `last`.
+            // Then fall through: the creates below are idempotent and add anything missing.
+            self.db.execute(
+                "BEGIN;
+                ALTER TABLE apps_launches ADD COLUMN score REAL NOT NULL DEFAULT 0;
+                UPDATE apps_launches SET score = count;
+                COMMIT;",
+            )?;
+        }
         // Same tokenizer string as the index, so clipboard keyword search treats Unicode
         // (marks, Bengali, Arabic) exactly as file search does.
         let tokenizer = IndexStore::TOKENIZER.replace('\'', "''");
@@ -95,7 +109,8 @@ impl StateDb {
             CREATE TABLE IF NOT EXISTS apps_launches(
                 id TEXT PRIMARY KEY,
                 count INTEGER NOT NULL,
-                last INTEGER NOT NULL);
+                last INTEGER NOT NULL,
+                score REAL NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS clip_blobs(
                 sha256 TEXT PRIMARY KEY,
                 ext TEXT NOT NULL,
@@ -148,25 +163,68 @@ impl StateDb {
         ))
     }
 
-    /// Counts a launch for frecency (`app_launch`).
-    pub fn record_launch(&self, id: &str, at: i64) -> Result<(), DbError> {
-        self.db.run(
-            "INSERT INTO apps_launches(id, count, last) VALUES (?1, 1, ?2)
-             ON CONFLICT(id) DO UPDATE SET count = count + 1, last = max(last, excluded.last)",
-            &[SqlValue::Text(id.into()), SqlValue::Int(at)],
-        )
+    /// Counts a launch (`app_launch`). `score` stays Σ 0.5^(age/14 d) over every launch: the old
+    /// sum decays to `at`, plus one. Returns the new row.
+    pub fn record_launch(&self, id: &str, at: i64) -> Result<Launches, DbError> {
+        self.db.transaction(|| {
+            let old = self.launch(id)?.unwrap_or_default();
+            let last = old.last.max(at);
+            let row = Launches {
+                count: old.count + 1,
+                last,
+                score: decayed(old.score, old.last, last) + decayed(1.0, at, last),
+            };
+            self.db.run(
+                "INSERT INTO apps_launches(id, count, last, score) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET count = ?2, last = ?3, score = ?4",
+                &[
+                    SqlValue::Text(id.into()),
+                    SqlValue::Int(i64::from(row.count)),
+                    SqlValue::Int(row.last),
+                    SqlValue::Double(row.score),
+                ],
+            )?;
+            Ok(row)
+        })
     }
 
-    /// Every app's `(launches, last_launched)`.
-    pub fn launches(&self) -> Result<HashMap<String, (u32, i64)>, DbError> {
+    fn launch(&self, id: &str) -> Result<Option<Launches>, DbError> {
+        let mut out = None;
+        self.db.query(
+            "SELECT count, last, score FROM apps_launches WHERE id = ?1",
+            &[SqlValue::Text(id.into())],
+            |row| {
+                out = Some(Launches {
+                    count: row.int(0).max(0) as u32,
+                    last: row.int(1),
+                    score: row.double(2),
+                });
+                Ok(())
+            },
+        )?;
+        Ok(out)
+    }
+
+    /// Every app's launches, for `apps_query`.
+    pub fn launches(&self) -> Result<HashMap<String, Launches>, DbError> {
         let mut out = HashMap::new();
-        self.db
-            .query("SELECT id, count, last FROM apps_launches", &[], |row| {
+        self.db.query(
+            "SELECT id, count, last, score FROM apps_launches",
+            &[],
+            |row| {
                 if let Some(id) = row.text(0) {
-                    out.insert(id, (row.int(1).max(0) as u32, row.int(2)));
+                    out.insert(
+                        id,
+                        Launches {
+                            count: row.int(1).max(0) as u32,
+                            last: row.int(2),
+                            score: row.double(3),
+                        },
+                    );
                 }
                 Ok(())
-            })?;
+            },
+        )?;
         Ok(out)
     }
 
@@ -291,8 +349,45 @@ mod tests {
         state.record_launch("firefox", 50).unwrap();
         state.record_launch("nvim", 70).unwrap();
         let all = state.launches().unwrap();
-        assert_eq!(all["firefox"], (2, 100), "last never goes back");
-        assert_eq!(all["nvim"], (1, 70));
+        assert_eq!(
+            (all["firefox"].count, all["firefox"].last),
+            (2, 100),
+            "last never goes back"
+        );
+        assert_eq!((all["nvim"].count, all["nvim"].last), (1, 70));
+    }
+
+    #[test]
+    fn frecency_is_a_decayed_sum() {
+        let state = StateDb::open(temp()).unwrap();
+        let day = 86_400;
+        state.record_launch("a", 0).unwrap();
+        let row = state.record_launch("a", 14 * day).unwrap();
+        // 0.5 (two weeks old) + 1.
+        assert!((row.score - 1.5).abs() < 1e-9, "{row:?}");
+        // A launch recorded out of order counts with its own age.
+        let row = state.record_launch("a", 0).unwrap();
+        assert!((row.score - 2.0).abs() < 1e-9, "{row:?}");
+    }
+
+    #[test]
+    fn v1_files_migrate_and_keep_counts() {
+        let dir = temp();
+        fs::create_dir_all(&dir).unwrap();
+        {
+            let db = Database::open(dir.join(STATE_FILE)).unwrap();
+            db.execute(
+                "CREATE TABLE apps_launches(id TEXT PRIMARY KEY, count INTEGER NOT NULL, last INTEGER NOT NULL);
+                 INSERT INTO apps_launches VALUES ('nvim', 3, 50);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let state = StateDb::open(&dir).unwrap();
+        let all = state.launches().unwrap();
+        state.record_calc("1+1", "2", 1).unwrap();
+        assert_eq!(all["nvim"].count, 3);
+        assert!((all["nvim"].score - 3.0).abs() < 1e-9);
     }
 
     #[test]

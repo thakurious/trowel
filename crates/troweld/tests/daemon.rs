@@ -92,6 +92,10 @@ fn start_with(root: PathBuf, extra: &[&str], envs: &[(&str, &str)]) -> Daemon {
         .env("TROWEL_LINGER", "3")
         // Never the developer's session: clipboard writes and keystrokes must fail in tests.
         .env("WAYLAND_DISPLAY", "trowel-test-no-compositor")
+        // Never the real desktop's applications or Omarchy's hides.
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_DATA_DIRS", root.join("sys"))
+        .env("OMARCHY_PATH", root.join("omarchy"))
         .arg("--state-dir")
         .arg(root.join("state"))
         .envs(envs.iter().copied())
@@ -284,14 +288,193 @@ fn protocol_v2_handshake_and_unbuilt_ops() {
     assert_eq!(hi["protocol"], 2, "{hi}");
     let caps = hi["capabilities"].as_array().unwrap();
     assert!(
-        !caps.iter().any(|c| c == "apps" || c == "clipboard"),
-        "not advertised before L2/L3: {hi}"
+        caps.iter().any(|c| c == "apps"),
+        "apps served since L2: {hi}"
     );
-    for id in [2, 3] {
-        let reply = recv(&mut reader);
-        assert_eq!(reply["id"], id, "{reply}");
-        assert_eq!(reply["error"]["code"], "not_ready", "{reply}");
+    assert!(
+        !caps.iter().any(|c| c == "clipboard"),
+        "not advertised before L3: {hi}"
+    );
+    let apps = recv(&mut reader);
+    assert_eq!(apps["ok"], true, "{apps}");
+    assert_eq!(apps["rows"], json!([]), "no fixture apps: {apps}");
+    let clip = recv(&mut reader);
+    assert_eq!(clip["error"]["code"], "not_ready", "{clip}");
+}
+
+fn desktop(dir: &Path, file: &str, body: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join(file),
+        format!("[Desktop Entry]\nType=Application\n{body}"),
+    )
+    .unwrap();
+}
+
+fn query(
+    stream: &mut UnixStream,
+    reader: &mut BufReader<UnixStream>,
+    id: u64,
+    text: &str,
+) -> Value {
+    send(
+        stream,
+        &json!({"id":id,"op":"apps_query","text":text,"gen":id}),
+    );
+    let reply = recv(reader);
+    assert_eq!(reply["id"], id, "{reply}");
+    reply
+}
+
+fn ids(reply: &Value) -> Vec<String> {
+    reply["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn apps_query_launch_hide_and_install() {
+    let root = temp();
+    let sys = root.join("sys/applications");
+    desktop(&sys, "chromium.desktop", "Name=Chromium\nGenericName=Web Browser\nExec=chromium\nActions=incognito;\n\n[Desktop Action incognito]\nName=New Incognito Window\nExec=chromium --incognito %U\n");
+    desktop(&sys, "calc.desktop", "Name=Calculator\nExec=calc\n");
+    desktop(
+        &sys,
+        "gnome-only.desktop",
+        "Name=Cheese\nExec=cheese\nOnlyShowIn=GNOME;\n",
+    );
+    desktop(
+        &root.join("omarchy/default/omarchy"),
+        "unused.desktop",
+        "Name=x\n",
+    );
+    fs::write(
+        root.join("omarchy/default/omarchy/launcher.hides"),
+        "calc-hidden\n",
+    )
+    .unwrap();
+    desktop(&sys, "calc-hidden.desktop", "Name=Calc Hidden\nExec=x\n");
+    // Stubs record what would have been launched.
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let log = root.join("launched.txt");
+    for name in ["uwsm-app", "gtk-launch"] {
+        let path = bin.join(name);
+        fs::write(
+            &path,
+            format!("#!/bin/sh\necho \"$*\" >> '{}'\n", log.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let d = start_with(
+        root.clone(),
+        &[],
+        &[
+            ("PATH", path.as_str()),
+            ("XDG_CURRENT_DESKTOP", "Hyprland"),
+            ("XDG_SESSION_DESKTOP", ""),
+            ("DESKTOP_SESSION", ""),
+        ],
+    );
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    recv(&mut reader);
+
+    let c = query(&mut stream, &mut reader, 2, "c");
+    // Omarchy's order: the shorter name prefix first (10000 − len); hides applied.
+    assert_eq!(ids(&c), ["chromium", "calc"], "{c}");
+    assert!(c["took_us"].as_u64().unwrap() < 2000, "{c}");
+    let chrome = &query(&mut stream, &mut reader, 3, "chro")["rows"][0];
+    assert_eq!(chrome["matched"], json!([[0, 4]]));
+    assert_eq!(chrome["actions"][0]["id"], "incognito");
+
+    send(
+        &mut stream,
+        &json!({"id":4,"op":"app_launch","app_id":"chromium"}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    send(
+        &mut stream,
+        &json!({"id":5,"op":"app_launch","app_id":"chromium","action":"incognito"}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    send(
+        &mut stream,
+        &json!({"id":6,"op":"app_launch","app_id":"nope"}),
+    );
+    assert_eq!(recv(&mut reader)["error"]["code"], "not_found");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while fs::read_to_string(&log).unwrap_or_default().lines().count() < 2
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let launched = fs::read_to_string(&log).unwrap();
+    assert!(
+        launched.contains("-- gtk-launch chromium.desktop"),
+        "{launched}"
+    );
+    assert!(launched.contains("-- chromium --incognito"), "{launched}");
+
+    // Chromium has 2 launches; three of Calculator lift it within the name-prefix tier.
+    for n in 0..3 {
+        send(
+            &mut stream,
+            &json!({"id":70 + n,"op":"app_launch","app_id":"calc"}),
+        );
+        assert_eq!(recv(&mut reader)["ok"], true);
+    }
+    let c = query(&mut stream, &mut reader, 7, "c");
+    assert_eq!(ids(&c), ["calc", "chromium"], "{c}");
+    assert_eq!(c["rows"][0]["launches"], 3);
+    assert_eq!(c["rows"][1]["launches"], 2);
+    assert_eq!(ids(&query(&mut stream, &mut reader, 8, ""))[0], "calc");
+
+    send(
+        &mut stream,
+        &json!({"id":9,"op":"app_hide","app_id":"calc","hidden":true}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    assert_eq!(
+        ids(&query(&mut stream, &mut reader, 10, "calc")),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("trowel/launcher.hides")).unwrap(),
+        "calc\n",
+        "written to Trowel's own hides under XDG_CONFIG_HOME"
+    );
+
+    // Installing a .desktop file shows it within 1 s.
+    let installed = Instant::now();
+    desktop(&sys, "zed.desktop", "Name=Zed\nExec=zed\n");
+    let mut found = false;
+    while installed.elapsed() < Duration::from_secs(1) {
+        if ids(&query(&mut stream, &mut reader, 11, "zed")) == ["zed"] {
+            found = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        found,
+        "new entry not visible after {:?}",
+        installed.elapsed()
+    );
 }
 
 #[test]

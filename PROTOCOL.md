@@ -60,8 +60,9 @@ The first request on every connection:
 If the protocol versions differ, the daemon answers `ok:false, code:"bad_request"` and the UI shows
 "Trowel was updated, restart it". Do not try to negotiate across versions.
 
-`capabilities` gains `apps` and `clipboard` once the daemon serves them (L2 / L3). Until then those
-ops answer `not_ready` (`calc`, `calc_history` and `calc_copy` are served since L2c); `troweld --mock` advertises and serves both from canned fixtures.
+`capabilities` gains `apps` and `clipboard` once the daemon serves them: `apps` since L2,
+`clipboard` with L3. Until then the clipboard ops answer `not_ready` (`calc`, `calc_history` and
+`calc_copy` are served since L2c); `troweld --mock` advertises and serves both from canned fixtures.
 
 ## 4. Operations
 
@@ -144,7 +145,7 @@ request `id` (the op's params are flattened into the envelope).
 | op | params | result |
 |---|---|---|
 | `apps_query` | `{text="", limit=8, gen}` | `{gen, rows:[AppRow], took_us?}`. An empty `text` returns frecency order. Supersedes the connection's older `apps_query`. |
-| `app_launch` | `{app_id, action?}` | `{}`. Runs `uwsm-app -- gtk-launch <id>.desktop` (actions: expanded `Exec`) and records a launch for frecency. |
+| `app_launch` | `{app_id, action?}` | `{}`. Runs `uwsm-app -- gtk-launch <id>.desktop` (actions: their `Exec`, split like Quickshell) and records a launch for frecency. `not_found` for an unknown app or action, `io` when the launcher can't start. |
 | `app_hide` | `{app_id, hidden}` | `{}`. Writes `~/.config/trowel/launcher.hides`. |
 | `clip_query` | `{text="", kinds?:[ClipKind], limit=50, offset=0, gen}` | `{gen, rows:[ClipRow], total}`, pinned first, then most recently used. An unknown kind is `bad_request`. |
 | `clip_get` | `{clip_id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}, truncated?}`. Text is capped at 256 KiB. |

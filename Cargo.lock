@@ -681,6 +681,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "trowel-core",
+ "trowel-proto",
  "troweld",
 ]
 

@@ -1,6 +1,7 @@
 //! Trowel daemon library (lock, config, watcher, doctor, PROTOCOL engine).
 
 pub mod actions;
+pub mod apps;
 pub mod cache;
 pub mod calc;
 pub mod config_file;

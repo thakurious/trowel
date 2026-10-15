@@ -1,3 +1,4 @@
+mod apps_cmd;
 mod autostart;
 mod calc_cmd;
 mod debug_ui;
@@ -98,6 +99,33 @@ enum Commands {
         zgate: f64,
         #[arg(long)]
         word_weight: Option<f64>,
+    },
+    /// Applications as Trowel's launcher ranks them (Omarchy's `AppSearch.js`, no frecency here).
+    Apps {
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(short = 'n', long, default_value_t = 8)]
+        limit: usize,
+        /// Resolve icons too (reports `icons_ms`).
+        #[arg(long)]
+        icons: bool,
+        /// Print the visible entries with the fields `AppSearch.js` reads (parity gate input).
+        #[arg(long)]
+        dump_entries: bool,
+        /// With --rank-queries: the entries file from --dump-entries.
+        #[arg(long, value_name = "FILE")]
+        entries: Option<PathBuf>,
+        /// Rank each line of FILE over --entries with no frecency; prints {query: [ids]}.
+        #[arg(long, value_name = "FILE")]
+        rank_queries: Option<PathBuf>,
+    },
+    /// Launch an application by desktop id, the way the panel does.
+    Launch {
+        id: String,
+        /// A `[Desktop Action …]` id.
+        #[arg(long)]
+        action: Option<String>,
     },
     /// Inline calculator (the daemon's `calc` op, in-process). Prints the result, or nothing
     /// (exit 1) when the text is not a calculation.
@@ -386,6 +414,26 @@ fn main() {
                 eprintln!("{err}");
                 std::process::exit(1);
             }
+        }
+        Commands::Apps {
+            query,
+            json,
+            limit,
+            icons,
+            dump_entries,
+            entries,
+            rank_queries,
+        } => std::process::exit(apps_cmd::apps(apps_cmd::AppsArgs {
+            query,
+            json,
+            limit,
+            icons,
+            dump_entries,
+            entries,
+            rank_queries,
+        })),
+        Commands::Launch { id, action } => {
+            std::process::exit(apps_cmd::launch(&id, action.as_deref()))
         }
         Commands::Calc {
             text,

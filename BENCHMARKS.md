@@ -45,7 +45,7 @@ irrelevant to us.
 | Startup reconcile (warm cache) | ≤ 1 s per 100k files | ROBUSTNESS F1 |
 | Desktop impact while indexing | no frame drops in the panel or Hyprland animations | helper in the `trowel-index.slice` (Nice 10, idle IO) |
 | `calc`, daemon side (Phase 8 L2c) | p95 < 1 ms, hard stop at 20 ms | measured 2026-10-15 release: p50 43–64 µs, p95 237–408 µs over `tests/calc/table.tsv`; one-shot `5 ft to cm` 238–565 µs after a 0.44–0.64 ms warm-up |
-| `apps_query`, 200 entries (Phase 8 L2) | p95 < 2 ms | `LAUNCHER-PLAN.md` §5 |
+| `apps_query`, 200 entries (Phase 8 L2) | p95 < 2 ms | measured 2026-10-15 release, 94 installed apps: 310–330 µs per query; entry scan 4–8 ms; icon index 100–180 ms (background) |
 | `clip_query`, 1000 entries (Phase 8 L3) | p95 < 5 ms | `LAUNCHER-PLAN.md` §5 |
 
 ## What will be *slower* than an Apple Silicon Mac

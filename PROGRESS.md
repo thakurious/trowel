@@ -4,10 +4,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1 and L2c done** (protocol v2, `state.sqlite`, mock; calculator served by the real daemon). L0.1 + L0.6 + L0.7 verified; L0.2–L0.5 still need the human copying from real apps. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
+- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c and L2 done** (protocol v2, `state.sqlite`, mock; calculator and app index served by the real daemon). L0.1 + L0.6 + L0.7 verified; L0.2–L0.5 still need the human copying from real apps. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
 - **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release` (built **before** L1, so the running daemon speaks **v1**). omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** L2 (apps index: `troweld/src/apps/{desktop_entry,rank,icons}.rs`, `scripts/apps-parity.sh` against Omarchy's `AppSearch.js` under node, `trowel apps/launch`). Needs nothing from the human. L3 waits for L0.2–L0.5.
+- **Next step:** L0.2–L0.5 with the human (copy from Nautilus/Chrome/password managers, paste keystroke into Ghostty/Chromium), then L3 clipboard engine. L4 UI can start on `--mock` meanwhile (calc + apps are also live in the real daemon).
 
 ### Phase 8 map
 
@@ -18,8 +18,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | L0.6 | one `wl-paste --watch` for every type | ✅ |
 | L0.7 | fend-core | ✅ (2026-10-13) |
 | L1 | proto v2, `state.sqlite`, mock, v2 transcripts | ✅ this session |
-| L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | **next** |
-| L2c | calculator: fend-core wrapper, gate/reject rules, 146-row table, false-positive corpus | ✅ this session |
+| L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | ✅ this session |
+| L2c | calculator: fend-core wrapper, gate/reject rules, 146-row table, false-positive corpus | ✅ |
 | L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | after L0.2–L0.5 |
 | L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | after L2/L2c (can start on `--mock` now) |
 | L5 | setup prompts, doctor rows, F-C1..F-C5, PKGBUILD | after L3/L4 |
@@ -95,6 +95,11 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **fend-core first evaluation** builds unit tables lazily: ~0.45–0.65 ms in release. Warmed in `Calculator::new`.
 - **fend-core names:** `nmi` / `nautical_mile` / `NM` (not "nautical mile"); `100 c to f` is speed-of-light × 100 → no card (use `°C`/`celsius`). Approximations print 10 places, zero-padded (`314.1592653590`).
 
+- **Quickshell 0.3.1 `DesktopEntries`** (source at tag `v0.3.1`, `src/core/desktopentry.cpp`): dirs `$XDG_DATA_HOME/applications` + `XDG_DATA_DIRS` (no nix-profile), lowest priority read first, `Hidden=true` masks, invalid files don't replace valid ones, `NoDisplay` dropped, no `TryExec`/`OnlyShowIn` handling, locale `LC_MESSAGES` then `LANG`, keys/values untrimmed, `parseExecString` keeps `%` inside quotes. Omarchy adds `hidden-entries.sh` (desktop names `XDG_CURRENT_DESKTOP:XDG_SESSION_DESKTOP:DESKTOP_SESSION` = `Hyprland:Hyprland:omarchy`) and `$OMARCHY_PATH/default/omarchy/launcher.hides` (18 ids here).
+- **troweld's systemd env** has the shell's `OMARCHY_PATH`, desktop names, `XDG_DATA_DIRS` (flatpak exports included) and a `PATH` with `~/.local/bin` + mise shims, so the daemon sees the same apps and `TryExec` results as the shell.
+- **GIO refuses entries with a missing `TryExec`:** `Gio.DesktopAppInfo.new("dev.zed.Zed.desktop")` → NULL (`~/.local/zed.app/bin/zed` absent), so Omarchy's Zed entry cannot launch. Trowel hides it.
+- **Live app index:** 94 visible apps; hidden: 18 by Omarchy's hides, 1 by `TryExec`, 0 computed. 92/94 resolve an icon file; misses: a Wine shortcut with no `Icon=`, and `trowel` (Trowel's own icon is not installed — packaging gap for L5).
+
 ## Open questions for the human
 
 1. **`wl-clipboard-rs`:** decide after spike L0.3 (does file paste need a multi-MIME offer?).
@@ -135,6 +140,44 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-15 — L2 app index
+
+Human: go ahead with the app index.
+
+- `troweld/src/apps/`: `desktop_entry.rs` (Quickshell `parseText`/scanner port, `hidden-entries.sh` port, `launcher.hides`, `TryExec`, `exec_argv`), `rank.rs` (`AppSearch.js` port in UTF-16 units; frecency tier `score > 9500`; decayed sum), `icons.rs` (GTK theme `Inherits=` chain → Omarchy scan order, one pruned walk), `mod.rs` (visible set, `AppRow`s, `launch_argv`/`spawn`, `write_hide`, inotify `watch`). `state.sqlite` schema 2 (`apps_launches.score`, v1 migrates). Daemon: `apps_query`, `app_launch` (records frecency), `app_hide`; `hello` advertises `apps`. CLI: `trowel apps [q] [--json] [--icons] [--dump-entries] [--entries F --rank-queries F]`, `trowel launch <id> [--action a]`.
+- Bugs found and fixed while building: sorting by `fuzzyScore` branch first would not have reproduced Omarchy (branches aren't monotonic in score) → score-threshold tier; watcher created after the icon walk missed early installs (daemon test) → watch first; icon walk 0.7–2.4 s → 100–180 ms.
+- Daemon tests now also isolate `XDG_DATA_HOME`, `XDG_DATA_DIRS`, `OMARCHY_PATH` and stub `uwsm-app`/`gtk-launch`, so no test reads or launches the real desktop's apps.
+- Not done: doctor rows (L5); Trowel's own icon isn't installed; live daemon still not redeployed.
+
+Evidence:
+
+```
+$ cargo fmt --all --check && cargo clippy --workspace --all-targets --offline -- -D warnings   # clean
+$ cargo test --workspace --offline
+troweld lib 65/65 (apps:: 18 — Quickshell locale/precedence, Type=Link invalid, action order, exec_argv,
+  hidden-entries rules incl. CRLF, TryExec, score branches, camelCase regex, UTF-16 units, frecency tier,
+  highlight ranges, decay; fixture tree: user-over-system, Hidden mask, OnlyShowIn=GNOME, TryExec, NoDisplay,
+  Type=Link, subdir id kde-konsole, de_DE name, Omarchy hides, hide round trip; state:: frecency decayed sum, v1→v2)
+troweld daemon 18/18 (new apps_query_launch_hide_and_install: Omarchy order chromium>calc, hides applied,
+  launch argv "-- gtk-launch chromium.desktop" and "-- chromium --incognito", 3 calc launches flip the prefix
+  tier, app_hide writes $XDG_CONFIG_HOME/trowel/launcher.hides, new zed.desktop visible < 1 s) — 3 consecutive runs green
+everything else unchanged and green
+$ scripts/apps-parity.sh
+94 entries, 551 queries, 3502 ranked rows, 0 diffs
+$ # mutation check: inner-match penalty ×10 → ×1 in rank.rs
+94 entries, 551 queries, 3502 ranked rows, 34 diffs   (exit 1; file restored, back to 0 diffs)
+$ trowel apps <q> --json   # release, 94 apps
+'ghost' Ghostty 313 us | 'chro' Chromium 312 us | 'web browser' Helium 315 us | 'terminal' Foot 329 us
+scan 4–8 ms, icons 100–182 ms, hidden {omarchy 18, try_exec 1, computed 0, trowel 0}
+$ trowel launch omacalc      # live daemon is v1 → in-process fallback, same argv
+exit=0 after 15 ms
+0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-graphical.slice/app-Hyprland-gtk\x2dlaunch-b25d0adf.scope
+active: omacalc            # then closed with hl.dsp.window.close
+$ # install latency, hand-started debug daemon: new .desktop found after 544 ms (before the entries-first swap)
+```
+
+**Next step:** L0.2–L0.5 with the human, then L3.
 
 ### 2026-10-15 — L2c calculator
 

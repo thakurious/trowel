@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 trowel-core = { path = "../trowel-core" }
 troweld = { path = "../troweld" }
+trowel-proto = { path = "../trowel-proto" }
 base64 = { workspace = true }
 clap = { workspace = true }
 serde = { workspace = true }

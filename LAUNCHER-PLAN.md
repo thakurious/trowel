@@ -350,7 +350,45 @@ and our Rust ranker over the **installed** entries for 200 queries (every name p
 
 **Acceptance:** the parity gate passes; `trowel apps fire` lists Firefox first in < 2 ms
 (`--json` includes `took_us`); `trowel launch firefox` opens Firefox in `app-graphical.slice`;
-installing a new `.desktop` file shows it within 1 s.
+installing a new `.desktop` file shows it within 1 s. *(This machine has no Firefox; the human's
+browser is Chrome. Demonstrated with installed apps: `ghost` → Ghostty, `chro` → Chromium, and
+`trowel launch omacalc`.)*
+
+**Found while building L2 (2026-10-15; the code follows these, `troweld/src/apps/`):**
+- **The entry set is Quickshell's, not `hidden-entries.sh`'s.** Omarchy's list is
+  `DesktopEntries.applications` (`AppLibrary.qml:53`), so the parser and scanner port Quickshell
+  0.3.1 `src/core/desktopentry.cpp` (read at tag `v0.3.1`): dirs are `$XDG_DATA_HOME/applications`
+  then `XDG_DATA_DIRS` (no `~/.nix-profile`), read lowest priority first so the higher file wins;
+  ids are the relative path with `/` → `-` and `completeBaseName`; `Hidden=true` masks the id; an
+  invalid file (no `Name`, or `Type` ≠ `Application`) never replaces a valid one; keys and values
+  are not trimmed; the locale is `LC_MESSAGES`, then `LANG`. `hidden-entries.sh` (which does scan
+  `~/.nix-profile`, regular files only) is ported separately and only decides computed hides.
+- **`TryExec` hides an entry Omarchy shows.** Quickshell ignores it, but GIO refuses to load such a
+  file, so `gtk-launch` cannot start it (`Gio.DesktopAppInfo.new("dev.zed.Zed.desktop")` →
+  NULL on this machine). Trowel hides it; Omarchy lists a dead entry.
+- **Frecency tiers, not bands.** `fuzzyScore` branches are not monotonic in score (a late haystack
+  hit can score below an acronym hit), so sorting by branch first would not reproduce Omarchy's
+  order. The tier is `score > 9500` (every name-prefix match on a name under 500 UTF-16 units):
+  frecency orders name-prefix matches among themselves and breaks exact score ties elsewhere.
+  With no launches the order is exactly Omarchy's.
+- **Frecency is stored as a decayed sum** (`apps_launches.score`, `state.sqlite` schema 2): each
+  launch decays the old sum to now and adds 1, which is `Σ 0.5^(age_days/14)` exactly with one row
+  per app.
+- **Icons are rebuilt when the app list changes** (as `AppLibrary` does with its 750 ms debounce),
+  not on icon-dir inotify: `/usr/share/icons` has ~2,400 dirs. One walk per base, pruning
+  contexts that never hold app icons, takes 100–180 ms (two unpruned walks took 0.7–2.4 s).
+- **Watch before the icon walk.** The first version created the watcher after building icons and
+  missed `.desktop` installs in that window (the daemon test caught it). The watcher starts first,
+  then a rescan, then icons; a change swaps the entry list at once (~10 ms) and icons follow.
+- **`Exec` of desktop actions** is split exactly like Quickshell's `parseExecString`: field codes
+  dropped, `%` literal inside quotes. Actions run under `uwsm-app` (in `xdg-terminal-exec` when
+  `Terminal=true`); the app itself always goes through `gtk-launch <id>.desktop`, never a shell
+  (ids contain spaces and quotes, e.g. `No Man's Sky`).
+- `trowel launch` asks the daemon (so the launch counts); when no daemon with apps answers, it
+  launches in-process and says it wasn't recorded.
+- Parity gate: `scripts/apps-parity.sh` (+ `apps-parity.mjs`) generates ~550 queries from the
+  installed entries; a deliberate mutation of the inner-match penalty produced 34 diffs, so the gate
+  is sensitive.
 
 ### L3. Clipboard engine (4–5 days)
 
