@@ -4,23 +4,24 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c and L2 done** (protocol v2, `state.sqlite`, mock; calculator and app index served by the real daemon). L0.1 + L0.6 + L0.7 verified; L0.2–L0.5 still need the human copying from real apps. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
+- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c and L2 done** (protocol v2, `state.sqlite`, mock; calculator and app index served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
 - **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release` (built **before** L1, so the running daemon speaks **v1**). omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** L0.2–L0.5 with the human (copy from Nautilus/Chrome/password managers, paste keystroke into Ghostty/Chromium), then L3 clipboard engine. L4 UI can start on `--mock` meanwhile (calc + apps are also live in the real daemon).
+- **Next step:** L3 clipboard engine (files restore as a single `text/uri-list` offer, paste delay stays 150 ms; sensitive skip must not rely on hints alone, see L0.5). One open L0.5 check: the human copies one test password from Chrome's password manager with the logger running. L4 UI can start on `--mock` meanwhile (calc + apps are also live in the real daemon).
 
 ### Phase 8 map
 
 | Step | What | Status |
 |---|---|---|
 | L0.1 | launch from the daemon's context | ✅ (Omacalc, see Verified facts) |
-| L0.2–L0.5 | MIME offers from real apps, file re-offer, paste keystroke, password-manager hints | ⏳ need the human |
+| L0.2–L0.4 | MIME offers from real apps, file re-offer, paste keystroke | ✅ (2026-10-15, see Verified facts) |
+| L0.5 | password-manager hints | ◐ no hint seen in 20 real copies; a real password-manager copy still untested |
 | L0.6 | one `wl-paste --watch` for every type | ✅ |
 | L0.7 | fend-core | ✅ (2026-10-13) |
 | L1 | proto v2, `state.sqlite`, mock, v2 transcripts | ✅ this session |
 | L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | ✅ this session |
 | L2c | calculator: fend-core wrapper, gate/reject rules, 146-row table, false-positive corpus | ✅ |
-| L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | after L0.2–L0.5 |
+| L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | next |
 | L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | after L2/L2c (can start on `--mock` now) |
 | L5 | setup prompts, doctor rows, F-C1..F-C5, PKGBUILD | after L3/L4 |
 | L6 | extras: Omarchy commands → window switcher → clipboard OCR | backlog |
@@ -91,6 +92,31 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Hyprland 0.56 Lua close:** `hyprctl dispatch closewindow …` fails under the Lua parser. Use `hyprctl eval 'hl.dispatch(hl.dsp.window.close({window="class:omacalc"}))'`.
 - **L0.6 `wl-paste --watch CMD` (no `--type`, wl-clipboard 2.3.0)** fires on every selection change regardless of type: text, `text/html`, `image/png` and `text/uri-list` each fired once. It also fires **once at startup** for the current selection, so capture must dedupe (content hash). The command's env has `CLIPBOARD_STATE=data`. `wl-copy --type text/html` / `--type text/uri-list` also offer `text/plain`, `UTF8_STRING`, `TEXT`, `STRING` aliases; `--type image/png` offers only `image/png`. (Matters for L0.3: one `wl-copy --type text/uri-list` already advertises plain-text aliases.) The human's clipboard was saved and restored around the spike.
 
+- **L0.2 MIME offers** (2026-10-15, `wl-paste --watch` hook logging only types, `CLIPBOARD_STATE` and the focused window class; 20 human copies). The human's file manager is **Strata** (`io.github.lgse.Strata`, default for `inode/directory`), not Nautilus.
+  - Strata file copy: `text/plain;charset=utf-8 text/uri-list application/vnd.portal.filetransfer application/vnd.portal.files` (no `x-special/gnome-copied-files`).
+  - Chrome selected text with formatting: text aliases + `text/html` + `chromium/x-source-url` + `chromium/x-internal-source-rfh-token`. Address bar: text aliases only. Copy Image: `text/x-moz-url text/html image/png` + the two chromium markers (another image copy: `image/png` + markers only).
+  - Omarchy screenshot: `image/png` only. Slack: `chromium/x-web-custom-data` + `text/html` + text aliases + markers. Electron apps (T3Code, Slack) look like Chrome.
+  - Not observed: LibreOffice, Ghostty text, Alacritty/Telegram (not installed).
+- **L0.5 sensitive hints:** in all 20 real copies and ~70 scripted ones, `CLIPBOARD_STATE=data`; no offer carried `x-kde-passwordManagerHint`. 1Password/Bitwarden desktop are not installed; whether any human copy came from a password manager is unknown. So L3's sensitive skip cannot rely on hints alone: keep the source-app exclusion list (L3 design) as the main guard.
+- **Ghostty Shift+Insert:** Ghostty's default binds `shift+insert=paste_from_selection` (primary); the human's `~/.config/ghostty/config:26` overrides it to `paste_from_clipboard` (Omarchy's config). Omarchy's paste keystroke depends on that override → L5 doctor row.
+- **L0.3 file re-offer** (scratch PNG, three single-type `wl-copy` offers, pasted with guarded Ctrl+V):
+
+  | offer | Chromium page (`paste` event) | Nautilus | Strata |
+  |---|---|---|---|
+  | `wl-copy --type text/uri-list` | `types=Files`, file `trowel-l0.png image/png 296 B`; textarea also gets the URI text | copies `trowel-l0.png` | copies `trowel-l0.png` |
+  | `--type x-special/gnome-copied-files` | nothing | copies `trowel-l0.png` | nothing |
+  | `--type image/png < file` | `Files`, `image.png` (name lost) | `Pasted image.png` | `image.png` |
+
+  **One `text/uri-list` offer pastes files everywhere tested, with the real name. No multi-type offer is needed, so no `wl-clipboard-rs`.** (`wl-copy --type text/uri-list` also advertises the text aliases, so text fields get the URI.)
+- **L0.4 paste keystroke** (`scratchpad/l0/partb.py`; per trial: focus scratch window, `omarchy-shell trowel toggle` open, wait for `trowel-panel` layer, `wl-copy` token, `toggle` close, sleep d, focus guard, `wtype -M shift -k Insert -m shift`; 3 trials × 5 delays × 4 apps):
+
+  | delay after `toggle` | Ghostty | Chromium `--app` | GTK4 `Gtk.Entry` | Qt6 `TextField` |
+  |---|---|---|---|---|
+  | 0 ms (sent at ~35–48 ms) | 2/3 | 3/3 | 3/3 | 3/3 |
+  | 25 / 50 / 100 / 150 ms | 3/3 each | 3/3 each | 3/3 each | 3/3 each |
+
+  The layer unmaps 93–162 ms after the close `toggle` returns. Keys sent while the layer was still mapped mostly landed anyway (the panel releases keyboard focus before it unmaps). The one miss was the first trial into a fresh Ghostty, cause not isolated. At 150 ms the layer was gone in every trial. **Keep Omarchy's 150 ms**; it clears the slowest unmap observed (162 ms from `toggle`, ~190 ms when sent) with no failures.
+
 - **fend-core 1.5.8 stack overflow:** ~300 nested `(` overflow a 2 MiB thread stack and **abort the process** (`fatal runtime error: stack overflow`, exit 134; not catchable). 200 nested is fine; `2^` chains of 400 are fine. Guarded in `calc::gate` (≤ 256 chars, ≤ 32 deep) + a 16 MiB `troweld-calc` stack.
 - **fend-core first evaluation** builds unit tables lazily: ~0.45–0.65 ms in release. Warmed in `Calculator::new`.
 - **fend-core names:** `nmi` / `nautical_mile` / `NM` (not "nautical mile"); `100 c to f` is speed-of-light × 100 → no card (use `°C`/`celsius`). Approximations print 10 places, zero-padded (`314.1592653590`).
@@ -102,8 +128,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Open questions for the human
 
-1. **`wl-clipboard-rs`:** decide after spike L0.3 (does file paste need a multi-MIME offer?).
-2. **Interactive L0 spikes:** L0.2–L0.5 need the human to copy from real apps (Nautilus, Firefox, 1Password/Bitwarden) and to allow test keystrokes into a scratch window.
+1. **L0.5 leftover:** copy one test password from Chrome's password manager (or whatever manager is used) with the metadata logger running, to see whether it marks itself sensitive.
+
+Resolved 2026-10-15: `wl-clipboard-rs` is **not needed** (L0.3: a single `text/uri-list` offer pastes files into Chromium, Nautilus and Strata).
 
 Resolved 2026-10-13 (human accepted every recommendation, see DECISIONS D18–D24): no Jira; plugin `qmllint` stays local-only; no zbus; Phase 8 decisions approved.
 
@@ -140,6 +167,18 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-15 — L0.2–L0.5 spikes
+
+Human: let's do the L0 checks now; did the Part A copies; "do it" for the guarded keystroke run.
+
+- Logger: `wl-paste --watch hook.sh` writing only time, `CLIPBOARD_STATE`, window class and `--list-types` (never contents). Stopped afterwards.
+- Part B (`scratchpad/l0/partb.py`): every keystroke sent only while the focused window was one the script opened (abort otherwise); panel opened/closed with `toggle`; all scratch windows closed; clipboard cleared at the end (the human's clipboard was not saved).
+- Results in Verified facts (L0.2, L0.3, L0.4, L0.5, Ghostty Shift+Insert). Decisions that follow: files restore as `wl-copy --type text/uri-list` only; no `wl-clipboard-rs`; paste delay stays 150 ms; sensitive skip relies on the app exclusion list as well as hints.
+- LAUNCHER-PLAN updated (L0 results, restore of files, open question 3 closed).
+- Not done: LibreOffice/Ghostty-text offers; a real password-manager copy (open question 1).
+
+**Next step:** L3 clipboard engine.
 
 ### 2026-10-15 — L2 app index
 

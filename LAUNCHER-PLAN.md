@@ -298,6 +298,12 @@ it touches no Phase 7 gate. One PR per sub-phase.
    `x-kde-passwordManagerHint` and `CLIPBOARD_STATE=sensitive` appear in the capture env.
 6. **`wl-paste --watch` without `--type`**: confirm it fires on every selection change regardless of
    type (wl-clipboard 2.3.0), so that one watcher replaces Omarchy's two.
+
+**L0 results (2026-10-15, details in PROGRESS §Verified facts):** files re-offer as a single
+`text/uri-list` (no `wl-clipboard-rs`); the 150 ms paste delay holds in Ghostty, Chromium, GTK4 and
+Qt6; no real copy carried `x-kde-passwordManagerHint` or `CLIPBOARD_STATE=sensitive`, so the source
+app exclusion list is the main sensitive guard, with the hints as an extra check. The human's file
+manager is Strata, which offers `text/uri-list` plus the portal types.
 7. **`fend-core`** (only after the dependency is approved): pin a version, then read its source for
    the `evaluate` / interrupt / exchange-rate-handler API. Confirm it has no transitive dependencies
    (`cargo tree`). Check `%` semantics, unit coverage (data sizes, temperature, time) and date
@@ -423,9 +429,9 @@ browser is Chrome. Demonstrated with installed apps: `ghost` → Ghostty, `chro`
   - text: `wl-copy` (text/plain);
   - html: `wl-copy --type text/html`, with plain text when `mode:"plain"`;
   - image: `wl-copy --type <mime> < blob`;
-  - files: per L0.3.
+  - files: `wl-copy --type text/uri-list` (L0.3: one offer pastes into Chromium, Nautilus and Strata with the real file name; no multi-type offer needed).
 
-  Paste mode then sleeps 150 ms (or the L0.4 measurement) and sends the `wtype` Shift+Insert.
+  Paste mode then sleeps 150 ms (L0.4: 48/48 landings at ≥ 25 ms across Ghostty, Chromium, GTK4, Qt6; the panel layer unmaps ≤ 162 ms after `toggle`) and sends the `wtype` Shift+Insert.
 - **Import**: `trowel clip import-omarchy` (also offered by setup) converts the JSON order into
   `created` timestamps (newest first, 1 s apart, since the real times are lost) and copies, rather
   than moves, the referenced images. It never deletes Omarchy's files.
@@ -642,7 +648,7 @@ the end of week 2.
    touches the clipboard" rule.
 2. Binds: stay on Super+D. Setup offers the Super+Ctrl+V takeover only, defaulting to no.
    Super+Space is not offered.
-3. `wl-clipboard-rs`: decide after spike L0.3.
+3. `wl-clipboard-rs`: not needed (L0.3, 2026-10-15).
 4. Clipboard retention: 1000 entries / 30 days / 512 MB, as proposed.
 5. `fend-core` is approved. The calculator is **offline**, with no currency (the L6 currency row is
    dropped).
