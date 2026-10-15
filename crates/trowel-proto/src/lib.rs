@@ -9,7 +9,7 @@ pub mod path;
 pub mod results;
 pub mod status;
 
-pub use config::{Config, UiConfig};
+pub use config::{ClipboardConfig, Config, UiConfig};
 pub use error::{ErrorBody, ErrorCode};
 pub use launcher::{
     AppAction, AppRow, AppsResult, CalcAlt, CalcHistoryRow, CalcKind, CalcReply, CalcResult,

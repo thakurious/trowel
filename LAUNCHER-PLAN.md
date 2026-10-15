@@ -449,6 +449,41 @@ byte-identical (`wl-paste | sha256sum`).
 **Acceptance:** the live script passes; 1000 entries query in < 5 ms; an 8 MB 4K screenshot
 ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan blobs.
 
+**Found while building L3 (2026-10-15; the code follows these, `troweld/src/clip/`):**
+
+- **Capture plumbing.** The daemon passes `TROWEL_SOCKET`, `TROWEL_CLIP_SPOOL`
+  (`$XDG_RUNTIME_DIR/trowel/clip-spool`, `0700`), `TROWEL_CLIP_MAX_BYTES` and
+  `TROWEL_CLIP_EXCLUDE` to `wl-paste --watch`, which hands them to `trowel clip-capture`. Pausing
+  (incognito) or `capture = false` **stops the watcher**, so nothing is even read. `clip_ingest` is
+  accepted only from a process whose parent (or grandparent) is the watcher's pid, and only with
+  files in the spool directory. `CLIPBOARD_STATE` `clear`/`nil` is skipped like `sensitive`.
+- **What is fetched** follows the L0.2 offers: files (`text/uri-list`, then
+  `x-special/gnome-copied-files`; a list with no `file://` URI falls back to text), else the first
+  image type (Chrome "Copy Image" also offers HTML: the image wins, as in Omarchy), else
+  `text/html` with `chromium/x-source-url` (the page's domain) and the best text type
+  (`text/plain;charset=utf-8` › `UTF8_STRING` › `text/plain` › `STRING` › `TEXT`), else text. An HTML
+  copy whose text is one URL is stored as a `link`.
+- **Recency is a `seq` column** (state schema 3): `last_used` is whole seconds, so a re-copy within
+  the same second could not move to the top. `seq` orders the list and the count/blob eviction;
+  `last_used` still drives the age limit.
+- **Text over 256 KiB** keeps its full copy in a `txt` blob (refcounted like images); the row holds
+  the first 256 KiB for search and preview, and paste restores the whole text.
+- **Classifier:** `code` needs ≥ 2 non-empty lines and either a terminal/editor window class or at
+  least half the lines looking like code (statement endings, operators, keywords, indented
+  symbols). Colors are normalized to `#RRGGBB[AA]` (`rgb()`, `hsl()` and `oklch()` converted, CSS
+  Color 4 math) so the UI can draw a swatch.
+- **Default excluded apps:** `1password`, `bitwarden`, `com.bitwarden.desktop`, `keepassxc`,
+  `org.keepassxc.keepassxc` (L0.5: no real copy carried a hint, so the class list is the main guard).
+- **`clip_import` op added.** The plan named `trowel clip import-omarchy` but no op, and the daemon
+  is the only writer of `state.sqlite`, so the CLI asks the daemon. Existing entries are skipped,
+  not bumped.
+- **HTML restore caveat (open question).** `wl-copy --type text/html` also offers the same bytes as
+  `text/plain`, `UTF8_STRING`, … (L0.6), so pasting an `html` entry in `paste` mode into a
+  plain-text target (a terminal, a plain field) pastes the **markup**. `plain` mode is correct.
+  Offering HTML and its text together needs a multi-type offer (`wl-clipboard-rs`, not approved).
+- A bare `wl-copy` (no `--type`) spends ~150 ms sniffing the MIME type with `xdg-mime` before it
+  owns the selection. The daemon always passes `--type`; the live script does too.
+
 ### L2c. Calculator engine (2 days, after L1, in parallel with L2/L3)
 
 - `troweld/src/calc.rs` wraps `fend-core`, with one `Context` per daemon. Settings:

@@ -24,6 +24,11 @@ use crate::actions;
 use crate::apps::{self, icons::IconIndex, AppIndex, AppsEnv, Launches};
 use crate::cache::QueryCache;
 use crate::calc::Calculator;
+use crate::clip::{
+    self,
+    store::Limits,
+    watch::{CaptureEnv, Watcher},
+};
 use crate::config_file::{self, expand_tilde};
 use crate::disk;
 use crate::doctor;
@@ -41,8 +46,8 @@ use crate::watcher::{FolderWatch, CODE_LONGEST_WAIT, CODE_QUIET, DEBOUNCE};
 
 const QUEUE_CAP: usize = 256;
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
-/// v2: `apps` since L2 (`clipboard` arrives with L3).
-const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps"];
+/// v2: `apps` since L2, `clipboard` since L3; `calc` (D22) has been served since L2c.
+const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps", "clipboard", "calc"];
 const SEARCHER_REFRESH: Duration = Duration::from_secs(2);
 
 pub struct EngineOpts {
@@ -93,6 +98,11 @@ struct Engine {
     /// `state.sqlite` launches, loaded on the first `apps_query`.
     app_launches: Mutex<Option<std::collections::HashMap<String, Launches>>>,
     apps_watch: Mutex<Option<notify::RecommendedWatcher>>,
+    clip_watch: Arc<Watcher>,
+    clip_subscribers: Arc<Mutex<Vec<Arc<Outbox>>>>,
+    clip_events: clip::Events,
+    /// Captures are ignored until then: the daemon's own `wl-copy` from a `clip_paste`.
+    clip_suppress: Mutex<Option<Instant>>,
 }
 
 enum Queued {
@@ -154,6 +164,8 @@ struct Conn {
     /// Bumped by each `preview`; a queued render that is no longer the newest is skipped.
     preview_epoch: Arc<AtomicU64>,
     last_status: Mutex<Option<Instant>>,
+    /// `SO_PEERCRED` pid: `clip_ingest` is only taken from our own capture child.
+    peer_pid: u32,
 }
 
 pub fn run(opts: EngineOpts) -> io::Result<()> {
@@ -182,6 +194,17 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
     };
     // ~10 ms; icons follow on a thread (`start_apps`).
     let apps_env = AppsEnv::from_env();
+    let clip_watch = Watcher::new(&socket, clip_env(&cfg));
+    let clip_subscribers: Arc<Mutex<Vec<Arc<Outbox>>>> = Arc::new(Mutex::new(Vec::new()));
+    let event_subs = Arc::clone(&clip_subscribers);
+    let clip_events = clip::Events::new(move |event| {
+        let line = event.to_string();
+        let mut subs = event_subs.lock().expect("clip subscribers");
+        subs.retain(|out| !out.dead.load(Ordering::Relaxed));
+        for out in subs.iter() {
+            out.push_line(line.clone());
+        }
+    });
     let engine = Arc::new(Engine {
         config_path: config_path.clone(),
         index_dir: index_dir.clone(),
@@ -216,9 +239,15 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         calc: Calculator::default(),
         state_dir: opts.state_dir.unwrap_or_else(state::default_state_dir),
         state: Mutex::new(None),
+        clip_watch,
+        clip_subscribers,
+        clip_events,
+        clip_suppress: Mutex::new(None),
     });
 
     start_apps(&engine);
+    engine.clip_watch.start();
+    start_clip_gc(&engine);
     logind::bind_signals(&engine.overflow, &engine.sleeping);
     let sleep_eng = Arc::clone(&engine);
     logind::start(move |going| {
@@ -236,13 +265,16 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
     eprintln!("troweld listening on {}", socket.display());
     for incoming in listener.incoming() {
         let stream = incoming?;
-        if let Err(err) = reject_foreign_uid(&stream) {
-            eprintln!("troweld drop peer: {err}");
-            continue;
-        }
+        let peer_pid = match reject_foreign_uid(&stream) {
+            Ok(pid) => pid,
+            Err(err) => {
+                eprintln!("troweld drop peer: {err}");
+                continue;
+            }
+        };
         let engine = Arc::clone(&engine);
         thread::spawn(move || {
-            if let Err(err) = handle_conn(stream, engine) {
+            if let Err(err) = handle_conn(stream, engine, peer_pid) {
                 if err.kind() != io::ErrorKind::BrokenPipe {
                     eprintln!("troweld connection: {err}");
                 }
@@ -256,7 +288,8 @@ fn io_err(err: impl std::fmt::Display) -> io::Error {
     io::Error::other(err.to_string())
 }
 
-fn reject_foreign_uid(stream: &UnixStream) -> io::Result<()> {
+/// Returns the peer's pid.
+fn reject_foreign_uid(stream: &UnixStream) -> io::Result<u32> {
     let mut cred = libc::ucred {
         pid: 0,
         uid: 0,
@@ -282,7 +315,7 @@ fn reject_foreign_uid(stream: &UnixStream) -> io::Result<()> {
             "peer uid mismatch",
         ));
     }
-    Ok(())
+    Ok(cred.pid.max(0) as u32)
 }
 
 /// systemd socket activation (`LISTEN_FDS`) or bind `$XDG_RUNTIME_DIR/trowel/troweld.sock`.
@@ -364,7 +397,7 @@ fn sd_notify(msg: &str) {
     let _ = sock.send_to(msg.as_bytes(), Path::new(&raw));
 }
 
-fn handle_conn(stream: UnixStream, engine: Arc<Engine>) -> io::Result<()> {
+fn handle_conn(stream: UnixStream, engine: Arc<Engine>, peer_pid: u32) -> io::Result<()> {
     let writer = stream.try_clone()?;
     let out = Arc::new(Outbox::new());
     let out_w = Arc::clone(&out);
@@ -376,6 +409,7 @@ fn handle_conn(stream: UnixStream, engine: Arc<Engine>) -> io::Result<()> {
         epoch: Arc::new(AtomicU64::new(0)),
         preview_epoch: Arc::new(AtomicU64::new(0)),
         last_status: Mutex::new(None),
+        peer_pid,
     };
     let mut reader = BufReader::new(stream);
     loop {
@@ -597,6 +631,13 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
         }
         Op::Subscribe { topics } => {
             reply_ok(conn, id, json!({}));
+            if topics.iter().any(|t| t == "clipboard") {
+                engine
+                    .clip_subscribers
+                    .lock()
+                    .expect("clip subscribers")
+                    .push(Arc::clone(&conn.out));
+            }
             if topics.iter().any(|t| t == "status") {
                 engine
                     .subscribers
@@ -635,6 +676,7 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             };
             if let Some((prev, next)) = applied {
                 reply_ok(conn, id, serde_json::to_value(&next).unwrap_or(json!({})));
+                engine.clip_watch.set_env(clip_env(&next));
                 let folders_changed = next.roots != prev.roots
                     || next.code_roots != prev.code_roots
                     || next.onboarded != prev.onboarded;
@@ -656,7 +698,9 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             reply_ok(conn, id, json!({}));
         }
         Op::Doctor => {
-            let report = doctor::run(Some(&engine.index_dir), Some(&engine.socket));
+            let mut report = doctor::run(Some(&engine.index_dir), Some(&engine.socket));
+            report.checks.push(engine.clip_doctor());
+            report.ok = report.checks.iter().all(|c| c.status != "FAIL");
             reply_ok(conn, id, doctor::json_report(&report));
         }
         Op::CopyPath { path } => {
@@ -867,15 +911,208 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             reply_ok(conn, id, json!({}));
         }
-        // Protocol v2 ops whose engine lands in L3 (clipboard).
-        // `hello` does not advertise `apps`/`clipboard` until then.
-        op => reply_error(
-            conn,
-            Some(id),
-            ErrorCode::NotReady,
-            format!("{} is not available in this build", op.name()),
-        ),
+        Op::ClipQuery {
+            text,
+            kinds,
+            limit,
+            offset,
+            gen,
+        } => {
+            // No history yet: answer without creating state.sqlite.
+            if !engine.state_exists() {
+                reply_ok(
+                    conn,
+                    id,
+                    json!(trowel_proto::ClipQueryResult {
+                        gen,
+                        rows: vec![],
+                        total: 0
+                    }),
+                );
+                return;
+            }
+            let limit = limit.min(500);
+            match engine.with_state(|s| s.clip_query(&text, kinds.as_deref(), limit, offset)) {
+                Ok((rows, total)) => reply_ok(
+                    conn,
+                    id,
+                    json!(trowel_proto::ClipQueryResult {
+                        gen,
+                        rows: rows.into_iter().map(clip::with_thumb).collect(),
+                        total,
+                    }),
+                ),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipGet { clip_id } => match engine.clip_stored(clip_id) {
+            Ok(Some(stored)) => reply_ok(conn, id, json!(clip::content(stored))),
+            Ok(None) => reply_clip_missing(conn, id, clip_id),
+            Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+        },
+        Op::ClipPaste { clip_id, mode } => {
+            let stored = match engine.clip_stored(clip_id) {
+                Ok(Some(stored)) => stored,
+                Ok(None) => return reply_clip_missing(conn, id, clip_id),
+                Err(err) => return reply_error(conn, Some(id), ErrorCode::Io, err),
+            };
+            *engine.clip_suppress.lock().expect("clip suppress") =
+                Some(Instant::now() + Duration::from_secs(1));
+            match clip::restore(&stored, mode) {
+                Ok(()) => {}
+                Err(clip::RestoreError::Gone(msg)) => {
+                    return reply_error(conn, Some(id), ErrorCode::NotFound, msg)
+                }
+                Err(clip::RestoreError::Io(msg)) => {
+                    return reply_error(conn, Some(id), ErrorCode::Io, msg)
+                }
+            }
+            // The UI has already hidden the panel (D21).
+            if mode != PasteMode::Copy {
+                actions::paste_keystroke();
+            }
+            if let Ok(Some(row)) = engine.with_state(|s| s.clip_touch(clip_id, unix_now())) {
+                engine.clip_events.added(clip::with_thumb(row));
+            }
+            reply_ok(conn, id, json!({}));
+        }
+        Op::ClipPin { clip_id, pinned } => {
+            if !engine.state_exists() {
+                return reply_clip_missing(conn, id, clip_id);
+            }
+            match engine.with_state(|s| s.clip_pin(clip_id, pinned)) {
+                Ok(Some(row)) => {
+                    engine.clip_events.added(clip::with_thumb(row));
+                    reply_ok(conn, id, json!({}));
+                }
+                Ok(None) => reply_clip_missing(conn, id, clip_id),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipDelete { clip_id } => {
+            if !engine.state_exists() {
+                return reply_clip_missing(conn, id, clip_id);
+            }
+            match engine.with_state(|s| s.clip_delete(clip_id)) {
+                Ok(true) => {
+                    engine.clip_removed(&[clip_id]);
+                    reply_ok(conn, id, json!({}));
+                }
+                Ok(false) => reply_clip_missing(conn, id, clip_id),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipClear { keep_pinned } => {
+            if !engine.state_exists() {
+                return reply_ok(conn, id, json!({"removed": 0}));
+            }
+            match engine.with_state(|s| s.clip_clear(keep_pinned)) {
+                Ok(ids) => {
+                    engine.clip_removed(&ids);
+                    reply_ok(conn, id, json!({"removed": ids.len()}));
+                }
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipPause { minutes } => {
+            let until = engine.clip_watch.pause(minutes);
+            reply_ok(conn, id, json!({ "paused_until": until }));
+        }
+        Op::ClipIngest {
+            types,
+            offers,
+            source_app,
+        } => {
+            let files: Vec<PathBuf> = offers.iter().map(|o| o.file.to_path_buf()).collect();
+            if !engine.clip_watch.is_capture_peer(conn.peer_pid) {
+                return reply_error(
+                    conn,
+                    Some(id),
+                    ErrorCode::BadRequest,
+                    "clip_ingest is only accepted from trowel clip-capture",
+                );
+            }
+            if let Some(bad) = files
+                .iter()
+                .find(|f| !clip::spooled(&engine.clip_watch.spool, f))
+            {
+                return reply_error(
+                    conn,
+                    Some(id),
+                    ErrorCode::BadRequest,
+                    format!("{} is not in the spool directory", bad.display()),
+                );
+            }
+            let offers: Vec<clip::ingest::Offer> = offers
+                .into_iter()
+                .zip(&files)
+                .map(|(o, path)| clip::ingest::Offer {
+                    mime: o.mime,
+                    path: path.clone(),
+                })
+                .collect();
+            let outcome = engine.clip_ingest(&types, &offers, source_app);
+            for file in &files {
+                let _ = fs::remove_file(file);
+            }
+            match outcome {
+                Ok(Some((clip_id, new))) => {
+                    reply_ok(conn, id, json!({"clip_id": clip_id, "new": new}))
+                }
+                Ok(None) => reply_ok(conn, id, json!({"skipped": true})),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipImport { source } => {
+            if source != "omarchy" {
+                return reply_error(
+                    conn,
+                    Some(id),
+                    ErrorCode::BadRequest,
+                    format!("unknown import source {source}"),
+                );
+            }
+            match engine.clip_import(&clip::import::default_path()) {
+                Ok((imported, skipped)) => {
+                    reply_ok(conn, id, json!({"imported": imported, "skipped": skipped}))
+                }
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
     }
+}
+
+fn reply_clip_missing(conn: &Conn, id: u64, clip_id: i64) {
+    reply_error(
+        conn,
+        Some(id),
+        ErrorCode::NotFound,
+        format!("no clipboard entry {clip_id}"),
+    );
+}
+
+fn clip_env(cfg: &Config) -> CaptureEnv {
+    CaptureEnv {
+        enabled: cfg.clipboard.capture,
+        excluded_apps: cfg.clipboard.excluded_apps.clone(),
+        max_bytes: cfg.clipboard.max_entry_mb.saturating_mul(1024 * 1024),
+    }
+}
+
+/// Retention runs after every ingest; this sweep catches age expiry on an idle machine, heals
+/// blob refcounts and drops orphan files and thumbnails (`LAUNCHER-PLAN.md` L3 "Retention").
+fn start_clip_gc(engine: &Arc<Engine>) {
+    let eng = Arc::clone(engine);
+    thread::Builder::new()
+        .name("troweld-clip-gc".into())
+        .spawn(move || {
+            thread::sleep(Duration::from_secs(30));
+            loop {
+                eng.clip_sweep();
+                thread::sleep(Duration::from_secs(3600));
+            }
+        })
+        .ok();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1527,6 +1764,170 @@ impl Engine {
         cache.clone().unwrap_or_default()
     }
 
+    fn state_exists(&self) -> bool {
+        self.state.lock().expect("state").is_some()
+            || self.state_dir.join(crate::state::STATE_FILE).is_file()
+    }
+
+    fn clip_stored(&self, clip_id: i64) -> Result<Option<clip::store::Stored>, String> {
+        if !self.state_exists() {
+            return Ok(None);
+        }
+        self.with_state(|s| s.clip_stored(clip_id))
+    }
+
+    fn clip_limits(&self) -> Limits {
+        let cfg = self.config.lock().expect("config");
+        Limits {
+            max_entries: cfg.clipboard.max_entries,
+            max_age_days: cfg.clipboard.max_age_days,
+            max_blob_bytes: cfg.clipboard.max_blob_mb.saturating_mul(1024 * 1024),
+        }
+    }
+
+    fn clip_removed(&self, ids: &[i64]) {
+        for id in ids {
+            clip::thumbs::remove(*id);
+        }
+        self.clip_events.removed(ids);
+    }
+
+    /// One capture: skip rules, build, store, retention, thumbnail. `None` when skipped.
+    fn clip_ingest(
+        &self,
+        types: &[String],
+        offers: &[clip::ingest::Offer],
+        source_app: Option<String>,
+    ) -> Result<Option<(i64, bool)>, String> {
+        let env = self.clip_watch.env();
+        if !env.enabled || self.clip_watch.paused() {
+            return Ok(None);
+        }
+        // Belt and braces: `clip-capture` already checks these before reading anything.
+        if types.iter().any(|t| t == clip::ingest::SENSITIVE_MIME) {
+            return Ok(None);
+        }
+        if let Some(app) = source_app.as_deref() {
+            if env
+                .excluded_apps
+                .iter()
+                .any(|x| x.eq_ignore_ascii_case(app))
+            {
+                return Ok(None);
+            }
+        }
+        {
+            let mut suppress = self.clip_suppress.lock().expect("clip suppress");
+            match *suppress {
+                Some(until) if Instant::now() < until => return Ok(None),
+                Some(_) => *suppress = None,
+                None => {}
+            }
+        }
+        let Some(entry) = clip::ingest::build(offers, source_app, unix_now(), env.max_bytes)?
+        else {
+            return Ok(None);
+        };
+        let limits = self.clip_limits();
+        let (row, new, removed, blob_dir) = self.with_state(|s| {
+            let (row, new) = s.clip_upsert(&entry)?;
+            let removed = s.clip_enforce(limits, unix_now())?;
+            Ok((row, new, removed, s.blob_dir()))
+        })?;
+        self.clip_removed(&removed);
+        let id = row.id;
+        let thumb_src = match (&entry.blob, &entry.files) {
+            (Some(blob), _) if row.kind == trowel_proto::ClipKind::Image => {
+                Some(blob_dir.join(format!("{}.{}", blob.sha256, blob.ext)))
+            }
+            (_, Some(files)) => clip::ingest::thumb_source(files),
+            _ => None,
+        };
+        self.clip_events.added(clip::with_thumb(row.clone()));
+        if let Some(src) = thumb_src.filter(|_| clip::thumbs::row_thumb(id).is_none()) {
+            let events = self.clip_events.clone();
+            thread::spawn(move || {
+                if clip::thumbs::render(id, &src) {
+                    events.added(clip::with_thumb(row));
+                }
+            });
+        }
+        Ok(Some((id, new)))
+    }
+
+    /// `clip_import`: Omarchy's history, oldest first, skipping what is already stored.
+    fn clip_import(&self, file: &Path) -> Result<(u64, u64), String> {
+        let max_bytes = self.clip_watch.env().max_bytes;
+        let parsed = clip::import::parse(file, unix_now(), max_bytes)?;
+        let limits = self.clip_limits();
+        let mut skipped = parsed.skipped;
+        let (imported, newest, removed) = self.with_state(|s| {
+            let mut imported = 0u64;
+            let mut newest = None;
+            for entry in &parsed.entries {
+                if s.clip_has(&entry.hash)? {
+                    skipped += 1;
+                    continue;
+                }
+                newest = Some(s.clip_upsert(entry)?.0);
+                imported += 1;
+            }
+            let removed = s.clip_enforce(limits, unix_now())?;
+            Ok((imported, newest, removed))
+        })?;
+        self.clip_removed(&removed);
+        if let Some(row) = newest {
+            self.clip_events.added(clip::with_thumb(row));
+        }
+        Ok((imported, skipped))
+    }
+
+    /// Hourly: retention, GC, thumbnail sweep. Never creates `state.sqlite`.
+    fn clip_sweep(&self) {
+        if !self.state_exists() {
+            return;
+        }
+        let limits = self.clip_limits();
+        let result = self.with_state(|s| {
+            let removed = s.clip_enforce(limits, unix_now())?;
+            let gc = s.clip_gc()?;
+            Ok((removed, gc, s.clip_ids()?))
+        });
+        match result {
+            Ok((removed, gc, ids)) => {
+                self.clip_removed(&removed);
+                let swept = clip::thumbs::sweep(&ids.into_iter().collect());
+                if gc.files + gc.blob_rows + swept > 0 {
+                    eprintln!(
+                        "troweld: clipboard gc removed {} orphan blob files, {} blob rows, {} thumbnails",
+                        gc.files, gc.blob_rows, swept
+                    );
+                }
+            }
+            Err(err) => eprintln!("troweld: clipboard gc: {err}"),
+        }
+    }
+
+    fn clip_doctor(&self) -> doctor::Check {
+        let env = self.clip_watch.env();
+        let stats = if self.state_exists() {
+            self.with_state(|s| s.clip_stats()).ok()
+        } else {
+            Some((0, 0))
+        };
+        doctor::clipboard_check(
+            env.enabled,
+            self.clip_watch.paused(),
+            self.clip_watch.running(),
+            self.clip_watch
+                .last_error
+                .lock()
+                .expect("watch err")
+                .clone(),
+            stats,
+        )
+    }
+
     /// Runs `f` on `state.sqlite`, opening it on first use.
     fn with_state<T>(
         &self,
@@ -1905,6 +2306,7 @@ impl Engine {
     fn reload_config_file(&self) {
         match config_file::load(&self.config_path) {
             Ok(next) => {
+                self.clip_watch.set_env(clip_env(&next));
                 *self.config.lock().expect("config") = next;
             }
             Err(err) => {

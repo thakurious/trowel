@@ -60,9 +60,9 @@ The first request on every connection:
 If the protocol versions differ, the daemon answers `ok:false, code:"bad_request"` and the UI shows
 "Trowel was updated, restart it". Do not try to negotiate across versions.
 
-`capabilities` gains `apps` and `clipboard` once the daemon serves them: `apps` since L2,
-`clipboard` with L3. Until then the clipboard ops answer `not_ready` (`calc`, `calc_history` and
-`calc_copy` are served since L2c); `troweld --mock` advertises and serves both from canned fixtures.
+`capabilities` gains `apps`, `clipboard` and `calc` (D22) as the daemon serves them: `calc` since
+L2c, `apps` since L2, `clipboard` since L3. `troweld --mock` advertises and serves all three from
+canned fixtures.
 
 ## 4. Operations
 
@@ -147,14 +147,15 @@ request `id` (the op's params are flattened into the envelope).
 | `apps_query` | `{text="", limit=8, gen}` | `{gen, rows:[AppRow], took_us?}`. An empty `text` returns frecency order. Supersedes the connection's older `apps_query`. |
 | `app_launch` | `{app_id, action?}` | `{}`. Runs `uwsm-app -- gtk-launch <id>.desktop` (actions: their `Exec`, split like Quickshell) and records a launch for frecency. `not_found` for an unknown app or action, `io` when the launcher can't start. |
 | `app_hide` | `{app_id, hidden}` | `{}`. Writes `~/.config/trowel/launcher.hides`. |
-| `clip_query` | `{text="", kinds?:[ClipKind], limit=50, offset=0, gen}` | `{gen, rows:[ClipRow], total}`, pinned first, then most recently used. An unknown kind is `bad_request`. |
-| `clip_get` | `{clip_id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}, truncated?}`. Text is capped at 256 KiB. |
-| `clip_paste` | `{clip_id, mode="paste"\|"copy"\|"plain"}` | `{}`. The UI hides the panel first (D21). |
-| `clip_pin` | `{clip_id, pinned}` | `{}` |
-| `clip_delete` | `{clip_id}` | `{}` |
+| `clip_query` | `{text="", kinds?:[ClipKind], limit=50, offset=0, gen}` | `{gen, rows:[ClipRow], total}`, pinned first, then most recently copied or pasted. `text` matches every word as a prefix (FTS, the index's tokenizer) in the preview or the content, or a literal substring of the preview (`#F2A`, `://`). An unknown kind is `bad_request`. `limit` ≤ 500. |
+| `clip_get` | `{clip_id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}, truncated?}`. Text and HTML are capped at 256 KiB. `not_found` for an unknown id. |
+| `clip_paste` | `{clip_id, mode="paste"\|"copy"\|"plain"}` | `{}`. The UI hides the panel first (D21). Restores the stored type: text as `text/plain`, HTML as `text/html` (`plain`: its text), an image with its MIME, files as one `text/uri-list` (`plain`: the paths as text). `paste`/`plain` then send Shift+Insert after 150 ms. Moves the entry to the top. `not_found` for an unknown id or when the image or every file is gone, `io` when `wl-copy` fails. The daemon ignores captures for 1 s after it, so its own copy is not stored again. |
+| `clip_pin` | `{clip_id, pinned}` | `{}`, or `not_found`. |
+| `clip_delete` | `{clip_id}` | `{}`, or `not_found`. |
 | `clip_clear` | `{keep_pinned=true}` | `{removed}` |
 | `clip_pause` | `{minutes?}` | `{paused_until}`: a Unix time, `0` = capturing, `-1` = until resumed. `minutes:0` resumes, absent pauses until resumed. |
-| `clip_ingest` | `{types:[mime], offers:[{mime, file}], source_app?}` | Internal: only `trowel clip-capture` (the daemon's own watcher child) may send it; anyone else gets `bad_request`. |
+| `clip_ingest` | `{types:[mime], offers:[{mime, file}], source_app?}` | Internal: only `trowel clip-capture` run by the daemon's own `wl-paste --watch` (checked by peer pid ancestry) may send it, and only with files in `$XDG_RUNTIME_DIR/trowel/clip-spool/`; anything else is `bad_request`. Returns `{clip_id, new}`, or `{skipped:true}` (paused, excluded app, sensitive, empty). The daemon deletes the spool files. |
+| `clip_import` | `{source="omarchy"}` | `{imported, skipped}`. Copies `~/.local/state/omarchy/clipboard-history.json` and its images in (newest first, 1 s apart); entries already stored are skipped, Omarchy's files are left alone. Another `source` is `bad_request`. |
 | `calc` | `{text, force=false, gen}` | `{gen, result?: CalcResult, error?, took_us?}`. No `result` means "not a calculation" (no card). `error` only with `force`. Supersedes the connection's older `calc`. |
 | `calc_history` | `{limit=20}` | `{rows:[{expr, result, at}]}`, newest first. |
 | `calc_copy` | `{text, expr?, mode="paste"\|"copy"}` | `{}`, or `io` when the clipboard can't be written (no compositor). Same clipboard path as `clip_paste`; `expr` is added to `calc_history` only after a successful copy. |
@@ -220,6 +221,14 @@ code_editor = ""          # "" = auto/xdg-open
 code_quiet_seconds = 2
 [ui]
 reduce_motion = false     # also follows the system preference
+[clipboard]               # Phase 8 L3; absent in older files = these defaults
+capture = true            # run the wl-paste --watch capture
+max_entries = 1000        # pinned entries are never evicted
+max_age_days = 30
+max_blob_mb = 512
+max_entry_mb = 64         # larger copies are not stored
+excluded_apps = ["1password", "bitwarden", "com.bitwarden.desktop", "keepassxc", "org.keepassxc.keepassxc"]
+                          # Hyprland window classes, case-insensitive
 ```
 
 The daemon watches `config.toml`. A hand edit is validated: an invalid file is logged, the previous

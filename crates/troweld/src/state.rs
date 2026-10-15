@@ -15,11 +15,12 @@ use crate::apps::rank::decayed;
 use crate::apps::Launches;
 
 pub const STATE_FILE: &str = "state.sqlite";
-/// 1: L1. 2: `apps_launches.score` (decayed frecency sum, L2).
-const SCHEMA_VERSION: i64 = 2;
+/// 1: L1. 2: `apps_launches.score` (decayed frecency sum, L2). 3: `clip_entries.seq`, the
+/// recency order (`last_used` is whole seconds, so copies within a second would tie; L3).
+const SCHEMA_VERSION: i64 = 3;
 
 pub struct StateDb {
-    db: Database,
+    pub(crate) db: Database,
     pub file: PathBuf,
 }
 
@@ -135,9 +136,8 @@ impl StateDb {
                 created INTEGER NOT NULL,
                 last_used INTEGER NOT NULL,
                 uses INTEGER NOT NULL DEFAULT 1,
-                pinned INTEGER NOT NULL DEFAULT 0);
-            CREATE INDEX IF NOT EXISTS clip_entries_order
-                ON clip_entries(pinned DESC, last_used DESC);
+                pinned INTEGER NOT NULL DEFAULT 0,
+                seq INTEGER NOT NULL DEFAULT 0);
             CREATE VIRTUAL TABLE IF NOT EXISTS clip_fts USING fts5(
                 preview, body, content = 'clip_entries', content_rowid = 'id',
                 tokenize = '{tokenizer}');
@@ -158,6 +158,28 @@ impl StateDb {
                 expr TEXT NOT NULL,
                 result TEXT NOT NULL,
                 at INTEGER NOT NULL);
+            COMMIT;"
+        ))?;
+        let mut has_seq = false;
+        self.db.query(
+            "SELECT 1 FROM pragma_table_info('clip_entries') WHERE name = 'seq'",
+            &[],
+            |_| {
+                has_seq = true;
+                Ok(())
+            },
+        )?;
+        let add_seq = if has_seq {
+            ""
+        } else {
+            "ALTER TABLE clip_entries ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;
+             UPDATE clip_entries SET seq = id;"
+        };
+        self.db.execute(&format!(
+            "BEGIN;
+            {add_seq}
+            DROP INDEX IF EXISTS clip_entries_order;
+            CREATE INDEX IF NOT EXISTS clip_entries_recent ON clip_entries(pinned DESC, seq DESC);
             PRAGMA user_version = {SCHEMA_VERSION};
             COMMIT;"
         ))
@@ -388,6 +410,35 @@ mod tests {
         state.record_calc("1+1", "2", 1).unwrap();
         assert_eq!(all["nvim"].count, 3);
         assert!((all["nvim"].score - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn v2_clip_rows_get_a_recency_seq() {
+        let dir = temp();
+        let state = StateDb::open(&dir).unwrap();
+        // A v2 file: clip_entries without `seq`.
+        state
+            .db
+            .execute(
+                "DROP INDEX clip_entries_recent;
+                 ALTER TABLE clip_entries DROP COLUMN seq;
+                 INSERT INTO clip_entries(id, hash, kind, preview, mimes, bytes, created, last_used)
+                    VALUES (7, 'h', 'text', 'p', '[]', 1, 1, 1);
+                 PRAGMA user_version = 2;",
+            )
+            .unwrap();
+        drop(state);
+        let state = StateDb::open(&dir).unwrap();
+        assert_eq!(state.db.user_version().unwrap(), SCHEMA_VERSION);
+        let mut seq = 0;
+        state
+            .db
+            .query("SELECT seq FROM clip_entries WHERE id = 7", &[], |row| {
+                seq = row.int(0);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(seq, 7);
     }
 
     #[test]

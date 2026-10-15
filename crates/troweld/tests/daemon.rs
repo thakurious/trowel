@@ -255,7 +255,7 @@ fn hello_and_keyword_search() {
 }
 
 #[test]
-fn protocol_v2_handshake_and_unbuilt_ops() {
+fn protocol_v2_handshake_and_capabilities() {
     let root = temp();
     let d = start(root, &[]);
 
@@ -292,14 +292,14 @@ fn protocol_v2_handshake_and_unbuilt_ops() {
         "apps served since L2: {hi}"
     );
     assert!(
-        !caps.iter().any(|c| c == "clipboard"),
-        "not advertised before L3: {hi}"
+        caps.iter().any(|c| c == "clipboard") && caps.iter().any(|c| c == "calc"),
+        "clipboard served since L3, calc since L2c: {hi}"
     );
     let apps = recv(&mut reader);
     assert_eq!(apps["ok"], true, "{apps}");
     assert_eq!(apps["rows"], json!([]), "no fixture apps: {apps}");
     let clip = recv(&mut reader);
-    assert_eq!(clip["error"]["code"], "not_ready", "{clip}");
+    assert_eq!(clip["error"]["code"], "not_found", "empty history: {clip}");
 }
 
 fn desktop(dir: &Path, file: &str, body: &str) {

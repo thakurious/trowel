@@ -26,3 +26,5 @@
 {"recv": {"id": 13, "ok": false, "error": {"code": "bad_request", "message": "*"}}}
 {"send": {"id": 14, "op": "clip_query", "kinds": ["sound"], "gen": 4}}
 {"recv": {"id": 14, "ok": false, "error": {"code": "bad_request", "message": "*"}}}
+{"send": {"id": 15, "op": "clip_import", "source": "omarchy"}}
+{"recv": {"id": 15, "ok": true, "imported": 0, "skipped": 0}}

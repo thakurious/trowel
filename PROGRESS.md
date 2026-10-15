@@ -4,10 +4,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c and L2 done** (protocol v2, `state.sqlite`, mock; calculator and app index served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
-- **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release` (built **before** L1, so the running daemon speaks **v1**). omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
+- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c, L2 and L3 done** (protocol v2, `state.sqlite`, mock; calculator, app index and clipboard history served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
+- **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release`. The **running** daemon (pid started 2026-10-14 18:16) is the pre-L1 v1 binary, already deleted on disk; `target/release` now holds the L3 build. **Any restart of `troweld.service` brings up the v2 daemon with clipboard capture on** (`[clipboard] capture = true` default) next to the still-v1 panel. omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** L3 clipboard engine (files restore as a single `text/uri-list` offer, paste delay stays 150 ms; sensitive skip must not rely on hints alone, see L0.5). One open L0.5 check: the human copies one test password from Chrome's password manager with the logger running. L4 UI can start on `--mock` meanwhile (calc + apps are also live in the real daemon).
+- **Next step:** L4 UI on `--mock` (merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab), then the one-step live deploy so the 24 h zero-orphan check of L3 can run. Open: open question 2 (HTML restore) before L4 wires `clip_paste`; the L0.5 password-manager copy.
 
 ### Phase 8 map
 
@@ -21,8 +21,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | L1 | proto v2, `state.sqlite`, mock, v2 transcripts | ✅ this session |
 | L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | ✅ this session |
 | L2c | calculator: fend-core wrapper, gate/reject rules, 146-row table, false-positive corpus | ✅ |
-| L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | next |
-| L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | after L2/L2c (can start on `--mock` now) |
+| L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | ✅ 2026-10-15 (live script + budgets pass); the 24 h zero-orphan check waits for the live deploy |
+| L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | next (on `--mock`) |
 | L5 | setup prompts, doctor rows, F-C1..F-C5, PKGBUILD | after L3/L4 |
 | L6 | extras: Omarchy commands → window switcher → clipboard OCR | backlog |
 | 8U | upstream 0.6.1 parity U1–U12 | U1 first; independent of L* |
@@ -129,6 +129,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 ## Open questions for the human
 
 1. **L0.5 leftover:** copy one test password from Chrome's password manager (or whatever manager is used) with the metadata logger running, to see whether it marks itself sensitive.
+2. **HTML entries pasted into plain-text targets paste markup.** `wl-copy --type text/html` serves the same HTML bytes for `text/plain`/`UTF8_STRING` too (L0.6), so `clip_paste` mode `paste` of an `html` entry into a terminal or plain field inserts `<p><b>…`. Options: (a) approve `wl-clipboard-rs` to offer `text/html` + real `text/plain` in one selection (Raycast-like rich paste); (b) make `paste` restore HTML entries as plain text and keep rich HTML for an explicit "Paste formatted" action; (c) pick by the focused window's class (terminal → plain), a heuristic. Recommendation: (b) now, (a) later if rich paste is wanted. Currently implemented as the plan says (rich HTML in `paste`, text in `plain`).
 
 Resolved 2026-10-15: `wl-clipboard-rs` is **not needed** (L0.3: a single `text/uri-list` offer pastes files into Chromium, Nautilus and Strata).
 
@@ -167,6 +168,45 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-15 — L3 clipboard engine
+
+Human: go ahead with the clipboard engine.
+
+- `troweld/src/clip/`: `classify.rs` (link/color/code/text; colors → hex incl. `oklch()`), `ingest.rs` (offer choice per L0.2, URI-list decode, UTF-16 BOM, image header sizes, previews, HTML tag strip, 256 KiB body cap + `txt` blob), `store.rs` (upsert/bump, query FTS AND-prefix + literal preview substring, pin/delete/clear, retention by age/count/blob bytes sparing pins, refcounted blobs written tmp+rename, GC healing refcounts and deleting orphan files), `thumbs.rs` (libvips `@64/132/264`), `watch.rs` (supervised `wl-paste --watch trowel clip-capture`, PDEATHSIG, backoff, stopped while paused/off, peer-pid ancestry check), `import.rs` (Omarchy JSON), `mod.rs` (restore per kind, coalesced `clipboard` events ≤ 4/s).
+- Engine: all clip ops served, `clipboard` + `calc` capabilities, `clip_import` op (new; PROTOCOL updated), clipboard doctor row, hourly GC thread, 1 s self-copy suppression after `clip_paste`. Queries on a machine with no history never create `state.sqlite`.
+- State schema 3: `clip_entries.seq` for recency (found by the daemon test: same-second re-copies didn't reorder). `[clipboard]` config section with defaults (old config files load).
+- CLI: hidden `trowel clip-capture`; `trowel clip list|get|paste|pin|delete|clear|pause|resume|import-omarchy|bench`.
+- `actions::copy_as(mime, bytes|file)` (one type per `wl-copy`); `PASTE_DELAY` comment cites L0.4.
+- Tests: 25 clip unit tests (classifier table, store, retention, GC crash-orphan, import, events, spool check), state v2→v3 migration, `tests/clipboard.rs` (2 daemon tests with stub `wl-paste`/`hyprctl`/`wl-copy`/`wtype`: capture of text/image/files/html/color/link, dedup bump, sensitive + KDE hint + excluded app skipped, forged `clip_ingest` refused, byte-identical restore, uri-list restore + Shift+Insert, plain drops HTML, self-copy ignored, pause stops the watcher and resume restarts it, pin/delete/clear with blob release, spool emptied, events; capture off + import). `v2-clipboard.jsonl` gains `clip_import`.
+
+Evidence:
+
+```
+$ cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+$ cargo test --workspace   # all green: troweld lib 89, clipboard 2, daemon 18, proto_replay 3, calc 6, …
+$ target/release/trowel clip bench
+{"entries":1000,"query_ms":{"p50":0.3825,"p95":0.6589,"runs":300},"image_bytes":8388608,"ingest_ms":8.35,"pass":true,…}
+$ target/release/trowel clip bench --image <18.5 MB real PNG>
+{"image_bytes":18468537,"ingest_ms":18.21,"query_ms":{"p95":0.6593},"pass":true,…}
+$ scripts/clip-live.sh      # scratch daemon on the real compositor (4 runs; last run shown)
+text id=2 visible after 119 ms
+png id=3 visible after 149 ms
+file id=4 visible after 115 ms
+html id=5 visible after 110 ms
+png thumbnail 37x23 uchar, 3 bands, srgb, pngload
+roundtrip image/png ok
+roundtrip text/plain ok
+roundtrip text/uri-list ok
+html entry kind=html
+PASS
+```
+
+- Found: a bare `wl-copy` spends ~150 ms in `xdg-mime` sniffing (first live runs showed text at 270–298 ms; with `--type` 100–142 ms). The daemon always passes `--type`.
+- The live script overwrote the clipboard (cleared at the end) and its four test copies also went into Omarchy's own history.
+- Not done: the 24 h zero-orphan acceptance (needs the live deploy); doctor row exists only in the daemon's `doctor` op (CLI `trowel doctor` runs out of process); HTML restore (open question 2); L5 setup prompts (Super+Ctrl+V takeover, disabling `omarchy.clipboard`, offering the import).
+
+**Next step:** L4 UI on `--mock`.
 
 ### 2026-10-15 — L0.2–L0.5 spikes
 

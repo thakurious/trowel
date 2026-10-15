@@ -34,25 +34,44 @@ pub(crate) fn spawn_reaped(cmd: &mut Command) {
     }
 }
 
-/// Puts plain text on the clipboard (D21). `wl-copy` forks a server that keeps the selection, so
-/// the parent exits once the text is handed over.
+/// What `copy_as` hands to `wl-copy`.
+pub enum ClipSource {
+    Bytes(Vec<u8>),
+    File(PathBuf),
+}
+
+/// Puts plain text on the clipboard (D21).
 pub fn copy_text(text: &str) -> io::Result<()> {
+    copy_as(
+        "text/plain;charset=utf-8",
+        ClipSource::Bytes(text.as_bytes().to_vec()),
+    )
+}
+
+/// `wl-copy --type <mime>` with the bytes on stdin. `wl-copy` forks a server that keeps the
+/// selection, so the parent exits once the data is handed over. One type per offer: L0.3 showed a
+/// single `text/uri-list` is enough for files, so no `wl-clipboard-rs`.
+pub fn copy_as(mime: &str, source: ClipSource) -> io::Result<()> {
     if !which("wl-copy") {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
             "wl-copy is not installed",
         ));
     }
-    let mut child = Command::new("wl-copy")
-        .args(["--type", "text/plain;charset=utf-8"])
-        .stdin(Stdio::piped())
+    let mut cmd = Command::new("wl-copy");
+    cmd.args(["--type", mime])
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(text.as_bytes())?;
-    }
-    let status = child.wait()?;
+        .stderr(Stdio::null());
+    let status = match source {
+        ClipSource::Bytes(bytes) => {
+            let mut child = cmd.stdin(Stdio::piped()).spawn()?;
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(&bytes)?;
+            }
+            child.wait()?
+        }
+        ClipSource::File(path) => cmd.stdin(Stdio::from(File::open(path)?)).status()?,
+    };
     if status.success() {
         Ok(())
     } else {
@@ -61,7 +80,9 @@ pub fn copy_text(text: &str) -> io::Result<()> {
 }
 
 /// Omarchy's paste: `wtype -M shift -k Insert -m shift` after the panel has unmapped
-/// (`LAUNCHER-PLAN.md` §0). The 150 ms is Omarchy's; L0.4 has not measured it on this machine yet.
+/// (`LAUNCHER-PLAN.md` §0). The 150 ms is Omarchy's. L0.4 (2026-10-15) measured it here: 48/48
+/// pastes landed at ≥ 25 ms in Ghostty, Chromium, GTK4 and Qt6, and the panel's layer was gone by
+/// 162 ms after `toggle` at worst, so 150 ms after the UI hides holds.
 pub const PASTE_DELAY: Duration = Duration::from_millis(150);
 
 /// Sends the paste keystroke to whatever window has focus once the delay has passed.

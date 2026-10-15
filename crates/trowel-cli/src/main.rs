@@ -1,6 +1,7 @@
 mod apps_cmd;
 mod autostart;
 mod calc_cmd;
+mod clip_cmd;
 mod debug_ui;
 mod index_service;
 mod parity;
@@ -147,6 +148,14 @@ enum Commands {
         #[arg(long)]
         quiet: bool,
     },
+    /// Clipboard history kept by the daemon (Phase 8 L3).
+    Clip {
+        #[command(subcommand)]
+        action: ClipCmd,
+    },
+    /// Run by the daemon's `wl-paste --watch`: hands the new selection to troweld.
+    #[command(hide = true)]
+    ClipCapture,
     /// What's in the index.
     Status {
         #[arg(long)]
@@ -239,6 +248,62 @@ enum Commands {
         purge: bool,
         #[arg(long)]
         no_enable: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClipCmd {
+    /// Newest first (pinned on top); an optional search.
+    List {
+        query: Option<String>,
+        /// text, link, color, code, image, files, html (repeatable).
+        #[arg(long = "kind")]
+        kinds: Vec<String>,
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// An entry's full content.
+    Get {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Put an entry back on the clipboard (`paste` also sends Shift+Insert).
+    Paste {
+        id: i64,
+        #[arg(long, default_value = "copy", value_parser = ["copy", "paste", "plain"])]
+        mode: String,
+    },
+    Pin {
+        id: i64,
+        /// Unpin.
+        #[arg(long)]
+        off: bool,
+    },
+    Delete {
+        id: i64,
+    },
+    /// Remove entries (pinned ones stay unless --all).
+    Clear {
+        #[arg(long)]
+        all: bool,
+    },
+    /// Stop capturing (incognito), for MINUTES or until `resume`.
+    Pause {
+        minutes: Option<u32>,
+    },
+    Resume,
+    /// Copy Omarchy's clipboard history in (its files are left alone).
+    ImportOmarchy,
+    /// L3 budgets on a scratch store: query p95 over N entries, one large image ingest.
+    Bench {
+        #[arg(long, default_value_t = 1000)]
+        entries: u32,
+        /// A real screenshot to ingest (default: 8 MB of synthetic PNG).
+        #[arg(long)]
+        image: Option<PathBuf>,
     },
 }
 
@@ -443,6 +508,29 @@ fn main() {
             corpus,
             quiet,
         } => std::process::exit(calc_cmd::run(text, force, json, bench, corpus, quiet)),
+        Commands::ClipCapture => std::process::exit(clip_cmd::capture()),
+        Commands::Clip { action } => std::process::exit(clip_cmd::run(match action {
+            ClipCmd::List {
+                query,
+                kinds,
+                limit,
+                json,
+            } => clip_cmd::ClipAction::List {
+                query,
+                kinds,
+                limit,
+                json,
+            },
+            ClipCmd::Get { id, json } => clip_cmd::ClipAction::Get { id, json },
+            ClipCmd::Paste { id, mode } => clip_cmd::ClipAction::Paste { id, mode },
+            ClipCmd::Pin { id, off } => clip_cmd::ClipAction::Pin { id, off },
+            ClipCmd::Delete { id } => clip_cmd::ClipAction::Delete { id },
+            ClipCmd::Clear { all } => clip_cmd::ClipAction::Clear { all },
+            ClipCmd::Pause { minutes } => clip_cmd::ClipAction::Pause { minutes },
+            ClipCmd::Resume => clip_cmd::ClipAction::Resume,
+            ClipCmd::ImportOmarchy => clip_cmd::ClipAction::ImportOmarchy,
+            ClipCmd::Bench { entries, image } => clip_cmd::ClipAction::Bench { entries, image },
+        })),
         Commands::Status { index, code, json } => {
             if let Err(err) = cmd_status(index.unwrap_or_else(default_index_dir), code, json) {
                 eprintln!("{err}");

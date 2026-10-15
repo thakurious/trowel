@@ -18,11 +18,48 @@ pub struct Config {
     pub code_editor: String,
     pub code_quiet_seconds: u64,
     pub ui: UiConfig,
+    /// `[clipboard]` (Phase 8 L3). Absent in older files, so it defaults.
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiConfig {
     pub reduce_motion: bool,
+}
+
+/// Clipboard history (D20, `LAUNCHER-PLAN.md` L3).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipboardConfig {
+    /// Run the `wl-paste --watch` capture.
+    pub capture: bool,
+    pub max_entries: u32,
+    pub max_age_days: u32,
+    pub max_blob_mb: u64,
+    /// Largest single entry kept (`clip_max_bytes`).
+    pub max_entry_mb: u64,
+    /// Hyprland window classes never captured (case-insensitive).
+    pub excluded_apps: Vec<String>,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            capture: true,
+            max_entries: 1000,
+            max_age_days: 30,
+            max_blob_mb: 512,
+            max_entry_mb: 64,
+            excluded_apps: vec![
+                "1password".into(),
+                "bitwarden".into(),
+                "com.bitwarden.desktop".into(),
+                "keepassxc".into(),
+                "org.keepassxc.keepassxc".into(),
+            ],
+        }
+    }
 }
 
 impl Default for Config {
@@ -49,6 +86,7 @@ impl Default for Config {
             ui: UiConfig {
                 reduce_motion: false,
             },
+            clipboard: ClipboardConfig::default(),
         }
     }
 }

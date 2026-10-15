@@ -24,6 +24,26 @@ impl PathValue {
         }
     }
 
+    pub fn from_path(path: &std::path::Path) -> Self {
+        use std::os::unix::ffi::OsStrExt;
+        Self::from_bytes(path.as_os_str().as_bytes())
+    }
+
+    /// The raw path back (a `b64` that doesn't decode falls back to `display`).
+    pub fn to_path_buf(&self) -> std::path::PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+        match self {
+            Self::Utf8(s) => s.into(),
+            Self::Raw { b64, display } => {
+                use base64::Engine as _;
+                match base64::engine::general_purpose::STANDARD.decode(b64) {
+                    Ok(bytes) => std::ffi::OsString::from_vec(bytes).into(),
+                    Err(_) => display.into(),
+                }
+            }
+        }
+    }
+
     pub fn display(&self) -> &str {
         match self {
             Self::Utf8(s) => s,
@@ -51,5 +71,10 @@ mod tests {
         assert_eq!(json["display"].as_str().unwrap(), "/tmp/notes\u{FFFD}.txt");
         let back: PathValue = serde_json::from_value(json).unwrap();
         assert_eq!(back, v);
+        use std::os::unix::ffi::OsStrExt;
+        assert_eq!(
+            back.to_path_buf().as_os_str().as_bytes(),
+            b"/tmp/notes\xff.txt"
+        );
     }
 }

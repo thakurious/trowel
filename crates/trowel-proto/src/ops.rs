@@ -173,6 +173,11 @@ pub enum Op {
         #[serde(default)]
         source_app: Option<String>,
     },
+    /// Copies Omarchy's clipboard history into Trowel's (D20). Existing entries are left alone.
+    ClipImport {
+        #[serde(default = "omarchy")]
+        source: String,
+    },
     /// Supersedes the connection's older `calc`.
     Calc {
         text: String,
@@ -208,6 +213,10 @@ fn default_clip_limit() -> u32 {
 
 fn default_calc_history_limit() -> u32 {
     20
+}
+
+fn omarchy() -> String {
+    "omarchy".into()
 }
 
 fn yes() -> bool {
@@ -251,6 +260,7 @@ pub const KNOWN_OPS: &[&str] = &[
     "clip_clear",
     "clip_pause",
     "clip_ingest",
+    "clip_import",
     "calc",
     "calc_history",
     "calc_copy",
@@ -272,6 +282,7 @@ impl Op {
                 | Self::ClipClear { .. }
                 | Self::ClipPause { .. }
                 | Self::ClipIngest { .. }
+                | Self::ClipImport { .. }
                 | Self::Calc { .. }
                 | Self::CalcHistory { .. }
                 | Self::CalcCopy { .. }
@@ -315,6 +326,7 @@ impl Op {
             Self::ClipClear { .. } => "clip_clear",
             Self::ClipPause { .. } => "clip_pause",
             Self::ClipIngest { .. } => "clip_ingest",
+            Self::ClipImport { .. } => "clip_import",
             Self::Calc { .. } => "calc",
             Self::CalcHistory { .. } => "calc_history",
             Self::CalcCopy { .. } => "calc_copy",

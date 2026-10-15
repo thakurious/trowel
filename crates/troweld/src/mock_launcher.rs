@@ -165,6 +165,8 @@ impl LauncherMock {
                 ErrorCode::BadRequest,
                 "clip_ingest is only accepted from trowel clip-capture".into(),
             )),
+            // The mock has no Omarchy history to read.
+            Op::ClipImport { .. } => Ok(json!({"imported": 0, "skipped": 0})),
             Op::Calc { text, force, gen } => Ok(json!(self.calc(&text, force, gen))),
             Op::CalcHistory { limit } => {
                 let rows: Vec<_> = self
