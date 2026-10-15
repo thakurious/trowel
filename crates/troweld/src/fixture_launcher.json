@@ -1,0 +1,633 @@
+{
+ "apps": [
+  {
+   "id": "firefox",
+   "name": "Firefox",
+   "generic": "Web Browser",
+   "comment": "Browse the World Wide Web",
+   "icon_name": "firefox",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "new-window",
+     "name": "New Window"
+    },
+    {
+     "id": "new-private-window",
+     "name": "New Private Window"
+    }
+   ],
+   "source": "/usr/share/applications/firefox.desktop",
+   "launches": 14,
+   "last_launched": 1791869000
+  },
+  {
+   "id": "chromium",
+   "name": "Chromium",
+   "generic": "Web Browser",
+   "comment": "Access the Internet",
+   "icon_name": "chromium",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "new-window",
+     "name": "New Window"
+    },
+    {
+     "id": "new-private-window",
+     "name": "New Incognito Window"
+    }
+   ],
+   "source": "/usr/share/applications/chromium.desktop",
+   "launches": 3,
+   "last_launched": 1791700000
+  },
+  {
+   "id": "google-chrome",
+   "name": "Google Chrome",
+   "generic": "Web Browser",
+   "comment": "Access the Internet",
+   "icon_name": "google-chrome",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "new-window",
+     "name": "New Window"
+    },
+    {
+     "id": "new-private-window",
+     "name": "New Incognito Window"
+    }
+   ],
+   "source": "/usr/share/applications/google-chrome.desktop",
+   "launches": 41,
+   "last_launched": 1791868000
+  },
+  {
+   "id": "org.gnome.Nautilus",
+   "name": "Files",
+   "generic": "File Manager",
+   "comment": "Access and organize files",
+   "icon_name": "nautilus",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "new-window",
+     "name": "New Window"
+    }
+   ],
+   "source": "/usr/share/applications/org.gnome.Nautilus.desktop",
+   "launches": 22,
+   "last_launched": 1791860000
+  },
+  {
+   "id": "com.mitchellh.ghostty",
+   "name": "Ghostty",
+   "generic": "Terminal Emulator",
+   "comment": "A terminal emulator",
+   "icon_name": "ghostty",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "new-window",
+     "name": "New Window"
+    }
+   ],
+   "source": "/usr/share/applications/com.mitchellh.ghostty.desktop",
+   "launches": 57,
+   "last_launched": 1791869300
+  },
+  {
+   "id": "Alacritty",
+   "name": "Alacritty",
+   "generic": "Terminal",
+   "comment": "A fast, cross-platform, OpenGL terminal emulator",
+   "icon_name": "alacritty",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "New",
+     "name": "New Terminal"
+    }
+   ],
+   "source": "/usr/share/applications/Alacritty.desktop",
+   "launches": 5,
+   "last_launched": 1791500000
+  },
+  {
+   "id": "nvim",
+   "name": "Neovim",
+   "generic": "Text Editor",
+   "comment": "Edit text files",
+   "icon_name": "nvim",
+   "terminal": true,
+   "actions": [],
+   "source": "/usr/share/applications/nvim.desktop",
+   "launches": 9,
+   "last_launched": 1791800000
+  },
+  {
+   "id": "code",
+   "name": "Visual Studio Code",
+   "generic": "Text Editor",
+   "comment": "Code Editing. Redefined.",
+   "icon_name": "code",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "new-empty-window",
+     "name": "New Empty Window"
+    }
+   ],
+   "source": "/usr/share/applications/code.desktop",
+   "launches": 0
+  },
+  {
+   "id": "org.gnome.Calculator",
+   "name": "Calculator",
+   "generic": "Calculator",
+   "comment": "Perform arithmetic, scientific or financial calculations",
+   "icon_name": "calculator",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/org.gnome.Calculator.desktop",
+   "launches": 2,
+   "last_launched": 1791000000
+  },
+  {
+   "id": "omacalc",
+   "name": "Omacalc",
+   "generic": "Calculator",
+   "comment": "Dead-simple calculator",
+   "icon_name": "omacalc",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/omacalc.desktop",
+   "launches": 0
+  },
+  {
+   "id": "btop",
+   "name": "btop++",
+   "generic": "System Monitor",
+   "comment": "Resource monitor that shows usage and stats",
+   "icon_name": "btop",
+   "terminal": true,
+   "actions": [],
+   "source": "/usr/share/applications/btop.desktop",
+   "launches": 4,
+   "last_launched": 1791600000
+  },
+  {
+   "id": "org.gnome.Evince",
+   "name": "Document Viewer",
+   "generic": "Document Viewer",
+   "comment": "View multi-page documents",
+   "icon_name": "evince",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/org.gnome.Evince.desktop",
+   "launches": 6,
+   "last_launched": 1791650000
+  },
+  {
+   "id": "mpv",
+   "name": "mpv Media Player",
+   "generic": "Multimedia player",
+   "comment": "Play movies and songs",
+   "icon_name": "mpv",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/mpv.desktop",
+   "launches": 8,
+   "last_launched": 1791750000
+  },
+  {
+   "id": "imv",
+   "name": "imv",
+   "generic": "Image Viewer",
+   "comment": "Image viewer for X11 and Wayland",
+   "icon_name": "imv",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/imv.desktop",
+   "launches": 3,
+   "last_launched": 1791720000
+  },
+  {
+   "id": "libreoffice-writer",
+   "name": "LibreOffice Writer",
+   "generic": "Word Processor",
+   "comment": "Create and edit text and graphics in letters, reports, documents and Web pages",
+   "icon_name": "libreoffice-writer",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/libreoffice-writer.desktop",
+   "launches": 1,
+   "last_launched": 1790000000
+  },
+  {
+   "id": "libreoffice-calc",
+   "name": "LibreOffice Calc",
+   "generic": "Spreadsheet",
+   "comment": "Perform calculations, analyze information and manage lists in spreadsheets",
+   "icon_name": "libreoffice-calc",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/libreoffice-calc.desktop",
+   "launches": 1,
+   "last_launched": 1790100000
+  },
+  {
+   "id": "libreoffice-impress",
+   "name": "LibreOffice Impress",
+   "generic": "Presentation",
+   "comment": "Create and edit presentations for slideshows, meetings and Web pages",
+   "icon_name": "libreoffice-impress",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/libreoffice-impress.desktop",
+   "launches": 0
+  },
+  {
+   "id": "signal",
+   "name": "Signal",
+   "generic": "Messenger",
+   "comment": "Private messenger",
+   "icon_name": "signal",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/signal.desktop",
+   "launches": 12,
+   "last_launched": 1791860500
+  },
+  {
+   "id": "org.telegram.desktop",
+   "name": "Telegram",
+   "generic": "Messenger",
+   "comment": "Official desktop version of Telegram messaging app",
+   "icon_name": "desktop",
+   "terminal": false,
+   "actions": [
+    {
+     "id": "quit",
+     "name": "Quit Telegram"
+    }
+   ],
+   "source": "/usr/share/applications/org.telegram.desktop.desktop",
+   "launches": 7,
+   "last_launched": 1791840000
+  },
+  {
+   "id": "Slack",
+   "name": "Slack",
+   "generic": "Messenger",
+   "comment": "Slack Desktop",
+   "icon_name": "slack",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/Slack.desktop",
+   "launches": 30,
+   "last_launched": 1791869200
+  },
+  {
+   "id": "spotify",
+   "name": "Spotify",
+   "generic": "Music Player",
+   "comment": "Play music from Spotify",
+   "icon_name": "spotify",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/spotify.desktop",
+   "launches": 18,
+   "last_launched": 1791855000
+  },
+  {
+   "id": "obsidian",
+   "name": "Obsidian",
+   "generic": "Notes",
+   "comment": "Obsidian",
+   "icon_name": "obsidian",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/obsidian.desktop",
+   "launches": 11,
+   "last_launched": 1791830000
+  },
+  {
+   "id": "1password",
+   "name": "1Password",
+   "generic": "Password Manager",
+   "comment": "Password manager and secure wallet",
+   "icon_name": "1password",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/1password.desktop",
+   "launches": 5,
+   "last_launched": 1791810000
+  },
+  {
+   "id": "org.pulseaudio.pavucontrol",
+   "name": "Volume Control",
+   "generic": "Volume Control",
+   "comment": "Adjust the volume level",
+   "icon_name": "pavucontrol",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/org.pulseaudio.pavucontrol.desktop",
+   "launches": 2,
+   "last_launched": 1791400000
+  },
+  {
+   "id": "blueberry",
+   "name": "Bluetooth",
+   "generic": "Bluetooth",
+   "comment": "Configure Bluetooth settings",
+   "icon_name": "blueberry",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/blueberry.desktop",
+   "launches": 1,
+   "last_launched": 1791300000
+  },
+  {
+   "id": "typora",
+   "name": "Typora",
+   "generic": "Markdown Editor",
+   "comment": "A minimal Markdown editor",
+   "icon_name": "typora",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/typora.desktop",
+   "launches": 0
+  },
+  {
+   "id": "org.kde.kdenlive",
+   "name": "Kdenlive",
+   "generic": "Video Editor",
+   "comment": "Nonlinear video editor by KDE",
+   "icon_name": "kdenlive",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/org.kde.kdenlive.desktop",
+   "launches": 0
+  },
+  {
+   "id": "gimp",
+   "name": "GNU Image Manipulation Program",
+   "generic": "Image Editor",
+   "comment": "Create images and edit photographs",
+   "icon_name": "gimp",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/gimp.desktop",
+   "launches": 2,
+   "last_launched": 1791200000
+  },
+  {
+   "id": "xournalpp",
+   "name": "Xournal++",
+   "generic": "Notetaking",
+   "comment": "Take handwritten notes",
+   "icon_name": "xournalpp",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/xournalpp.desktop",
+   "launches": 0
+  },
+  {
+   "id": "localsend",
+   "name": "LocalSend",
+   "generic": "File Transfer",
+   "comment": "Share files to nearby devices",
+   "icon_name": "localsend",
+   "terminal": false,
+   "actions": [],
+   "source": "/usr/share/applications/localsend.desktop",
+   "launches": 3,
+   "last_launched": 1791100000
+  }
+ ],
+ "clips": [
+  {
+   "id": 812,
+   "kind": "text",
+   "preview": "firewall rules for the staging cluster, see ticket",
+   "mimes": [
+    "text/plain;charset=utf-8",
+    "text/plain"
+   ],
+   "bytes": 52,
+   "source_app": "Slack",
+   "created": 1791869354,
+   "last_used": 1791869354,
+   "uses": 1,
+   "pinned": false
+  },
+  {
+   "id": 811,
+   "kind": "link",
+   "preview": "https://github.com/thakurious/trowel/pull/7",
+   "mimes": [
+    "text/plain"
+   ],
+   "bytes": 43,
+   "domain": "github.com",
+   "source_app": "google-chrome",
+   "created": 1791869200,
+   "last_used": 1791869300,
+   "uses": 3,
+   "pinned": false
+  },
+  {
+   "id": 810,
+   "kind": "color",
+   "preview": "#F2A22A",
+   "mimes": [
+    "text/plain"
+   ],
+   "bytes": 7,
+   "color": "#F2A22A",
+   "source_app": "gimp",
+   "created": 1791869100,
+   "last_used": 1791869100,
+   "uses": 1,
+   "pinned": false
+  },
+  {
+   "id": 809,
+   "kind": "code",
+   "preview": "fn main() { println!(\"hello\"); }",
+   "mimes": [
+    "text/plain"
+   ],
+   "bytes": 34,
+   "source_app": "com.mitchellh.ghostty",
+   "created": 1791869000,
+   "last_used": 1791869000,
+   "uses": 1,
+   "pinned": false
+  },
+  {
+   "id": 808,
+   "kind": "image",
+   "preview": "Screenshot 1920×1200",
+   "mimes": [
+    "image/png"
+   ],
+   "bytes": 812345,
+   "thumb": "/tmp/trowel-mock/clip-808@132.png",
+   "source_app": "Hyprland",
+   "created": 1791868900,
+   "last_used": 1791868900,
+   "uses": 1,
+   "pinned": true
+  },
+  {
+   "id": 807,
+   "kind": "files",
+   "preview": "invoice-2026-09.pdf, receipt.png",
+   "mimes": [
+    "text/uri-list",
+    "x-special/gnome-copied-files"
+   ],
+   "bytes": 96,
+   "files": 2,
+   "source_app": "org.gnome.Nautilus",
+   "created": 1791868800,
+   "last_used": 1791868800,
+   "uses": 1,
+   "pinned": false
+  },
+  {
+   "id": 806,
+   "kind": "html",
+   "preview": "Refund policy: items may be returned within 30 days",
+   "mimes": [
+    "text/html",
+    "text/plain"
+   ],
+   "bytes": 1824,
+   "domain": "example.com",
+   "source_app": "google-chrome",
+   "created": 1791868700,
+   "last_used": 1791868700,
+   "uses": 2,
+   "pinned": true
+  }
+ ],
+ "clip_content": {
+  "812": {
+   "text": "firewall rules for the staging cluster, see ticket"
+  },
+  "811": {
+   "text": "https://github.com/thakurious/trowel/pull/7"
+  },
+  "810": {
+   "text": "#F2A22A"
+  },
+  "809": {
+   "text": "fn main() {\n    println!(\"hello\");\n}\n"
+  },
+  "808": {
+   "image": {
+    "file": "/tmp/trowel-mock/clip-808.png",
+    "w": 1920,
+    "h": 1200
+   }
+  },
+  "807": {
+   "files": [
+    "/home/u/Documents/invoice-2026-09.pdf",
+    "/home/u/Pictures/receipt.png"
+   ]
+  },
+  "806": {
+   "html": "<p><b>Refund policy</b>: items may be returned within 30 days</p>",
+   "text": "Refund policy: items may be returned within 30 days"
+  }
+ },
+ "calcs": [
+  {
+   "expr": "5 ft to cm",
+   "pretty_expr": "5 ft to cm",
+   "display": "152.4 cm",
+   "copy": "152.4",
+   "kind": "unit",
+   "approx": false,
+   "alts": [],
+   "unit": "cm"
+  },
+  {
+   "expr": "1920*1.25 + 15%",
+   "pretty_expr": "1920 × 1.25 + 15%",
+   "display": "2,760",
+   "copy": "2760",
+   "kind": "number",
+   "approx": false,
+   "alts": [
+    {
+     "label": "Hex",
+     "copy": "0xac8"
+    }
+   ]
+  },
+  {
+   "expr": "0xff",
+   "pretty_expr": "0xff",
+   "display": "255",
+   "copy": "255",
+   "kind": "base",
+   "approx": false,
+   "alts": [
+    {
+     "label": "Binary",
+     "copy": "0b11111111"
+    },
+    {
+     "label": "Hex",
+     "copy": "0xff"
+    }
+   ]
+  },
+  {
+   "expr": "10/3",
+   "pretty_expr": "10 ÷ 3",
+   "display": "3.3333333333",
+   "copy": "3.3333333333",
+   "kind": "number",
+   "approx": true,
+   "alts": []
+  },
+  {
+   "expr": "90 min to hours",
+   "pretty_expr": "90 min to hours",
+   "display": "1.5 hours",
+   "copy": "1.5",
+   "kind": "duration",
+   "approx": false,
+   "alts": [],
+   "unit": "hours"
+  },
+  {
+   "expr": "2^64",
+   "pretty_expr": "2^64",
+   "display": "18,446,744,073,709,551,616",
+   "copy": "18446744073709551616",
+   "kind": "number",
+   "approx": false,
+   "alts": []
+  }
+ ],
+ "calc_history": [
+  {
+   "expr": "1920*1.25",
+   "result": "2400",
+   "at": 1791860000
+  },
+  {
+   "expr": "5 ft to cm",
+   "result": "152.4",
+   "at": 1791850000
+  }
+ ]
+}

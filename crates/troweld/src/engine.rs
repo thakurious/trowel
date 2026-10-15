@@ -1,4 +1,4 @@
-//! Real PROTOCOL v1 daemon. Owns the Searcher; watches folders; speaks the socket.
+//! Real PROTOCOL daemon. Owns the Searcher; watches folders; speaks the socket.
 
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -744,6 +744,14 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err.to_string()),
         },
+        // Protocol v2 ops whose engines land in L2 (apps), L2c (calc) and L3 (clipboard).
+        // `hello` does not advertise `apps`/`clipboard` until then.
+        op => reply_error(
+            conn,
+            Some(id),
+            ErrorCode::NotReady,
+            format!("{} is not available in this build", op.name()),
+        ),
     }
 }
 

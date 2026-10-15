@@ -1,6 +1,6 @@
 {"server": {"latency_ms": 200}}
-{"send": {"id": 1, "op": "hello", "protocol": 1, "client": "panel", "pid": 1}}
-{"recv": {"id": 1, "ok": true, "protocol": 1, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr"], "state": "ready"}}
+{"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard"], "state": "ready"}}
 {"send": {"id": 2, "op": "search", "text": "refund", "mode": "keyword", "gen": 1}}
 {"send": {"id": 3, "op": "cancel", "target_id": 2}}
 {"recv": {"id": 2, "ok": false, "error": {"code": "cancelled", "message": "cancelled"}}}

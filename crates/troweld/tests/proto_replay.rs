@@ -198,7 +198,7 @@ fn slow_reader_keeps_responses() {
     let mut stream = connect(&mock);
     send(
         &mut stream,
-        &serde_json::json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &serde_json::json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,

@@ -79,7 +79,7 @@ pub fn ui_trace(socket: PathBuf, as_json: bool) -> Result<(), String> {
     let (hello, d) = roundtrip(
         &mut stream,
         &mut reader,
-        json!({"id":1,"op":"hello","protocol":1,"client":"ui-trace","pid":0}),
+        json!({"id":1,"op":"hello","protocol":2,"client":"ui-trace","pid":0}),
     )?;
     if hello["ok"] != true {
         return Err(format!("hello failed: {hello}"));
@@ -169,7 +169,7 @@ pub fn snapshot(socket: PathBuf, surface: &str, state: &str, out: PathBuf) -> Re
     let _ = roundtrip(
         &mut stream,
         &mut reader,
-        json!({"id":1,"op":"hello","protocol":1,"client":"snapshot","pid":0}),
+        json!({"id":1,"op":"hello","protocol":2,"client":"snapshot","pid":0}),
     )?;
     let query = match (surface, state) {
         ("panel", "empty") | ("app", "home") => "",

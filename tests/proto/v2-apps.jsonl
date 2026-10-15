@@ -1,0 +1,14 @@
+{"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard"], "state": "ready"}}
+{"send": {"id": 2, "op": "apps_query", "text": "fire", "limit": 1, "gen": 1}}
+{"recv": {"id": 2, "ok": true, "gen": 1, "rows": [{"id": "firefox", "name": "Firefox", "generic": "Web Browser", "comment": "Browse the World Wide Web", "icon_name": "firefox", "terminal": false, "actions": [{"id": "new-window", "name": "New Window"}, {"id": "new-private-window", "name": "New Private Window"}], "source": "/usr/share/applications/firefox.desktop", "launches": 14, "last_launched": 1791869000, "matched": [[0, 4]]}]}}
+{"send": {"id": 3, "op": "apps_query", "gen": 2, "limit": 2}}
+{"recv": {"id": 3, "ok": true, "gen": 2, "rows": [{"id": "com.mitchellh.ghostty", "name": "Ghostty", "generic": "Terminal Emulator", "comment": "A terminal emulator", "icon_name": "ghostty", "terminal": false, "actions": [{"id": "new-window", "name": "New Window"}], "source": "/usr/share/applications/com.mitchellh.ghostty.desktop", "launches": 57, "last_launched": 1791869300, "matched": []}, {"id": "google-chrome", "name": "Google Chrome", "generic": "Web Browser", "comment": "Access the Internet", "icon_name": "google-chrome", "terminal": false, "actions": [{"id": "new-window", "name": "New Window"}, {"id": "new-private-window", "name": "New Incognito Window"}], "source": "/usr/share/applications/google-chrome.desktop", "launches": 41, "last_launched": 1791868000, "matched": []}]}}
+{"send": {"id": 4, "op": "app_launch", "app_id": "firefox", "action": "new-private-window"}}
+{"recv": {"id": 4, "ok": true}}
+{"send": {"id": 5, "op": "app_launch", "app_id": "no-such-app"}}
+{"recv": {"id": 5, "ok": false, "error": {"code": "not_found", "message": "*"}}}
+{"send": {"id": 6, "op": "app_hide", "app_id": "firefox", "hidden": true}}
+{"recv": {"id": 6, "ok": true}}
+{"send": {"id": 7, "op": "apps_query", "text": "firefox", "gen": 3}}
+{"recv": {"id": 7, "ok": true, "gen": 3, "rows": []}}

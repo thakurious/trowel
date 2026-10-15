@@ -203,13 +203,16 @@ An opt-in daily exchange-rate fetch is a separate question for the human.
 
 ## 3. Protocol v2 additions (`PROTOCOL.md` §4 gets these tables)
 
+Request params are `app_id` / `clip_id`, not `id`: ops are flattened into the request envelope,
+which already has `id` (found in L1; `PROTOCOL.md` §4 "Launcher" is the contract).
+
 ### Apps
 
 | op | params | result |
 |---|---|---|
 | `apps_query` | `{text, limit=8, gen}` | `{gen, rows:[AppRow]}`. An empty `text` returns frecency order. Supersedes the connection's older `apps_query`, like `search`. |
-| `app_launch` | `{id, action?}` | `{}`. Records a launch for frecency. |
-| `app_hide` | `{id, hidden:bool}` | `{}`. Writes `~/.config/trowel/launcher.hides` (Trowel-owned; Omarchy's file in `$OMARCHY_PATH` is read-only). |
+| `app_launch` | `{app_id, action?}` | `{}`. Records a launch for frecency. |
+| `app_hide` | `{app_id, hidden:bool}` | `{}`. Writes `~/.config/trowel/launcher.hides` (Trowel-owned; Omarchy's file in `$OMARCHY_PATH` is read-only). |
 
 ```jsonc
 // AppRow
@@ -226,9 +229,9 @@ An opt-in daily exchange-rate fetch is a separate question for the human.
 | op | params | result |
 |---|---|---|
 | `clip_query` | `{text, kinds?, limit=50, offset=0, gen}` | `{gen, rows:[ClipRow], total}` |
-| `clip_get` | `{id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}}` with the full content for the preview (text capped at 256 KiB, `truncated:true`). |
-| `clip_paste` | `{id, mode:"paste"\|"copy"\|"plain"}` | `{}`. The UI must already have hidden the panel. |
-| `clip_pin` / `clip_delete` | `{id, …}` | `{}` |
+| `clip_get` | `{clip_id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}}` with the full content for the preview (text capped at 256 KiB, `truncated:true`). |
+| `clip_paste` | `{clip_id, mode:"paste"\|"copy"\|"plain"}` | `{}`. The UI must already have hidden the panel. |
+| `clip_pin` / `clip_delete` | `{clip_id, pinned?}` | `{}` |
 | `clip_clear` | `{keep_pinned=true}` | `{removed}` |
 | `clip_pause` | `{minutes?}` (`0` resumes) | `{paused_until}` (incognito mode, shown in the bar widget) |
 | *event* `clipboard` | — | Topic `"clipboard"` on `subscribe`: `{added?:ClipRow, removed?:[id]}`, coalesced ≤ 4/s. |
@@ -262,7 +265,7 @@ An opt-in daily exchange-rate fetch is a separate question for the human.
 ```
 
 Copying and pasting a result go through the same daemon clipboard path as `clip_paste`
-(P-D21). That path is `calc_copy {text, mode:"copy"|"paste"}`.
+(P-D21). That path is `calc_copy {text, expr?, mode:"copy"|"paste"}` (`expr` goes to `calc_history`).
 
 `troweld --mock` gets canned apps (about 30 real-looking entries with icons) , clipboard (all
 seven kinds) and a calculator stub (a handful of fixed expressions), so the UI track can start against the mock before L2 and L3 land, as Phase 6 did.
@@ -313,7 +316,10 @@ plan or doc change before L2.
 - `troweld --mock`: §3 fixtures. Add golden transcripts in `tests/proto/v2_*.jsonl`.
 
 **Acceptance:** `cargo test --workspace` green, `proto_replay` passes v1 **and** v2 transcripts
-against the real daemon and the mock, and a v1 client is refused with the restart message.
+against the mock, the real daemon speaks v2 (`daemon.rs`: v2 hello, v2 ops `not_ready` until L2/L3,
+`apps`/`clipboard` not advertised yet), and a v1 client is refused with the restart message.
+*(Amended in L1: the transcripts have only ever replayed against the mock, since real results
+depend on an index; the real daemon's protocol behavior is tested in `daemon.rs`.)*
 
 ### L2. Application index (engine, 3–4 days)
 

@@ -1,8 +1,12 @@
-# `troweld` socket protocol (v1)
+# `troweld` socket protocol (v2)
 
 The contract between the daemon and every UI surface (Omarchy panel plugin, `trowel-app`, bar widget,
 `trowel` CLI, test clients). **Freeze it at the end of Phase 1** so UI work can proceed against a mock
 daemon while the engine is built (see `EXECUTION-PLAN.md`). Any later change must bump `protocol`.
+
+**v2** (D22, Phase 8 L1) adds the applications, clipboard and calculator ops in §4 "Launcher". Every
+v1 op is unchanged. Plugin, app and daemon ship in one package, so there is no cross-version
+negotiation: a v1 client gets the restart message (§3).
 
 Upstream reference: the app talks to its engine in-process (`Engine.swift`, `AppModel.swift`); this
 protocol is the Linux replacement for that boundary. The *worker* protocol (`ARCHITECTURE.md` §A.7) and
@@ -48,13 +52,16 @@ with upstream.
 The first request on every connection:
 
 ```json
-{"id":1,"op":"hello","protocol":1,"client":"panel","pid":1234}
-→ {"id":1,"ok":true,"protocol":1,"daemon":"0.1.0","capabilities":["code","audio","video","ocr"],
+{"id":1,"op":"hello","protocol":2,"client":"panel","pid":1234}
+→ {"id":1,"ok":true,"protocol":2,"daemon":"0.1.0","capabilities":["code","audio","video","ocr"],
    "state":"ready|onboarding|model_missing|model_downloading"}
 ```
 
 If the protocol versions differ, the daemon answers `ok:false, code:"bad_request"` and the UI shows
 "Trowel was updated, restart it". Do not try to negotiate across versions.
+
+`capabilities` gains `apps` and `clipboard` once the daemon serves them (L2 / L3). Until then the
+v2 ops answer `not_ready`; `troweld --mock` advertises and serves both from canned fixtures.
 
 ## 4. Operations
 
@@ -128,6 +135,53 @@ repeat requests in under 5 ms.
 | `doctor` | `{}` | The same report as `trowel doctor --json` (see `ROBUSTNESS.md`). |
 | `set_hotkey` | `{chord}` | Writes the Hyprland bind (see `UI-DESIGN.md` §8). Returns `{conflict?: "Toggle top bar"}`. |
 
+### Launcher (v2)
+
+`LAUNCHER-PLAN.md` §3 is the design; this is the contract. Request params that name an app or a
+clipboard entry are `app_id` / `clip_id`, because a bare `id` would collide with the envelope's
+request `id` (the op's params are flattened into the envelope).
+
+| op | params | result |
+|---|---|---|
+| `apps_query` | `{text="", limit=8, gen}` | `{gen, rows:[AppRow], took_us?}`. An empty `text` returns frecency order. Supersedes the connection's older `apps_query`. |
+| `app_launch` | `{app_id, action?}` | `{}`. Runs `uwsm-app -- gtk-launch <id>.desktop` (actions: expanded `Exec`) and records a launch for frecency. |
+| `app_hide` | `{app_id, hidden}` | `{}`. Writes `~/.config/trowel/launcher.hides`. |
+| `clip_query` | `{text="", kinds?:[ClipKind], limit=50, offset=0, gen}` | `{gen, rows:[ClipRow], total}`, pinned first, then most recently used. An unknown kind is `bad_request`. |
+| `clip_get` | `{clip_id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}, truncated?}`. Text is capped at 256 KiB. |
+| `clip_paste` | `{clip_id, mode="paste"\|"copy"\|"plain"}` | `{}`. The UI hides the panel first (D21). |
+| `clip_pin` | `{clip_id, pinned}` | `{}` |
+| `clip_delete` | `{clip_id}` | `{}` |
+| `clip_clear` | `{keep_pinned=true}` | `{removed}` |
+| `clip_pause` | `{minutes?}` | `{paused_until}`: a Unix time, `0` = capturing, `-1` = until resumed. `minutes:0` resumes, absent pauses until resumed. |
+| `clip_ingest` | `{types:[mime], offers:[{mime, file}], source_app?}` | Internal: only `trowel clip-capture` (the daemon's own watcher child) may send it; anyone else gets `bad_request`. |
+| `calc` | `{text, force=false, gen}` | `{gen, result?: CalcResult, error?, took_us?}`. No `result` means "not a calculation" (no card). `error` only with `force`. Supersedes the connection's older `calc`. |
+| `calc_history` | `{limit=20}` | `{rows:[{expr, result, at}]}`, newest first. |
+| `calc_copy` | `{text, expr?, mode="paste"\|"copy"}` | `{}`. Same clipboard path as `clip_paste`; `expr` is added to `calc_history`. |
+| *event* `clipboard` | — | Topic `"clipboard"` on `subscribe`: `{added?:ClipRow, removed?:[clip_id]}`, coalesced ≤ 4/s. |
+
+Optional fields are **absent** when empty, never `null`. `ClipKind` is the closed set `text`,
+`link`, `color`, `code`, `image`, `files`, `html`. `CalcResult.kind` is `number`, `unit`, `base`,
+`date` or `duration`.
+
+```jsonc
+// AppRow
+{"id":"firefox","name":"Firefox","generic":"Web Browser","comment":"…",
+ "icon":"/usr/share/icons/hicolor/scalable/apps/firefox.svg", "icon_name":"firefox",
+ "terminal":false, "actions":[{"id":"new-private-window","name":"New Private Window"}],
+ "source":"/usr/share/applications/firefox.desktop",
+ "launches":14, "last_launched":1791869000, "matched":[[0,4]]}   // char ranges in name, [start,end)
+
+// ClipRow
+{"id":812, "kind":"text", "preview":"firewall rules for…", "mimes":["text/html","text/plain"],
+ "bytes":1824, "thumb":"/home/u/.cache/trowel/clip/812@132.png", "files":2, "color":"#F2A22A",
+ "domain":"github.com", "source_app":"firefox",
+ "created":1791869354, "last_used":1791869354, "uses":3, "pinned":false}
+
+// CalcResult
+{"expr":"1920*1.25 + 15%", "pretty_expr":"1920 × 1.25 + 15%", "display":"2,760", "copy":"2760",
+ "kind":"number", "unit":"cm", "approx":false, "alts":[{"label":"Hex","copy":"0xac8"}]}
+```
+
 ### `status` event
 
 ```jsonc
@@ -181,6 +235,8 @@ Linux paths are bytes; JSON strings are not. Any path that isn't valid UTF-8 is 
 
 - `crates/trowel-proto` holds the serde types, and `ui/qml/Trowel/Client.qml` is the only QML code
   that speaks this protocol.
-- `tests/proto/*.jsonl` holds golden request/response transcripts, replayed against the real daemon
-  and against `troweld --mock` (canned results and synthetic latency) in CI.
+- `tests/proto/*.jsonl` holds golden request/response transcripts (v1 ops and `v2-*.jsonl`),
+  replayed against `troweld --mock` (canned results and synthetic latency) in CI. The real daemon's
+  handshake and op behavior is covered by `crates/troweld/tests/daemon.rs`, because its results
+  depend on a real index rather than fixtures.
 - `troweld --mock` is a Phase-1 deliverable. It is what lets UI work start in week 2.

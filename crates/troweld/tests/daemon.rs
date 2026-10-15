@@ -214,7 +214,7 @@ fn hello_and_keyword_search() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,
@@ -223,7 +223,7 @@ fn hello_and_keyword_search() {
     let mut reader = BufReader::new(stream);
     let hi = recv(&mut reader);
     assert_eq!(hi["ok"], true);
-    assert_eq!(hi["protocol"], 1);
+    assert_eq!(hi["protocol"], 2);
     let hit = recv(&mut reader);
     assert_eq!(hit["ok"], true, "{hit}");
     let groups = hit["groups"].as_array().cloned().unwrap_or_default();
@@ -241,6 +241,50 @@ fn hello_and_keyword_search() {
 }
 
 #[test]
+fn protocol_v2_handshake_and_unbuilt_ops() {
+    let root = temp();
+    let d = start(root, &[]);
+
+    // A v1 client (an old panel left running across an upgrade) is told to restart.
+    let mut old = connect(&d);
+    send(
+        &mut old,
+        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+    );
+    let refused = recv(&mut BufReader::new(old));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["error"]["code"], "bad_request");
+    assert_eq!(
+        refused["error"]["message"], "Trowel was updated, restart it",
+        "{refused}"
+    );
+
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"apps_query","text":"fire","gen":1}),
+    );
+    send(&mut stream, &json!({"id":3,"op":"clip_get","clip_id":1}));
+    let mut reader = BufReader::new(stream);
+    let hi = recv(&mut reader);
+    assert_eq!(hi["protocol"], 2, "{hi}");
+    let caps = hi["capabilities"].as_array().unwrap();
+    assert!(
+        !caps.iter().any(|c| c == "apps" || c == "clipboard"),
+        "not advertised before L2/L3: {hi}"
+    );
+    for id in [2, 3] {
+        let reply = recv(&mut reader);
+        assert_eq!(reply["id"], id, "{reply}");
+        assert_eq!(reply["error"]["code"], "not_ready", "{reply}");
+    }
+}
+
+#[test]
 fn code_search_uses_code_index_and_preview() {
     let root = temp();
     fs::write(
@@ -254,7 +298,7 @@ fn code_search_uses_code_index_and_preview() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,
@@ -320,7 +364,7 @@ fn pause_sets_status() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(&mut stream, &json!({"id":2,"op":"pause"}));
     send(&mut stream, &json!({"id":3,"op":"status"}));
@@ -360,7 +404,7 @@ fn folder_change_indexes_and_search_finds_it() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let hello = recv(&mut reader);
@@ -441,7 +485,7 @@ fn resume_starts_helper_after_pause() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(&mut stream, &json!({"id":2,"op":"pause"}));
     send(&mut stream, &json!({"id":3,"op":"resume"}));
@@ -474,7 +518,7 @@ fn idle_releases_vectors() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(&mut stream, &json!({"id":2,"op":"panel_opened"}));
     send(&mut stream, &json!({"id":3,"op":"status"}));
@@ -562,7 +606,7 @@ fn overflow_signal_rescans() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(recv(&mut reader)["ok"], true);
@@ -589,7 +633,7 @@ fn suspend_resume_signal_syncs() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(recv(&mut reader)["ok"], true);
@@ -618,7 +662,7 @@ fn estimate_and_status_subscribe() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,
@@ -725,7 +769,7 @@ fn resume_indexes_again_after_the_helper_stopped() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(recv(&mut reader)["ok"], true);
@@ -763,7 +807,7 @@ fn helper_outlives_the_connection_that_resumed_it() {
             .unwrap();
         send(
             &mut stream,
-            &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+            &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
         );
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         assert_eq!(recv(&mut reader)["ok"], true);
@@ -785,7 +829,7 @@ fn helper_outlives_the_connection_that_resumed_it() {
             .unwrap();
         send(
             &mut stream,
-            &json!({"id":1,"op":"hello","protocol":1,"client":"cli","pid":1}),
+            &json!({"id":1,"op":"hello","protocol":2,"client":"cli","pid":1}),
         );
         send(&mut stream, &json!({"id":2,"op":"resume"}));
         let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -823,7 +867,7 @@ fn kind_filter_keeps_unfiltered_tab_counts() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(recv(&mut reader)["ok"], true);
@@ -882,7 +926,7 @@ fn code_sync_progress_is_not_main_progress() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,

@@ -4,11 +4,27 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 8 (`phase-8-launcher`, from `main` @ `9b3f4d5`, the P7 merge). D18–D24 are approved. L0 spikes are in progress. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) are still open and independent. Before Phase 8, Phase 7 ran on `phase-7-hardening` (from `origin/main` @ P6 merge). Packaging + `trowel setup` done on this machine. 72 h soak and full TESTING §7 suite are **not** done.
-- **Live:** `troweld.socket` **enabled**. Plugin enabled. Human finished onboarding (`onboarded=true`). Code index is **actively embedding** Work + Projects (`index-service --backfill --code-root …`; status `code done=88/total=11877` after the daemon restart; `code.sqlite` already has ~12k files). Query-encoder `worker` may show `down` until the first hybrid search; the helper has its own Vulkan worker.
-- **Bugs just fixed (uncommitted):** (1) `troweld` searched only `index.sqlite`, so `code: RouteValidato` returned Downloads/Pictures docs. Daemon now opens `code.sqlite` for `code:` / `code:true`. (2) Overlay PreviewPane stayed EmptyState because Panel listened to `lineEvent` and Client only emitted `previewArrived`. (3) Segment ids collide across stores — preview/open take optional `code`. (4) Name-hits on screenshots/images returned `{type:text}` so the pane never showed a picture; DigUp loads a Quick Look image from the *file*. `preview_type_for` now uses file kind. Text/code pane was a clipped `Text` with `elide` (no scroll); PreviewPane is now DigUp CodeLines (numbered, focus row, ListView) + Passage (wrap + Flickable, ~900 char window) + image card. Not an embedded nvim — DigUp isn't either; `nvim` is the Open handler. Live PNG Name preview: `type=image` + thumb 9 KB. `troweld` rebuilt+restarted; `omarchy restart shell`.
-- **Uncommitted on `phase-8-launcher`:** embedding helper/AC/fingerprint + onboarding rewrite + reconnect + model_status routing + code searcher + preview wiring + **Enter opens nvim in `xdg-terminal-exec`** (the `cursor` PATH shim is not an IDE, so auto-detect skipped it and spawned a no-op; nvim without a TTY also failed). Missing editor → next installed → `xdg-open`. **Ctrl+C** `copy_path` now `wl-copy`s the file (image MIME / `text/uri-list`). Not committed.
-- **Next step:** Super+D → Enter on a `.ts`/`.tsx` should open Neovim in the default terminal. Ctrl+C copies the selected file (image bytes or `file://` URI). Commit when asked. L0.1–L0.6 wait for the human.
+- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1 done** (protocol v2 types, `state.sqlite`, mock, transcripts). L0.1 + L0.6 + L0.7 verified; L0.2–L0.5 still need the human copying from real apps. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
+- **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release` (built **before** L1, so the running daemon speaks **v1**). omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
+- **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
+- **Next step:** L2c (calculator, `troweld/src/calc.rs` on `fend-core` 1.5.8) and L2 (apps index), both unblocked by L1; L2 needs nothing from the human (L0.1 passed). L3 waits for L0.2–L0.5.
+
+### Phase 8 map
+
+| Step | What | Status |
+|---|---|---|
+| L0.1 | launch from the daemon's context | ✅ (Omacalc, see Verified facts) |
+| L0.2–L0.5 | MIME offers from real apps, file re-offer, paste keystroke, password-manager hints | ⏳ need the human |
+| L0.6 | one `wl-paste --watch` for every type | ✅ |
+| L0.7 | fend-core | ✅ (2026-10-13) |
+| L1 | proto v2, `state.sqlite`, mock, v2 transcripts | ✅ this session |
+| L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | next |
+| L2c | calculator: fend-core wrapper, gate/reject rules, 150-row table, false-positive corpus | next (parallel with L2) |
+| L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | after L0.2–L0.5 |
+| L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | after L2/L2c (can start on `--mock` now) |
+| L5 | setup prompts, doctor rows, F-C1..F-C5, PKGBUILD | after L3/L4 |
+| L6 | extras: Omarchy commands → window switcher → clipboard OCR | backlog |
+| 8U | upstream 0.6.1 parity U1–U12 | U1 first; independent of L* |
 
 ## Gates
 
@@ -71,6 +87,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **This machine's `cursor` is the agent shim**, not the IDE (`cursor --help` → "No Cursor IDE installation found"). Auto editor skipped it and now picks **nvim**, launched as `xdg-terminal-exec nvim +LINE FILE`. If nvim is missing: hx, then `xdg-open` (the file's default app). TUI editors must not be spawned with stdin/stdout/stderr null.
 - **Panel preview:** `Client.previewArrived` is how PROTOCOL preview replies are delivered (`ok` replies are not `event`s). `SearchWindow.qml` already used `onPreviewArrived`; `Panel.qml` only watched `onLineEvent`, so PreviewPane stayed on EmptyState (`row.name` + `row.reason` — matches the screenshot “filename + Matches what's on screen”).
 
+- **L0.1 launch from a user service** (2026-10-15): `systemd-run --user --wait --collect uwsm-app -- gtk-launch omacalc.desktop` (user-manager env, no TTY, like `troweld.service`) → `uwsm-app` returned in **184 ms**; the app's cgroup is `app.slice/app-graphical.slice/app-Hyprland-gtk\x2dlaunch-<hash>.scope` (not the launching unit); parent pid 1193 (systemd --user); Hyprland gave it focus (`focusHistoryID 0`, was Ghostty) on the current workspace. No `XDG_ACTIVATION_TOKEN` needed. The user's default browser is Chrome (`xdg-settings`), so spikes use Omacalc, never a browser.
+- **Hyprland 0.56 Lua close:** `hyprctl dispatch closewindow …` fails under the Lua parser. Use `hyprctl eval 'hl.dispatch(hl.dsp.window.close({window="class:omacalc"}))'`.
+- **L0.6 `wl-paste --watch CMD` (no `--type`, wl-clipboard 2.3.0)** fires on every selection change regardless of type: text, `text/html`, `image/png` and `text/uri-list` each fired once. It also fires **once at startup** for the current selection, so capture must dedupe (content hash). The command's env has `CLIPBOARD_STATE=data`. `wl-copy --type text/html` / `--type text/uri-list` also offer `text/plain`, `UTF8_STRING`, `TEXT`, `STRING` aliases; `--type image/png` offers only `image/png`. (Matters for L0.3: one `wl-copy --type text/uri-list` already advertises plain-text aliases.) The human's clipboard was saved and restored around the spike.
+
 ## Open questions for the human
 
 1. **`wl-clipboard-rs`:** decide after spike L0.3 (does file paste need a multi-MIME offer?).
@@ -111,6 +131,33 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-15 — Phase 8 mapped; L0.1/L0.6 verified; L1 built
+
+Human: map out Phase 8 and start building. Chose: commit pending work, drop hubness from the branch; asked why Firefox (it was the plan's placeholder; spikes now use Omacalc).
+
+- Committed the pending kind-tabs / code-progress work as `95a90cb` (full suite green first). Hubness parked on local `experiment/hubness` `a855b2d`.
+- L0.1 and L0.6 run and recorded (Verified facts).
+- **L1:** `trowel-proto` `launcher.rs` (AppRow, ClipRow, ClipKind, ClipContent, PasteMode, ClipOffer, CalcResult, CalcReply, CalcHistoryRow) + 14 v2 ops in `ops.rs`, `PROTOCOL_VERSION = 2`. **Plan bug fixed:** `app_launch {id}` / `clip_get {id}` collide with the envelope `id` (ops are `#[serde(flatten)]`ed), so params are `app_id` / `clip_id` (test asserts `req.id` is not shadowed). `troweld/src/state.rs`: `state.sqlite` (`apps_launches`, `clip_blobs`, `clip_entries`, `clip_fts` external-content FTS5 with `IndexStore::TOKENIZER` + sync triggers, `calc_history`), `0700`/`0600`, `quick_check` + quarantine, newer schema moved aside. `troweld --mock` serves every v2 op from `fixture_launcher.json` (30 apps, all 7 clip kinds, 6 calc stubs) via `mock_launcher.rs`; capabilities gain `apps`, `clipboard`. Real daemon: v2 ops → `not_ready`, capabilities unchanged until L2/L3. `Client.qml`, `trowel debug ui-trace/snapshot`, all tests and transcripts send protocol 2; `hello-mismatch.jsonl` is now the v1-client-refused case. New transcripts `tests/proto/v2-{apps,clipboard,calc}.jsonl`.
+- Docs: PROTOCOL.md v2 + §4 "Launcher (v2)"; §7 no longer claims transcripts replay against the real daemon (they never did; `daemon.rs` covers it). LAUNCHER-PLAN §3 params + L1 acceptance amended to match.
+- Not done: no `state.sqlite` opened by the real daemon yet (lazily in L2 when `app_launch` needs it, with a `--state-dir` override so tests never touch `~/.local/share/trowel`). Live daemon/shell not redeployed (see Current state).
+
+Evidence:
+
+```
+$ cargo fmt --all --check && cargo clippy --workspace --all-targets --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.32s
+$ cargo test --workspace --offline
+trowel-proto 11/11 (new: every_known_op_has_a_variant_name, v2_defaults, 4 launcher row tests)
+troweld lib 37/37 (new: 7 state::tests, 6 mock_launcher::tests)
+daemon 15/15 (new: protocol_v2_handshake_and_unbuilt_ops: v1 hello → "Trowel was updated, restart it"; apps_query/clip_get → not_ready; no apps/clipboard capability)
+proto_replay 3/3 (golden_transcripts now includes v2-apps, v2-clipboard, v2-calc)
+core 87, long_files 13, searcher 1, cli 1+6+1+1+4, faults 1, ui_phase6 3 — unchanged, all ok
+$ /usr/lib/qt6/bin/qmllint ui/qml/Trowel/Client.qml   # exit 0; 2 pre-existing warnings (lines 543/553, Quickshell socket/process types)
+```
+
+**Next step:** L2c `calc.rs` (fend-core 1.5.8 is approved: add it to `troweld/Cargo.toml`, port the L0.7 gate/reject/rewrite rules, the ~150-row table, timeout + fuzz tests, `trowel calc --json`), then L2 apps. Then run L0.2–L0.5 with the human before L3.
+
 
 ### 2026-10-14 — Hubness experiment (not adopted)
 

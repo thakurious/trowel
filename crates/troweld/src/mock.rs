@@ -1,4 +1,4 @@
-//! Canned PROTOCOL v1 daemon. `PROTOCOL.md` §7; `EXECUTION-PLAN.md` Phase 1 task 6.
+//! Canned PROTOCOL daemon (v1 ops here, v2 in `mock_launcher`). `PROTOCOL.md` §7; `EXECUTION-PLAN.md` Phase 1 task 6.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fs;
@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use trowel_proto::ops::KNOWN_OPS;
+
+use crate::mock_launcher::{LauncherFixture, LauncherMock};
 use trowel_proto::{
     Config, ErrorBody, ErrorCode, Meaning, ModelStatus, Op, Request, ResultGroup, ResultRow,
     SearchResult, Status, MAX_LINE_BYTES, PROTOCOL_VERSION,
@@ -22,7 +24,8 @@ use trowel_proto::{
 const QUEUE_CAP: usize = 256;
 const DEFAULT_FIXTURE: &str = include_str!("fixture_default.json");
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr"];
+/// v2 adds `apps` and `clipboard` (D22); the mock serves both from `fixture_launcher.json`.
+const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps", "clipboard"];
 
 pub struct MockOpts {
     pub socket: Option<PathBuf>,
@@ -74,6 +77,9 @@ struct FixtureFile {
     segments: BTreeMap<String, String>,
     #[serde(default)]
     status_script: Vec<StatusStep>,
+    /// Apps, clipboard and calculator rows. Absent → `fixture_launcher.json`.
+    #[serde(default)]
+    launcher: Option<LauncherFixture>,
 }
 
 fn ready() -> String {
@@ -85,6 +91,7 @@ struct MockState {
     latency: Duration,
     config: Mutex<Config>,
     status: Mutex<Status>,
+    launcher: LauncherMock,
 }
 
 enum Queued {
@@ -168,7 +175,14 @@ pub fn run(opts: MockOpts) -> io::Result<()> {
     sock_perms.set_mode(0o600);
     fs::set_permissions(&socket, sock_perms)?;
 
+    let launcher = LauncherMock::new(
+        fixture
+            .launcher
+            .clone()
+            .unwrap_or_else(LauncherFixture::default_fixture),
+    );
     let state = Arc::new(MockState {
+        launcher,
         status: Mutex::new(fixture.status.clone()),
         config: Mutex::new(Config::default()),
         fixture,
@@ -465,6 +479,10 @@ fn handle_op(req: Request, conn: &mut Conn, state: &Arc<MockState>) {
         Op::ModelDownload { .. } => reply_ok(conn, id, json!({})),
         Op::Doctor => reply_ok(conn, id, json!({"ok": true, "checks": []})),
         Op::SetHotkey { .. } => reply_ok(conn, id, json!({})),
+        op => match state.launcher.handle(op) {
+            Ok(body) => reply_ok(conn, id, body),
+            Err((code, message)) => reply_error(conn, Some(id), code, message),
+        },
     }
 }
 

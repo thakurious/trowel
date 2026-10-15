@@ -23,7 +23,7 @@ QtObject {
   property string state: "connecting"
   property var status: ({})
   property var config: ({})
-  property int protocol: 1
+  property int protocol: 2
   property var capabilities: []
   property string lastError: ""
   property int nextId: 1
@@ -107,7 +107,7 @@ QtObject {
     root.helloOk = false
     send({
       op: "hello",
-      protocol: 1,
+      protocol: 2,
       client: root.clientName,
       pid: 0
     })
