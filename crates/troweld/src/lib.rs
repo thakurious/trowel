@@ -2,6 +2,7 @@
 
 pub mod actions;
 pub mod cache;
+pub mod calc;
 pub mod config_file;
 pub mod disk;
 pub mod doctor;

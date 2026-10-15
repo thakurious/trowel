@@ -1,4 +1,5 @@
 mod autostart;
+mod calc_cmd;
 mod debug_ui;
 mod index_service;
 mod parity;
@@ -97,6 +98,26 @@ enum Commands {
         zgate: f64,
         #[arg(long)]
         word_weight: Option<f64>,
+    },
+    /// Inline calculator (the daemon's `calc` op, in-process). Prints the result, or nothing
+    /// (exit 1) when the text is not a calculation.
+    Calc {
+        /// The expression, e.g. "5 ft to cm".
+        text: Option<String>,
+        /// Show errors too, as the `=` view does.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+        /// Check a TSV of `expr<TAB>expected copy` and report p50/p95 (budget: p95 < 1 ms).
+        #[arg(long, value_name = "FILE")]
+        bench: Option<PathBuf>,
+        /// Lines that must never show a card; exits 1 if any does.
+        #[arg(long, value_name = "FILE")]
+        corpus: Vec<PathBuf>,
+        /// With --corpus: print line numbers, not the text (private corpora).
+        #[arg(long)]
+        quiet: bool,
     },
     /// What's in the index.
     Status {
@@ -366,6 +387,14 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Calc {
+            text,
+            force,
+            json,
+            bench,
+            corpus,
+            quiet,
+        } => std::process::exit(calc_cmd::run(text, force, json, bench, corpus, quiet)),
         Commands::Status { index, code, json } => {
             if let Err(err) = cmd_status(index.unwrap_or_else(default_index_dir), code, json) {
                 eprintln!("{err}");

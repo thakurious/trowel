@@ -1,0 +1,280 @@
+# Lines that must never show a calculator card (LAUNCHER-PLAN L2c).
+# Eval queries, mock app names and clipboard previews, plus hand-picked traps.
+code: retry a failed call with exponential backoff and random jitter
+code: stop calling a service that keeps failing and try again after a cool-down
+code: retry_with_backoff
+code: charge a customer's card and handle the bank declining it
+code: give a customer their money back
+code: PaymentDeclined
+code: check that a webhook really came from the payment provider
+code: turn an amount in cents into a price with the currency symbol
+code: divide a total between people so the leftover cents go somewhere
+code: invoice numbers that start counting again every year
+code: when is the invoice due, skipping weekends
+code: which database and redis does the billing service connect to
+code: how do I run the tests
+code: read the date a photo was taken
+code: find photos that look the same
+code: hamming distance
+code: DuplicateFinder
+code: make a small preview of a big photo
+code: notice when new files show up in a folder
+code: rename pictures by when they were taken without overwriting any
+code: which city is this GPS position in
+code: wait until the user stops typing before using what they typed
+code: useDebounce
+code: cancel the network request when the component goes away
+code: get a new access token when the old one expires
+code: refreshAccessToken
+code: reorder the list by dragging items
+code: show how long ago something happened
+code: limit how many requests one IP address can make
+code: accept a profile picture upload and check its type and size
+code: training loop with mixed precision and gradient clipping
+code: stop training early when the validation loss stops improving
+code: learning rate that warms up and then follows a cosine
+code: resume training from a saved checkpoint
+code: drop duplicate rows and rows that have no label
+code: split the data keeping the same class proportions
+code: precision and recall for each class
+code: plot how many examples each class has
+code: fine-tune a model with LoRA adapters
+code: copy my photos to the external drive
+code: move screenshots from the desktop into folders by month
+পরীক্ষার ফলাফল
+এবার পাসের হার কত
+ইলিশ মাছ রান্না
+সুন্দরবনে বাঘের পায়ের ছাপ
+বাড়ি ভাড়ার চুক্তি অগ্রিম টাকা
+পাইথনে লুপ আর ফাংশন
+লেনদেন ব্যর্থ হয়েছে
+অপর্যাপ্ত ব্যালেন্স
+আগামীকাল ঢাকায় বৃষ্টি
+জেব্রা
+পেঙ্গুইন পাখি
+সূর্যমুখী ফুল
+টোকিও ভ্রমণ
+কফি শপের রসিদ
+ধানমন্ডি
+ইলিশ
+কুমির
+وصفة الكبسة
+طريقة طبخ الأرز مع الدجاج
+تأجيل إطلاق التطبيق
+متى تغلق المكتبة
+زيادة المبيعات في الربع الثالث
+رحلة إلى البتراء في الأردن
+فشلت عملية الدفع
+البطاقة مرفوضة
+الطقس ممطر في الرياض
+حمار وحشي
+طائر البطريق
+عاصفة رعدية
+تسلق جبل فوجي
+قائمة مشتريات البقالة
+المكتبة
+البتراء
+الأردن
+ديسمبر
+exam results pass rate
+hilsa fish in mustard sauce
+tiger footprints in the mangrove forest
+apartment rent agreement
+python loops and functions class notes
+mobile wallet transfer failed, not enough balance
+heavy rain in Dhaka tomorrow
+kabsa rice and chicken recipe
+app launch postponed because of payment problems
+when does the library close
+trip to Petra
+card declined at checkout in Arabic
+rainy weather in Riyadh
+a penguin
+black and white striped animal
+bird of prey
+string instrument
+planet earth from space
+thunderstorm
+yellow flower
+christmas cookie
+desert plant
+payment declined error
+python package not installed
+my flight to Japan
+chat about moving the design review
+rainy weather forecast
+swift code for vector search
+climbing mount fuji
+how to bake bread at home
+company revenue growth
+coffee shop receipt
+grocery list
+day trip to see the great buddha
+reminder to pick up milk and eggs
+airport announcement about a delay
+chocolate cake recipe explained out loud
+zebra in a video
+parrot in a video
+card_declined
+INV-2041
+K7Q2LM
+externally-managed-environment
+Yoshida trail
+the boat engine broke down and we fixed it
+dolphins swimming alongside the boat at sunset
+sailing blind in thick fog
+moving the team to an office in Portugal
+M-417
+4815162342
+Firefox
+Web Browser
+firefox
+Chromium
+chromium
+Google Chrome
+google-chrome
+Files
+File Manager
+org.gnome.Nautilus
+Ghostty
+Terminal Emulator
+com.mitchellh.ghostty
+Alacritty
+Terminal
+Neovim
+Text Editor
+nvim
+Visual Studio Code
+code
+Calculator
+org.gnome.Calculator
+Omacalc
+omacalc
+btop++
+System Monitor
+btop
+Document Viewer
+org.gnome.Evince
+mpv Media Player
+Multimedia player
+mpv
+imv
+Image Viewer
+LibreOffice Writer
+Word Processor
+libreoffice-writer
+LibreOffice Calc
+Spreadsheet
+libreoffice-calc
+LibreOffice Impress
+Presentation
+libreoffice-impress
+Signal
+Messenger
+signal
+Telegram
+org.telegram.desktop
+Slack
+Spotify
+Music Player
+spotify
+Obsidian
+Notes
+obsidian
+1Password
+Password Manager
+1password
+Volume Control
+org.pulseaudio.pavucontrol
+Bluetooth
+blueberry
+Typora
+Markdown Editor
+typora
+Kdenlive
+Video Editor
+org.kde.kdenlive
+GNU Image Manipulation Program
+Image Editor
+gimp
+Xournal++
+Notetaking
+xournalpp
+LocalSend
+File Transfer
+localsend
+firewall rules for the staging cluster, see ticket
+https://github.com/thakurious/trowel/pull/7
+#F2A22A
+fn main() { println!("hello"); }
+Screenshot 1920×1200
+invoice-2026-09.pdf, receipt.png
+Refund policy: items may be returned within 30 days
+2024 report
+Q3 2025 budget review
+invoice-2026-09.pdf
+IMG_20240612_101112.jpg
+Screenshot 2026-10-14 at 13.02.11.png
+Screenshot_2026-10-14_13-02-11.png
+v1.2.3
+release-1.4.0
+node-v20.11.1-linux-x64
+python3.12
+gpt-4o
+llama-3.1-8b
+covid-19 vaccine
+COVID-19
+PROJ-1234
+JIRA-42
+a-5d66-4b5c
+550e8400-e29b-41d4-a716-446655440000
+sha256:2188ac1deca4b77d
+rgb(242, 162, 42)
+192.168.1.1
+10.0.0.1:8080
+localhost:3000
+www.example.com/a-1
+~/Projects/digup-linux
+/usr/share/applications
+./scripts/make-testbed.sh
+C:\Users\me
+key:2026-06-30
+2026-06-30
+2026-06-30T12:00:00Z
+12:30
+9am meeting
+1920x1200
+3840x2160 wallpaper
+iPhone 15
+Windows 11
+Ubuntu 24.04
+Arch Linux
+route-validator
+RouteValidator.tsx
+useState
+foo_bar_2
+x86_64
+utf-8
+mp3 to wav
+pdf to word
+jpg in png
+how to center a div
+what is 5d66
+roll d20
+d6
+5d6
+tel: +1 555 0100
++91 98765 43210
+(555) 123-4567
+Room 101
+chapter 3
+page 12
+section 4.2
+README.md
+Cargo.toml
+docker-compose.yml
+.env.local
+notes
+ghostty
+pi
+e

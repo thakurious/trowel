@@ -7,7 +7,7 @@ use troweld::{engine, mock};
 #[derive(Parser, Debug)]
 #[command(name = "troweld", about = "Trowel daemon")]
 struct Args {
-    /// Serve canned PROTOCOL v1 responses (Phase 1 UI track).
+    /// Serve canned PROTOCOL responses from fixtures (UI track).
     #[arg(long)]
     mock: bool,
     /// Unix socket path. Default: `$XDG_RUNTIME_DIR/trowel/troweld.sock`.
@@ -28,6 +28,9 @@ struct Args {
     /// Use FakeEmbedder (tests). Never crawls `$HOME`.
     #[arg(long)]
     fake: bool,
+    /// Directory for `state.sqlite` (launcher/clipboard state). Default `$XDG_DATA_HOME/trowel`.
+    #[arg(long)]
+    state_dir: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -49,6 +52,7 @@ fn main() -> ExitCode {
         index: args.index,
         config: args.config,
         fake: args.fake,
+        state_dir: args.state_dir,
     };
     if let Err(err) = engine::run(opts) {
         eprintln!("troweld: {err}");

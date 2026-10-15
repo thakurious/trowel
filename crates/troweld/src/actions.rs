@@ -2,10 +2,11 @@
 
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::Write;
+use std::io::{self, Write};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use trowel_core::{FileKind, Rules};
 
@@ -31,6 +32,53 @@ fn spawn_reaped(cmd: &mut Command) {
             let _ = child.wait();
         });
     }
+}
+
+/// Puts plain text on the clipboard (D21). `wl-copy` forks a server that keeps the selection, so
+/// the parent exits once the text is handed over.
+pub fn copy_text(text: &str) -> io::Result<()> {
+    if !which("wl-copy") {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "wl-copy is not installed",
+        ));
+    }
+    let mut child = Command::new("wl-copy")
+        .args(["--type", "text/plain;charset=utf-8"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(text.as_bytes())?;
+    }
+    let status = child.wait()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("wl-copy exited with {status}")))
+    }
+}
+
+/// Omarchy's paste: `wtype -M shift -k Insert -m shift` after the panel has unmapped
+/// (`LAUNCHER-PLAN.md` §0). The 150 ms is Omarchy's; L0.4 has not measured it on this machine yet.
+pub const PASTE_DELAY: Duration = Duration::from_millis(150);
+
+/// Sends the paste keystroke to whatever window has focus once the delay has passed.
+pub fn paste_keystroke() {
+    if !which("wtype") {
+        return;
+    }
+    std::thread::spawn(|| {
+        std::thread::sleep(PASTE_DELAY);
+        spawn_reaped(
+            Command::new("wtype")
+                .args(["-M", "shift", "-k", "Insert", "-m", "shift"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+        );
+    });
 }
 
 /// `file://` URI with the path percent-encoded (RFC 8089/3986). A raw path breaks on spaces,

@@ -4,10 +4,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Current state
 
-- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1 done** (protocol v2 types, `state.sqlite`, mock, transcripts). L0.1 + L0.6 + L0.7 verified; L0.2–L0.5 still need the human copying from real apps. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
+- **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1 and L2c done** (protocol v2, `state.sqlite`, mock; calculator served by the real daemon). L0.1 + L0.6 + L0.7 verified; L0.2–L0.5 still need the human copying from real apps. Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
 - **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release` (built **before** L1, so the running daemon speaks **v1**). omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** L2c (calculator, `troweld/src/calc.rs` on `fend-core` 1.5.8) and L2 (apps index), both unblocked by L1; L2 needs nothing from the human (L0.1 passed). L3 waits for L0.2–L0.5.
+- **Next step:** L2 (apps index: `troweld/src/apps/{desktop_entry,rank,icons}.rs`, `scripts/apps-parity.sh` against Omarchy's `AppSearch.js` under node, `trowel apps/launch`). Needs nothing from the human. L3 waits for L0.2–L0.5.
 
 ### Phase 8 map
 
@@ -18,8 +18,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | L0.6 | one `wl-paste --watch` for every type | ✅ |
 | L0.7 | fend-core | ✅ (2026-10-13) |
 | L1 | proto v2, `state.sqlite`, mock, v2 transcripts | ✅ this session |
-| L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | next |
-| L2c | calculator: fend-core wrapper, gate/reject rules, 150-row table, false-positive corpus | next (parallel with L2) |
+| L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | **next** |
+| L2c | calculator: fend-core wrapper, gate/reject rules, 146-row table, false-positive corpus | ✅ this session |
 | L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | after L0.2–L0.5 |
 | L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | after L2/L2c (can start on `--mock` now) |
 | L5 | setup prompts, doctor rows, F-C1..F-C5, PKGBUILD | after L3/L4 |
@@ -91,6 +91,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Hyprland 0.56 Lua close:** `hyprctl dispatch closewindow …` fails under the Lua parser. Use `hyprctl eval 'hl.dispatch(hl.dsp.window.close({window="class:omacalc"}))'`.
 - **L0.6 `wl-paste --watch CMD` (no `--type`, wl-clipboard 2.3.0)** fires on every selection change regardless of type: text, `text/html`, `image/png` and `text/uri-list` each fired once. It also fires **once at startup** for the current selection, so capture must dedupe (content hash). The command's env has `CLIPBOARD_STATE=data`. `wl-copy --type text/html` / `--type text/uri-list` also offer `text/plain`, `UTF8_STRING`, `TEXT`, `STRING` aliases; `--type image/png` offers only `image/png`. (Matters for L0.3: one `wl-copy --type text/uri-list` already advertises plain-text aliases.) The human's clipboard was saved and restored around the spike.
 
+- **fend-core 1.5.8 stack overflow:** ~300 nested `(` overflow a 2 MiB thread stack and **abort the process** (`fatal runtime error: stack overflow`, exit 134; not catchable). 200 nested is fine; `2^` chains of 400 are fine. Guarded in `calc::gate` (≤ 256 chars, ≤ 32 deep) + a 16 MiB `troweld-calc` stack.
+- **fend-core first evaluation** builds unit tables lazily: ~0.45–0.65 ms in release. Warmed in `Calculator::new`.
+- **fend-core names:** `nmi` / `nautical_mile` / `NM` (not "nautical mile"); `100 c to f` is speed-of-light × 100 → no card (use `°C`/`celsius`). Approximations print 10 places, zero-padded (`314.1592653590`).
+
 ## Open questions for the human
 
 1. **`wl-clipboard-rs`:** decide after spike L0.3 (does file paste need a multi-MIME offer?).
@@ -131,6 +135,45 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-15 — L2c calculator
+
+Human: go ahead with the calculator.
+
+- `fend-core = "=1.5.8"` (workspace, approved D24; `cargo tree`: no transitive deps); `[profile.dev.package.fend-core] opt-level = 3` so debug tests time like the shipped build.
+- `troweld/src/calc.rs`: gate (rule 1 + every L0.7 reject rule + new ≤ 256 chars / ≤ 32 deep guard), Raycast percent rewrite (recursive), base-literal rewrite, `shape()` → `CalcResult` (approx, unit split, kinds, Hex/Binary alts, trimmed padding), locale `display`, thin-space `pretty_expr`, `Calculator` thread (16 MiB stack, `catch_unwind`, 20 ms deadline, overrun → no card, warm-up). Daemon serves `calc` / `calc_history` / `calc_copy` (`actions::copy_text` + `paste_keystroke`), `state.sqlite` opened lazily under `--state-dir` (default `$XDG_DATA_HOME/trowel`).
+- Bugs the harness found and fixed: percent rewrite skipped `A + 10% + 10%`; `0XFF`; `1e-5` taken as an ID; `m^2` treated as mixed units; **multi-byte char before a `%` number panicked** (fuzz, Bengali); **deep nesting aborted the process** (above).
+- Daemon tests now always run with `WAYLAND_DISPLAY=trowel-test-no-compositor` and `--state-dir` under the temp root, so `cargo test` can never write the developer's clipboard, send keystrokes, or touch `~/.local/share/trowel`.
+- Not done: `calc` is not advertised in `hello` capabilities (none was specified; UI just sends it). Paste delay is Omarchy's 150 ms, unmeasured until L0.4. Live daemon not redeployed (still v1, see Current state).
+
+Evidence:
+
+```
+$ cargo fmt --all --check && cargo clippy --workspace --all-targets --offline -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.78s
+$ cargo test --workspace --offline
+troweld lib 45/45 (calc:: 8 incl. rewrites/reject rules/display/shapes/dice)
+troweld --test calc 6/6: expression_table (146 rows), false_positive_corpus_shows_no_cards (277 lines),
+  slow_inputs_return_within_the_deadline (<25 ms), deep_input_never_crashes, fuzz_random_strings, five_feet_in_centimetres
+troweld daemon 17/17 (new: calc_copy_and_history with stub wl-copy/wtype — clipboard got "152.4",
+  wtype got "-M shift -k Insert -m shift", history row; calc_copy_without_a_compositor_is_an_error_and_records_nothing)
+everything else unchanged and green
+$ TROWEL_CALC_FUZZ=200000 cargo test --release -p troweld --test calc fuzz   # ok, 5.4 s, worst < 25 ms
+$ ./target/release/trowel calc --bench tests/calc/table.tsv    # 3 runs
+146 rows, 0 wrong, p50 64 µs, p95 408 µs, max 20302 µs (budget p95 < 1000 µs)
+146 rows, 0 wrong, p50 52 µs, p95 275 µs, max 20165 µs
+146 rows, 0 wrong, p50 43 µs, p95 237 µs, max 20327 µs      # max = 10^10^10 hitting the deadline
+$ ./target/release/trowel calc "5 ft to cm" --json   # 8 one-shot runs: took_us 238–565, warmup_us 443–641
+{"result":{"copy":"152.4","display":"152.4 cm","kind":"unit","unit":"cm",…},"took_us":…}
+$ scripts/calc-corpus.sh    # local: installed apps, /tmp/trowel-eval names, Omarchy clipboard (--quiet)
+apps 485  files 500  clipboard 193 (single-line text)
+985 lines, 0 cards, worst 25 µs
+193 lines, 0 cards, worst 1505 µs
+```
+
+Before the warm-up fix, the one-shot command measured 1509/1247/1081/1024/914/1008/1104/1037 µs, failing the < 1000 line on 7 of 8 runs.
+
+**Next step:** L2 apps index (see Current state).
 
 ### 2026-10-15 — Phase 8 mapped; L0.1/L0.6 verified; L1 built
 

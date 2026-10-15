@@ -60,8 +60,8 @@ The first request on every connection:
 If the protocol versions differ, the daemon answers `ok:false, code:"bad_request"` and the UI shows
 "Trowel was updated, restart it". Do not try to negotiate across versions.
 
-`capabilities` gains `apps` and `clipboard` once the daemon serves them (L2 / L3). Until then the
-v2 ops answer `not_ready`; `troweld --mock` advertises and serves both from canned fixtures.
+`capabilities` gains `apps` and `clipboard` once the daemon serves them (L2 / L3). Until then those
+ops answer `not_ready` (`calc`, `calc_history` and `calc_copy` are served since L2c); `troweld --mock` advertises and serves both from canned fixtures.
 
 ## 4. Operations
 
@@ -156,7 +156,7 @@ request `id` (the op's params are flattened into the envelope).
 | `clip_ingest` | `{types:[mime], offers:[{mime, file}], source_app?}` | Internal: only `trowel clip-capture` (the daemon's own watcher child) may send it; anyone else gets `bad_request`. |
 | `calc` | `{text, force=false, gen}` | `{gen, result?: CalcResult, error?, took_us?}`. No `result` means "not a calculation" (no card). `error` only with `force`. Supersedes the connection's older `calc`. |
 | `calc_history` | `{limit=20}` | `{rows:[{expr, result, at}]}`, newest first. |
-| `calc_copy` | `{text, expr?, mode="paste"\|"copy"}` | `{}`. Same clipboard path as `clip_paste`; `expr` is added to `calc_history`. |
+| `calc_copy` | `{text, expr?, mode="paste"\|"copy"}` | `{}`, or `io` when the clipboard can't be written (no compositor). Same clipboard path as `clip_paste`; `expr` is added to `calc_history` only after a successful copy. |
 | *event* `clipboard` | — | Topic `"clipboard"` on `subscribe`: `{added?:ClipRow, removed?:[clip_id]}`, coalesced ≤ 4/s. |
 
 Optional fields are **absent** when empty, never `null`. `ClipKind` is the closed set `text`,

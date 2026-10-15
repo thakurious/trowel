@@ -16,12 +16,13 @@ use serde_json::{json, Value};
 use trowel_core::{Embedder, FakeEmbedder, FileKind, IndexStore, Prompts, Rules, Searcher};
 use trowel_proto::ops::KNOWN_OPS;
 use trowel_proto::{
-    Config, ErrorBody, ErrorCode, Meaning, Op, Request, SearchMode, Status, MAX_LINE_BYTES,
-    PROTOCOL_VERSION,
+    CalcReply, Config, ErrorBody, ErrorCode, Meaning, Op, PasteMode, Request, SearchMode, Status,
+    MAX_LINE_BYTES, PROTOCOL_VERSION,
 };
 
 use crate::actions;
 use crate::cache::QueryCache;
+use crate::calc::Calculator;
 use crate::config_file::{self, expand_tilde};
 use crate::disk;
 use crate::doctor;
@@ -34,6 +35,7 @@ use crate::logind;
 use crate::power;
 use crate::present;
 use crate::previews;
+use crate::state::{self, StateDb};
 use crate::watcher::{FolderWatch, CODE_LONGEST_WAIT, CODE_QUIET, DEBOUNCE};
 
 const QUEUE_CAP: usize = 256;
@@ -46,6 +48,8 @@ pub struct EngineOpts {
     pub index: Option<PathBuf>,
     pub config: Option<PathBuf>,
     pub fake: bool,
+    /// Where `state.sqlite` lives. Default `$XDG_DATA_HOME/trowel`.
+    pub state_dir: Option<PathBuf>,
 }
 
 struct Engine {
@@ -78,6 +82,10 @@ struct Engine {
     sleeping: Arc<AtomicBool>,
     was_sleeping: AtomicBool,
     was_on_battery: AtomicBool,
+    calc: Calculator,
+    state_dir: PathBuf,
+    /// Opened on first use, so a daemon that never launches or copies never creates the file.
+    state: Mutex<Option<StateDb>>,
 }
 
 enum Queued {
@@ -192,6 +200,9 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         sleeping: Arc::new(AtomicBool::new(false)),
         was_sleeping: AtomicBool::new(false),
         was_on_battery: AtomicBool::new(power::on_battery()),
+        calc: Calculator::default(),
+        state_dir: opts.state_dir.unwrap_or_else(state::default_state_dir),
+        state: Mutex::new(None),
     });
 
     logind::bind_signals(&engine.overflow, &engine.sleeping);
@@ -744,7 +755,42 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err.to_string()),
         },
-        // Protocol v2 ops whose engines land in L2 (apps), L2c (calc) and L3 (clipboard).
+        Op::Calc { text, force, gen } => {
+            let out = engine.calc.eval(&text, force);
+            reply_ok(
+                conn,
+                id,
+                json!(CalcReply {
+                    gen,
+                    result: out.result,
+                    error: out.error,
+                    took_us: Some(out.took_us),
+                }),
+            );
+        }
+        Op::CalcHistory { limit } => match engine.with_state(|s| s.calc_history(limit)) {
+            Ok(rows) => reply_ok(conn, id, json!({ "rows": rows })),
+            Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+        },
+        Op::CalcCopy { text, expr, mode } => {
+            // The UI has already hidden the panel (D21), so the keystroke reaches the app below.
+            if let Err(err) = actions::copy_text(&text) {
+                reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
+                return;
+            }
+            // `plain` is a paste too: a result is plain text already.
+            if mode != PasteMode::Copy {
+                actions::paste_keystroke();
+            }
+            if let Some(expr) = expr {
+                let at = unix_now();
+                if let Err(err) = engine.with_state(|s| s.record_calc(&expr, &text, at)) {
+                    eprintln!("troweld: calc history: {err}");
+                }
+            }
+            reply_ok(conn, id, json!({}));
+        }
+        // Protocol v2 ops whose engines land in L2 (apps) and L3 (clipboard).
         // `hello` does not advertise `apps`/`clipboard` until then.
         op => reply_error(
             conn,
@@ -1349,7 +1395,25 @@ fn writer_loop(mut stream: UnixStream, out: Arc<Outbox>) {
     }
 }
 
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
 impl Engine {
+    /// Runs `f` on `state.sqlite`, opening it on first use.
+    fn with_state<T>(
+        &self,
+        f: impl FnOnce(&StateDb) -> Result<T, trowel_core::DbError>,
+    ) -> Result<T, String> {
+        let mut slot = self.state.lock().expect("state");
+        if slot.is_none() {
+            *slot = Some(StateDb::open(&self.state_dir).map_err(|e| e.to_string())?);
+        }
+        f(slot.as_ref().expect("state open")).map_err(|e| e.to_string())
+    }
+
     fn touch(&self) {
         if let Ok(mut last) = self.last_use.lock() {
             *last = Instant::now();

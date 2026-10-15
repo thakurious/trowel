@@ -70,6 +70,11 @@ fn write_cfg(root: &Path, onboarded: bool, roots: &[PathBuf]) {
 }
 
 fn start(root: PathBuf, extra: &[&str]) -> Daemon {
+    start_with(root, extra, &[])
+}
+
+/// `envs` override the daemon's environment (e.g. a `PATH` with stub `wl-copy`).
+fn start_with(root: PathBuf, extra: &[&str], envs: &[(&str, &str)]) -> Daemon {
     let socket = root.join("troweld.sock");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_troweld"));
     cmd.arg("--fake")
@@ -85,6 +90,11 @@ fn start(root: PathBuf, extra: &[&str]) -> Daemon {
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("TROWEL", trowel_bin())
         .env("TROWEL_LINGER", "3")
+        // Never the developer's session: clipboard writes and keystrokes must fail in tests.
+        .env("WAYLAND_DISPLAY", "trowel-test-no-compositor")
+        .arg("--state-dir")
+        .arg(root.join("state"))
+        .envs(envs.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -282,6 +292,101 @@ fn protocol_v2_handshake_and_unbuilt_ops() {
         assert_eq!(reply["id"], id, "{reply}");
         assert_eq!(reply["error"]["code"], "not_ready", "{reply}");
     }
+}
+
+#[test]
+fn calc_copy_and_history() {
+    let root = temp();
+    // Stubs record what would have reached the clipboard and the focused window.
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for (name, body) in [
+        (
+            "wl-copy",
+            format!("#!/bin/sh\ncat > '{}'\n", root.join("clip.txt").display()),
+        ),
+        (
+            "wtype",
+            format!(
+                "#!/bin/sh\necho \"$@\" > '{}'\n",
+                root.join("keys.txt").display()
+            ),
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let d = start_with(root.clone(), &[], &[("PATH", path.as_str())]);
+    let mut stream = connect(&d);
+    for msg in [
+        json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+        json!({"id":2,"op":"calc","text":"5 ft to cm","gen":7}),
+        json!({"id":3,"op":"calc","text":"firefox","gen":8}),
+        json!({"id":4,"op":"calc","text":"=1 +","force":true,"gen":9}),
+        json!({"id":5,"op":"calc_copy","text":"152.4","expr":"5 ft to cm","mode":"paste"}),
+        json!({"id":6,"op":"calc_history","limit":5}),
+    ] {
+        send(&mut stream, &msg);
+    }
+    let mut reader = BufReader::new(stream);
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let card = recv(&mut reader);
+    assert_eq!(card["gen"], 7, "{card}");
+    assert_eq!(card["result"]["copy"], "152.4", "{card}");
+    assert_eq!(card["result"]["display"], "152.4 cm", "{card}");
+    assert!(card["took_us"].as_u64().unwrap() < 20_000, "{card}");
+    let none = recv(&mut reader);
+    assert!(
+        none.get("result").is_none(),
+        "firefox is not a calculation: {none}"
+    );
+    let forced = recv(&mut reader);
+    assert!(forced["error"].is_string(), "{forced}");
+    let copied = recv(&mut reader);
+    assert_eq!(copied["ok"], true, "{copied}");
+    let history = recv(&mut reader);
+    assert_eq!(history["rows"][0]["expr"], "5 ft to cm", "{history}");
+    assert_eq!(history["rows"][0]["result"], "152.4", "{history}");
+    assert_eq!(fs::read_to_string(root.join("clip.txt")).unwrap(), "152.4");
+    // Paste mode sends Omarchy's keystroke after the delay.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !root.join("keys.txt").exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("keys.txt")).unwrap().trim(),
+        "-M shift -k Insert -m shift"
+    );
+    assert!(root.join("state/state.sqlite").is_file());
+}
+
+#[test]
+fn calc_copy_without_a_compositor_is_an_error_and_records_nothing() {
+    let root = temp();
+    let d = start(root.clone(), &[]);
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"calc_copy","text":"2","expr":"1+1","mode":"copy"}),
+    );
+    send(&mut stream, &json!({"id":3,"op":"calc_history"}));
+    let mut reader = BufReader::new(stream);
+    recv(&mut reader);
+    let copied = recv(&mut reader);
+    assert_eq!(copied["error"]["code"], "io", "{copied}");
+    let history = recv(&mut reader);
+    assert_eq!(history["rows"], json!([]), "{history}");
 }
 
 #[test]

@@ -1,0 +1,161 @@
+# expr<TAB>expected `copy` (what Enter puts on the clipboard). `-` = no card.
+# Expected values are exact math, written by hand; fend prints approximations to 10 decimals.
+# Arithmetic and precedence
+1+1	2
+2+3*4	14
+(2+3)*4	20
+10-4-3	3
+100/4/5	5
+2*3+4*5	26
+7*8	56
+12345+67890	80235
+1000000-1	999999
+999*999	998001
+2^10	1024
+-5+3	-2
+3*-2	-6
+(1+2)*(3+4)	21
+48/(4+4)	6
+1.5*4	6
+0.1+0.2	0.3
+2.5*2.5	6.25
+7/2	3.5
+1/4	0.25
+3/8	0.375
+100*1.07	107
+(10+5)/3	5
+2^3^2	512
+10*10*10	1000
+5-10	-5
+1e3+1	1001
+1e3-5	995
+144/12	12
+17*23	391
+0.5*0.5	0.25
+1/8+1/8	0.25
+3^4	81
+1024/2^4	64
+(3+5)^2	64
+1920*1.25	2400
+1080/2	540
+3 × 4	12
+12 ÷ 4	3
+2 * (3 + (4 * 5))	46
+# Repeating decimals: approximate to 10 places
+10/3	3.3333333333
+2/3	0.6666666667
+1/7	0.1428571429
+10/7	1.4285714286
+# Percent (Raycast semantics for a trailing ± B%)
+200 + 15%	230
+200 - 15%	170
+80 - 25 %	60
+1920*1.25 + 15%	2760
+100 + 10% + 10%	121
+15% of 80	12
+50% of 50	25
+19.99 + 20%	23.988
+1000 - 0.5%	995
+# Lengths
+5 ft to cm	152.4
+1 mile to km	1.609344
+1 inch to mm	25.4
+1 yard to m	0.9144
+10 km to miles	6.2137119224
+100 cm to m	1
+6 ft in m	1.8288
+1 nmi to km	1.852
+# Mass
+1 lb to kg	0.45359237
+1 kg to lb	2.2046226218
+1 oz to g	28.349523125
+2.5 kg to g	2500
+1 stone to kg	6.35029318
+# Data sizes
+3 GiB in MB	3221.225472
+1 GB to MiB	953.67431640625
+1 TB to GB	1000
+1 KiB to bytes	1024
+8 bits to bytes	1
+1 MB to kB	1000
+1 GiB to MiB	1024
+512 MiB to GiB	0.5
+# Temperature
+100 °C to °F	212
+0 celsius to fahrenheit	32
+32 fahrenheit to celsius	0
+300 kelvin to celsius	26.85
+-40 °C to °F	-40
+# Volume, speed, area
+1 litre to ml	1000
+1 gallon to litres	3.785411784
+1 cup to ml	236.5882365
+60 mph to km/h	96.56064
+100 km/h to m/s	27.7777777778
+1 acre to m^2	4046.8564224
+1 hectare to m^2	10000
+1 m^2 to ft^2	10.7639104167
+# Durations
+90 min to hours	1.5
+2 hours to minutes	120
+1 day to seconds	86400
+1 week to days	7
+3600 seconds to hours	1
+1.5 hours to minutes	90
+36 hours to days	1.5
+# Bases
+0xff	255
+0b1010	10
+0o17	15
+0xdeadbeef	3735928559
+0XFF	255
+255 to hex	ff
+255 to binary	11111111
+10 to octal	12
+0xff to binary	11111111
+1234 to hex	4d2
+65535 to hex	ffff
+# Functions and constants
+sqrt(16)	4
+sqrt 16	4
+sqrt(2)	1.4142135624
+cbrt(27)	3
+abs(-5)	5
+ln(1)	0
+log10(1000)	3
+log2(1024)	10
+exp(0)	1
+floor(3.7)	3
+ceil(3.2)	4
+sin(0)	0
+cos(0)	1
+sin(pi/2)	1
+pi*2	6.2831853072
+pi * 10^2	314.159265359
+sqrt(pi)	1.7724538509
+2^0.5	1.4142135624
+# Large and small magnitudes
+2^64	18446744073709551616
+2^100	1267650600228229401496703205376
+123456789*987654321	121932631112635269
+1e20 * 1	100000000000000000000
+1e20	-
+1e-5	0.00001
+1/1e6	0.000001
+0.000001*1000	0.001
+1e-20	0.00000000000000000001
+1e100	-
+10^10^10	-
+# Must not be cards (gate and reject rules)
+firefox	-
+2024 report	-
+M-417	-
+key:2026-06-30	-
+https://example.com/a+b	-
+~/notes+todo	-
+5d66	-
+a-5d66-4b5c	-
+covid-19	-
+iPhone 15	-
+pi	-
+1920	-

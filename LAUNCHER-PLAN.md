@@ -465,6 +465,32 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
 **Acceptance:** the table and the corpus are green; `trowel calc "5 ft to cm" --json` returns
 `152.4 cm` with `took_us` < 1000; `calc` p95 < 1 ms over the table.
 
+**Found while building L2c (2026-10-15; the code follows these, `troweld/src/calc.rs`):**
+- **Crash guard.** fend's parser overflows a 2 MiB thread stack at ~300 nested parentheses and
+  *aborts the process* (not catchable). The gate now refuses input over **256 chars** or nested
+  deeper than **32** brackets, and the fend thread has a **16 MiB** stack (8× margin).
+  `deep_input_never_crashes` sweeps seven recursive shapes up to depth 1000.
+- **Warm-up.** fend builds unit tables on first use (~0.5–1 ms). `Calculator::new` evaluates one
+  conversion before serving, so the first keystroke doesn't pay it; `trowel calc --json` reports
+  it separately as `warmup_us`. Without it the one-shot acceptance command measured 0.9–1.5 ms.
+- **Display precision.** The 16-significant-digit cap applies to fractional results only;
+  integers are never rounded (`2^64` shows all 20 digits, grouped). fend's 10-place padding of
+  approximations (`314.1592653590`) is trimmed in both `copy` and `display`.
+- **`copy` of a unit result is the number** (`152.4`, unit in `unit`), matching L4's `Enter` →
+  `152.4`. Mixed units (`1 ft 3 in`) copy as shown. `alts` are Hex and Binary for non-negative
+  integers that fit in 64 bits, none when the user asked for a base.
+- **Percent rewrite recurses** (`100 + 10% + 10%` = 121); `0X…` is lower-cased for fend; `1e-5` is
+  a number, not an ID token; a bare `1e20` has no operator, so rule 1 shows no card.
+- **Locale.** `LC_ALL` → `LC_NUMERIC` → `LANG`, mapped to glibc's separators for the common
+  languages (`de` `2.760,5`, `fr` `2 760,5` with U+202F); anything else reads as English.
+- **`calc_copy`** answers `io` when `wl-copy` fails (no compositor), and records history only after
+  a successful copy. `plain` behaves like `paste`. The paste keystroke uses Omarchy's 150 ms until
+  L0.4 measures it.
+- Harness: `tests/calc/table.tsv` (146 rows), `tests/calc/false-positives.txt`,
+  `trowel calc --bench FILE` / `--corpus FILE [--quiet]`, and `scripts/calc-corpus.sh` for this
+  machine's apps, testbed file names and Omarchy clipboard (local only, clipboard text never
+  printed).
+
 ### L4. UI (5–6 days)
 
 - `Client.qml`: `calc`, `appsQuery`, `clipQuery`, `clipGet`, `clipPaste` and the others, with separate
