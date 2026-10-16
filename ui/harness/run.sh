@@ -12,7 +12,7 @@ R=${XDG_RUNTIME_DIR:-/tmp}/trowel-harness-$$
 rm -rf "$R" "$OUT"
 mkdir -p "$R" "$OUT"
 python3 -I "$H/prep.py"
-"$REPO/target/debug/troweld" --mock --socket "$R/troweld.sock" >"$R/mock.log" 2>&1 &
+"$REPO/target/debug/troweld" --mock --latency-ms "${HARNESS_LATENCY_MS:-0}" ${HARNESS_FIXTURE:+--fixture "$HARNESS_FIXTURE"} --socket "$R/troweld.sock" >"$R/mock.log" 2>&1 &
 MP=$!
 trap 'kill $MP 2>/dev/null; rm -rf "$R"' EXIT
 sleep 0.4

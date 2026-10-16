@@ -290,19 +290,25 @@ impl StateDb {
             let list: Vec<String> = kinds.iter().map(|k| format!("'{}'", k.as_str())).collect();
             filters.push(format!("kind IN ({})", list.join(",")));
         }
-        let needle = text.trim();
-        if !needle.is_empty() {
-            values.push(SqlValue::Text(needle.to_lowercase()));
-            let literal = "instr(lower(preview), ?1) > 0";
-            match fts_match(needle) {
-                Some(fts) => {
-                    values.push(SqlValue::Text(fts));
-                    filters.push(format!(
-                        "({literal} OR id IN (SELECT rowid FROM clip_fts WHERE clip_fts MATCH ?2))"
-                    ));
-                }
-                None => filters.push(literal.into()),
+        // Every typed word must be found (AND), each as a case-insensitive substring of the preview
+        // or the first 2 KiB of the content, or as a word prefix anywhere (FTS, the index's
+        // tokenizer, for Unicode case and long entries). Substrings matter: "creation" must find
+        // `App-Auth-AccountCreation-Success`, where the tokenizer sees one word.
+        for word in text.split_whitespace().take(8) {
+            let lower = word.to_lowercase();
+            values.push(SqlValue::Text(lower));
+            let n = values.len();
+            let mut cond = format!(
+                "instr(lower(preview), ?{n}) > 0 OR instr(lower(substr(body, 1, 2048)), ?{n}) > 0"
+            );
+            if let Some(fts) = fts_match(word) {
+                values.push(SqlValue::Text(fts));
+                cond.push_str(&format!(
+                    " OR id IN (SELECT rowid FROM clip_fts WHERE clip_fts MATCH ?{})",
+                    values.len()
+                ));
             }
+            filters.push(format!("({cond})"));
         }
         let filter = if filters.is_empty() {
             String::new()
@@ -676,6 +682,15 @@ mod tests {
         assert_eq!(ids(&rows), vec![c.id]);
         let (rows, total) = s.clip_query("", None, 1, 1).unwrap();
         assert_eq!((ids(&rows), total), (vec![c.id], 3), "paged");
+        let (d, _) = s
+            .clip_upsert(&text("App-Auth-AccountCreation-Success", 4))
+            .unwrap();
+        let (rows, _) = s.clip_query("account creation", None, 50, 0).unwrap();
+        assert_eq!(ids(&rows), vec![d.id], "mid-word substrings, every word");
+        let (rows, _) = s.clip_query("CREATION success", None, 50, 0).unwrap();
+        assert_eq!(ids(&rows), vec![d.id], "case-insensitive");
+        let (rows, _) = s.clip_query("creation lunch", None, 50, 0).unwrap();
+        assert!(rows.is_empty(), "AND across words");
     }
 
     #[test]

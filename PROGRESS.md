@@ -172,6 +172,13 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
 
 ## Session log
 
+### 2026-10-16 — Clipboard view drew file rows; mid-word clipboard search
+
+Human (screenshot): the clipboard view's list showed file names (`toolbar_clipboard_copy.png`, an IMAGES header) next to a clip's preview; search inside the clipboard was inaccurate.
+
+- Live state (new `omarchy-shell trowel debugState` / `debugType` / `debugCommand` IPC, no keystrokes) showed the model right but the user's run had drawn file rows: one `ListView` swapped `model` between file results and clips with recycled delegates. Not reproducible offscreen (fixtures with 50 rows, latency, close/reopen). Fixed by construction: the clipboard has its own `ListView` (`clipList`, required properties); late search/apps/calc replies no longer touch the clipboard view; entering it stops the pending hybrid search. Harness now also asserts what delegates *draw* (18/18).
+- Search: words were FTS prefixes only, so `creation` missed `App-Auth-AccountCreation-Success` (one token). Now each word must match as a substring of the preview or the first 2 KiB of the content, or as an FTS word prefix (AND across words). Live: `account creation`, `creation`, `auth`, `finance.ts` find the right entries. Bench p95 1.36 ms (budget 5).
+
 ### 2026-10-16 — Clipboard History as a command
 
 Human: do it like Raycast: "Clipboard" is a command found by searching; opening it shows the items with preview, copy and remove.

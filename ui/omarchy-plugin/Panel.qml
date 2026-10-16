@@ -295,6 +295,7 @@ Item {
   function openClipboard(fromSearch) {
     root.clipFromSearch = fromSearch === true
     root.savedQuery = root.clipFromSearch ? query.text : ""
+    hybridTimer.stop()
     unmapTimer.stop()
     actions.visible = false
     root.view = "clipboard"
@@ -628,6 +629,7 @@ Item {
   }
 
   IpcHandler {
+    id: ipc
     target: "trowel"
     function open(): void {
       root.open("{}")
@@ -646,6 +648,43 @@ Item {
     }
     function apps(): void {
       root.open("{}")
+    }
+    // Debugging without keystrokes: `omarchy-shell trowel debugState` etc.
+    function debugState(): string {
+      var lv = root.view === "clipboard" ? clipList : list
+      var m = lv.model
+      var shown = []
+      for (var i = 0; i < Math.min(m ? m.count : 0, 12); i++)
+        shown.push(m.get(i).rowType + ":" + (m.get(i).title || m.get(i).rowId))
+      var delegates = []
+      // What each visible delegate is drawing: the row title it shows.
+      for (var j = 0; j < lv.contentItem.children.length && delegates.length < 12; j++) {
+        var d = lv.contentItem.children[j]
+        if (!d || !d.visible || d.height < 30)
+          continue
+        for (var k = 0; k < d.children.length; k++)
+          if (d.children[k].visible && d.children[k].row)
+            delegates.push(Math.round(d.y) + ":" + (d.children[k].row.title || d.children[k].row.name || "?"))
+      }
+      return JSON.stringify({
+        view: root.view,
+        phase: root.phase,
+        selection: root.selection,
+        type: root.selectedType,
+        list: root.view === "clipboard" ? "clipList" : "list",
+        modelRows: shown,
+        clipCount: client.clipModel.count,
+        rowsCount: client.rows.count,
+        delegates: delegates,
+        query: query.text
+      })
+    }
+    function debugType(text: string): void {
+      query.text = text
+      root.onQueryEdited()
+    }
+    function debugCommand(id: string): void {
+      root.runCommand(id)
     }
   }
 
@@ -682,14 +721,22 @@ Item {
         })
     }
     onSearchArrived: function (g, meaning) {
+      if (root.view !== "search")
+        return
       if (meaning === "used")
         root.phase = "meaning"
       else if (meaning === "unavailable")
         root.phase = "wordsOnly"
       root.settleSelection()
     }
-    onAppsArrived: root.settleSelection()
-    onCalcArrived: root.settleSelection()
+    onAppsArrived: {
+      if (root.view === "search")
+        root.settleSelection()
+    }
+    onCalcArrived: {
+      if (root.view === "search")
+        root.settleSelection()
+    }
     onClipsArrived: {
       if (root.view === "clipboard")
         root.settleSelection()
@@ -1176,12 +1223,14 @@ Item {
               }
             }
 
+            // Two lists, never one with a swapped model: on the live shell the swap from file
+            // results to the clipboard left recycled delegates drawing file rows (2026-10-16).
             ListView {
               id: list
-              visible: !root.gridMode
-              width: root.gridMode ? 0 : root.listWidth
+              visible: root.view === "search"
+              width: visible ? root.listWidth : 0
               height: parent.height
-              model: root.listModel
+              model: client.rows
               clip: true
               reuseItems: true
               cacheBuffer: 240
@@ -1249,11 +1298,10 @@ Item {
                   }
                   onOpened: root.openSelected()
                 }
-                ClipRow {
-                  visible: rowType === "clip"
+                ResultRow {
+                  visible: rowType === "row"
                   width: parent.width
-                  row: rowType === "clip" ? (client.clipIndex[rowId] || ({})) : ({})
-                  now: root.now
+                  row: model
                   selected: root.selection === rowId
                   onClicked: {
                     root.selection = rowId
@@ -1262,13 +1310,57 @@ Item {
                   }
                   onOpened: root.openSelected()
                 }
-                ResultRow {
-                  visible: rowType === "row"
+              }
+            }
+
+            ListView {
+              id: clipList
+              visible: root.view === "clipboard" && !root.gridMode
+              width: visible ? root.listWidth : 0
+              height: parent.height
+              model: client.clipModel
+              clip: true
+              cacheBuffer: 240
+
+              Connections {
+                target: root
+                function onSelectionChanged() {
+                  if (!clipList.visible)
+                    return
+                  var id = root.selection
+                  Qt.callLater(function () {
+                    var m = client.clipModel
+                    for (var i = 0; i < m.count; i++)
+                      if (m.get(i).rowId === id) {
+                        if (i > 0 && m.get(i - 1).rowType === "header")
+                          clipList.positionViewAtIndex(i - 1, ListView.Contain)
+                        clipList.positionViewAtIndex(i, ListView.Contain)
+                        return
+                      }
+                  })
+                }
+              }
+
+              delegate: Item {
+                id: clipCell
+                required property string rowType
+                required property string rowId
+                required property string title
+                width: clipList.width
+                height: rowType === "header" ? 28 : 46
+                GroupHeader {
+                  visible: clipCell.rowType === "header"
+                  title: clipCell.title
                   width: parent.width
-                  row: model
-                  selected: root.selection === rowId
+                }
+                ClipRow {
+                  visible: clipCell.rowType === "clip"
+                  width: parent.width
+                  row: clipCell.rowType === "clip" ? (client.clipIndex[clipCell.rowId] || ({})) : ({})
+                  now: root.now
+                  selected: root.selection === clipCell.rowId
                   onClicked: {
-                    root.selection = rowId
+                    root.selection = clipCell.rowId
                     root.navigated = true
                     root.pickSelected()
                   }
