@@ -20,11 +20,13 @@ hooks = """
   function harnessSkipOnboarding() { root.wizardOpen = false; root.configKnown = false }
   function harnessType(t) { query.text = t; root.onQueryEdited() }
   function harnessTab(id) { if (root.view === "clipboard") chips.pick(id); else tabs.pick(id) }
+  function harnessActions() { actions.actions = root.actionsFor(); actions.open() }
   function harnessShot(path) { card.grabToImage(function (r) { r.saveToFile(path) }) }
   function harnessState() {
     return JSON.stringify({view: root.view, phase: root.phase, selection: root.selection, type: root.selectedType,
       rows: root.shownRows().map(function (r) { return r.rowId }), calc: client.calcResult ? client.calcResult.display : null,
-      caps: client.capabilities, err: client.lastError})
+      caps: client.capabilities, err: client.lastError, grid: root.gridMode,
+      actions: actions.visible ? actions.shown.map(function (a) { return a.id }) : []})
   }
 """
 i = src.rstrip().rfind("}")

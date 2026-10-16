@@ -29,3 +29,4 @@ Chip 1.0 Chip.qml
 AppPreview 1.0 AppPreview.qml
 ClipPreview 1.0 ClipPreview.qml
 KindChips 1.0 KindChips.qml
+ActionPanel 1.0 ActionPanel.qml

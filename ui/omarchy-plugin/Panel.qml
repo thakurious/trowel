@@ -85,10 +85,179 @@ Item {
   readonly property real topFraction: 0.16
   readonly property int maxPanelHeight: Math.min(560, Math.round(panel.height * 0.6))
 
-  property bool clipPaused: false
+  readonly property bool clipPaused: client.clipPausedAt(root.now)
+  // The Images chip shows the clipboard as a 3-column thumbnail grid (Raycast does this).
+  readonly property bool gridMode: root.view === "clipboard" && chips.current === "image"
+
+  // Ctrl+K: everything the selection can do (ActionPanel), with the keys that do it directly.
+  function actionsFor() {
+    var t = root.selectedType
+    var r = root.selectedRow
+    if (t === "calc") {
+      var c = client.calcResult || {}
+      var out = [{
+          "id": "copy",
+          "label": "Copy " + (c.copy || ""),
+          "keys": "↵"
+        }, {
+          "id": "paste",
+          "label": "Paste " + (c.copy || ""),
+          "keys": "ctrl ↵"
+        }]
+      var alts = c.alts || []
+      for (var i = 0; i < alts.length; i++)
+        out.push({
+          "id": "alt:" + i,
+          "label": "Copy " + alts[i].label + ": " + alts[i].copy
+        })
+      return out
+    }
+    if (t === "app") {
+      var acts = [{
+          "id": "open",
+          "label": "Open " + r.name,
+          "keys": "↵"
+        }]
+      var desk = (r.raw && r.raw.actions) ? r.raw.actions : []
+      for (var j = 0; j < desk.length; j++)
+        acts.push({
+          "id": "action:" + desk[j].id,
+          "label": desk[j].name || desk[j].id
+        })
+      acts.push({
+        "id": "hide",
+        "label": "Hide from the launcher"
+      })
+      return acts
+    }
+    if (t === "clip") {
+      var cl = [{
+          "id": "paste",
+          "label": "Paste",
+          "keys": "↵"
+        }, {
+          "id": "copy",
+          "label": "Copy",
+          "keys": "ctrl ↵"
+        }]
+      if (r.kind === "html" || r.kind === "files")
+        cl.push({
+          "id": "plain",
+          "label": r.kind === "files" ? "Paste the paths as text" : "Paste as plain text",
+          "keys": "shift ↵"
+        })
+      if (r.kind === "link")
+        cl.push({
+          "id": "browser",
+          "label": "Open in browser"
+        })
+      cl.push({
+        "id": "pin",
+        "label": r.pinned ? "Unpin" : "Pin",
+        "keys": "ctrl shift P"
+      }, {
+        "id": "delete",
+        "label": "Delete",
+        "keys": "ctrl del"
+      }, {
+        "id": "clear",
+        "label": "Clear history (pinned stay)"
+      }, {
+        "id": "pause",
+        "label": root.clipPaused ? "Resume capturing" : "Pause capturing for an hour"
+      })
+      return cl
+    }
+    if (t === "row")
+      return [{
+          "id": "open",
+          "label": "Open",
+          "keys": "↵"
+        }, {
+          "id": "reveal",
+          "label": "Show in folder",
+          "keys": "ctrl ↵"
+        }, {
+          "id": "look",
+          "label": "Quick Look",
+          "keys": "space"
+        }, {
+          "id": "copypath",
+          "label": "Copy",
+          "keys": "ctrl C"
+        }]
+    return []
+  }
+
+  function runAction(id) {
+    var t = root.selectedType
+    var r = root.selectedRow
+    if (t === "calc") {
+      if (id === "copy" || id === "paste")
+        copyCalc(id)
+      else if (id.indexOf("alt:") === 0) {
+        var alt = (client.calcResult.alts || [])[Number(id.slice(4))]
+        if (alt) {
+          client.calcCopy(alt.copy, client.calcResult.expr, "copy")
+          root.closeWithToast("Copied " + alt.copy)
+        }
+      }
+    } else if (t === "app") {
+      if (id === "open")
+        openSelected()
+      else if (id.indexOf("action:") === 0) {
+        client.appLaunch(r.appId, id.slice(7))
+        dismiss()
+      } else if (id === "hide") {
+        client.appHide(r.appId, true)
+        toast.show(r.name + " is hidden from the launcher")
+        root.askLauncher(query.text.replace(/^\s+|\s+$/g, ""))
+      }
+    } else if (t === "clip") {
+      if (id === "paste")
+        openSelected()
+      else if (id === "copy")
+        revealSelected()
+      else if (id === "plain")
+        pasteSelectedPlain()
+      else if (id === "browser") {
+        Quickshell.execDetached(["omarchy-launch-browser", r.title])
+        dismiss()
+      } else if (id === "pin")
+        togglePin()
+      else if (id === "delete")
+        deleteSelected()
+      else if (id === "clear") {
+        client.clipClear(true)
+        toast.show("History cleared")
+      } else if (id === "pause") {
+        client.clipPause(root.clipPaused ? 0 : 60)
+        toast.show(root.clipPaused ? "Capturing again" : "Paused for an hour")
+      }
+    } else if (t === "row") {
+      if (id === "open")
+        openSelected()
+      else if (id === "reveal")
+        revealSelected()
+      else if (id === "look")
+        quickLookSelected()
+      else if (id === "copypath")
+        client.copyPath(r)
+    }
+    if (actions.visible === false && root.opened)
+      query.forceActiveFocus()
+  }
 
   function open(payloadJson) {
+    // The bar's "Clipboard history" summons with {"view": "clipboard"}.
+    try {
+      if (JSON.parse(payloadJson || "{}").view === "clipboard") {
+        openClipboard()
+        return
+      }
+    } catch (e) {}
     unmapTimer.stop()
+    actions.visible = false
     var wasClipboard = root.view === "clipboard"
     root.view = "search"
     root.mapped = true
@@ -111,6 +280,7 @@ Item {
   // Straight into clipboard history (`omarchy-shell trowel clipboard`, LAUNCHER-PLAN.md L4).
   function openClipboard() {
     unmapTimer.stop()
+    actions.visible = false
     root.view = "clipboard"
     root.mapped = true
     root.opened = true
@@ -123,6 +293,7 @@ Item {
       return
     query.text = ""
     chips.current = "all"
+    client.clipHeaders = true
     root.phase = "clipboard"
     client.clearApps()
     client.clearCalc()
@@ -138,6 +309,7 @@ Item {
   }
 
   function dismiss() {
+    actions.visible = false
     root.opened = false
     unmapTimer.restart()
     if (root.shell && typeof root.shell.hide === "function")
@@ -497,9 +669,7 @@ Item {
         client.clipRefresh()
     }
     onOpDone: function (op, msg) {
-      if (op === "clip_pause")
-        root.clipPaused = msg.paused_until !== 0
-      else if ((op === "clip_pin" || op === "clip_delete") && root.view === "clipboard")
+      if ((op === "clip_pin" || op === "clip_delete") && root.view === "clipboard")
         client.clipRefresh()
     }
     onPreviewArrived: function (msg) {
@@ -633,6 +803,19 @@ Item {
           }
         }
 
+        ActionPanel {
+          id: actions
+          z: 4
+          anchors.right: parent.right
+          anchors.bottom: parent.bottom
+          anchors.rightMargin: 10
+          anchors.bottomMargin: 34
+          onTriggered: function (id) {
+            root.runAction(id)
+          }
+          onClosed: query.forceActiveFocus()
+        }
+
         Toast {
           id: toast
           z: 3
@@ -685,6 +868,11 @@ Item {
                 else
                   root.dismiss()
                 event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_K) {
+                actions.actions = root.actionsFor()
+                if (actions.actions.length)
+                  actions.open()
+                event.accepted = true
               } else if (ctrl && shift && event.key === Qt.Key_P) {
                 root.togglePin()
                 event.accepted = true
@@ -692,10 +880,10 @@ Item {
                 root.deleteSelected()
                 event.accepted = true
               } else if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N)) {
-                root.moveSelection(1)
+                root.moveSelection(root.gridMode ? 3 : 1)
                 event.accepted = true
               } else if (event.key === Qt.Key_Up || (ctrl && event.key === Qt.Key_P)) {
-                root.moveSelection(-1)
+                root.moveSelection(root.gridMode ? -3 : -1)
                 event.accepted = true
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if (ctrl)
@@ -755,8 +943,10 @@ Item {
               anchors.leftMargin: 14
               anchors.verticalCenter: parent.verticalCenter
               onPicked: function (id) {
+                actions.visible = false
                 root.selection = ""
                 root.navigated = false
+                client.clipHeaders = id !== "image"
                 root.onQueryEdited()
               }
             }
@@ -866,9 +1056,83 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
 
+            GridView {
+              id: grid
+              visible: root.gridMode
+              width: root.gridMode ? root.listWidth : 0
+              height: parent.height
+              model: root.gridMode ? client.clipModel : null
+              clip: true
+              cellWidth: Math.floor((root.listWidth - 12) / 3)
+              cellHeight: cellWidth
+              leftMargin: 6
+              topMargin: 6
+              cacheBuffer: 240
+              reuseItems: true
+
+              Connections {
+                target: root
+                function onSelectionChanged() {
+                  if (!root.gridMode)
+                    return
+                  var m = client.clipModel
+                  for (var i = 0; i < m.count; i++)
+                    if (m.get(i).rowId === root.selection) {
+                      grid.positionViewAtIndex(i, GridView.Contain)
+                      return
+                    }
+                }
+              }
+
+              delegate: Item {
+                id: cell
+                required property string rowId
+                required property string thumb
+                required property string kind
+                width: grid.cellWidth
+                height: grid.cellHeight
+                Rectangle {
+                  anchors.fill: parent
+                  anchors.margins: 3
+                  radius: 8
+                  color: Theme.alpha(Theme.foreground, 0.045)
+                  border.width: root.selection === cell.rowId ? 2 : Theme.hairlineWidth()
+                  border.color: root.selection === cell.rowId ? Theme.accent : Theme.hairline
+                  clip: true
+                  Image {
+                    id: cellImg
+                    anchors.fill: parent
+                    anchors.margins: 2
+                    source: cell.thumb.length ? "file://" + cell.thumb : ""
+                    sourceSize.width: width
+                    sourceSize.height: height
+                    asynchronous: true
+                    fillMode: Image.PreserveAspectCrop
+                    visible: status === Image.Ready
+                  }
+                  KindIcon {
+                    anchors.centerIn: parent
+                    kind: "image"
+                    side: 26
+                    visible: cellImg.status !== Image.Ready
+                  }
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: {
+                    root.selection = cell.rowId
+                    root.navigated = true
+                    root.pickSelected()
+                  }
+                  onDoubleClicked: root.openSelected()
+                }
+              }
+            }
+
             ListView {
               id: list
-              width: root.listWidth
+              visible: !root.gridMode
+              width: root.gridMode ? 0 : root.listWidth
               height: parent.height
               model: root.listModel
               clip: true
@@ -1033,11 +1297,13 @@ Item {
               model: {
                 switch (root.selectedType) {
                 case "calc":
-                  return [["↵", "Copy"], ["ctrl ↵", "Paste"]]
+                  return [["↵", "Copy"], ["ctrl ↵", "Paste"], ["ctrl K", "Actions"]]
                 case "app":
-                  return [["↵", "Open"]]
+                  return [["↵", "Open"], ["ctrl K", "Actions"]]
                 case "clip":
-                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["shift ↵", "As text"], ["ctrl shift P", root.selectedRow && root.selectedRow.pinned ? "Unpin" : "Pin"]]
+                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["ctrl K", "Actions"]]
+                case "row":
+                  return [["↵", "Open"], ["ctrl ↵", "Reveal"], ["space", "Quick Look"], ["ctrl K", "Actions"]]
                 default:
                   return [["↵", "Open"], ["ctrl ↵", "Reveal"], ["space", "Quick Look"], ["ctrl C", "Copy"]]
                 }

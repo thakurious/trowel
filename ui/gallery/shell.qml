@@ -184,9 +184,187 @@ ShellRoot {
           font.pixelSize: Theme.captionSize
         }
         Text {
-          text: "Settings tabs: General · Folders · Code · Storage"
+          text: "Settings tabs: General · Folders · Code · Launcher & Clipboard · Storage"
           color: Theme.secondary
           font.pixelSize: Theme.captionSize
+        }
+
+        // Phase 8 L4: launcher and clipboard components.
+        Text {
+          text: "Launcher & clipboard"
+          color: Theme.foreground
+          font.pixelSize: Theme.emptyTitleSize
+          font.weight: Font.DemiBold
+          topPadding: 12
+        }
+        CalcCard {
+          width: parent.width
+          result: {
+            "expr": "1920*1.25 + 15%",
+            "pretty_expr": "1920 × 1.25 + 15%",
+            "display": "2,760",
+            "copy": "2760",
+            "kind": "number"
+          }
+        }
+        CalcCard {
+          width: parent.width
+          selected: false
+          result: {
+            "expr": "pi",
+            "pretty_expr": "π",
+            "display": "3.1415926536",
+            "copy": "3.1415926536",
+            "kind": "number",
+            "approx": true
+          }
+        }
+        GroupHeader {
+          title: "Applications"
+        }
+        AppRow {
+          width: 330
+          selected: true
+          row: {
+            "name": "Firefox",
+            "generic": "Web Browser",
+            "iconName": "firefox",
+            "actionCount": 2
+          }
+        }
+        AppRow {
+          width: 330
+          row: {
+            "name": "Omacalc",
+            "generic": "Calculator",
+            "iconName": "accessories-calculator",
+            "actionCount": 0
+          }
+        }
+        GroupHeader {
+          title: "Pinned"
+        }
+        Repeater {
+          model: [{
+              "kind": "text",
+              "title": "firewall rules for the staging cluster",
+              "sourceApp": "Slack",
+              "lastUsed": Date.now() / 1000 - 130,
+              "pinned": true
+            }, {
+              "kind": "link",
+              "title": "https://github.com/thakurious/trowel/pull/7",
+              "domain": "github.com",
+              "sourceApp": "google-chrome",
+              "lastUsed": Date.now() / 1000 - 4000
+            }, {
+              "kind": "color",
+              "title": "#F2A22A",
+              "color": "#F2A22A",
+              "sourceApp": "gimp",
+              "lastUsed": Date.now() / 1000 - 90000
+            }, {
+              "kind": "code",
+              "title": "fn main() { println!(\"hello\"); }",
+              "sourceApp": "com.mitchellh.ghostty",
+              "lastUsed": Date.now() / 1000 - 30
+            }, {
+              "kind": "files",
+              "title": "invoice-2026-09.pdf, receipt.png",
+              "files": 2,
+              "sourceApp": "io.github.lgse.Strata",
+              "lastUsed": Date.now() / 1000 - 600
+            }, {
+              "kind": "html",
+              "title": "Refund policy: items may be returned within 30 days",
+              "sourceApp": "google-chrome",
+              "lastUsed": Date.now() / 1000 - 7200
+            }]
+          delegate: ClipRow {
+            required property var modelData
+            required property int index
+            width: 330
+            selected: index === 0
+            row: modelData
+          }
+        }
+        KindChips {
+          current: "text"
+        }
+        Row {
+          spacing: 8
+          Chip {
+            label: "Open in browser"
+          }
+          Chip {
+            label: "#F2A22A"
+            mono: true
+          }
+          Toast {
+            Component.onCompleted: {
+              holdMs = 1e9
+              show("Copied 152.4")
+            }
+          }
+        }
+        Row {
+          spacing: 12
+          ClipPreview {
+            width: 450
+            height: 260
+            row: {
+              "clipId": 1,
+              "kind": "color",
+              "color": "#F2A22A",
+              "raw": {
+                "source_app": "gimp",
+                "bytes": 7
+              }
+            }
+            content: {
+              "row": {
+                "id": 1
+              },
+              "text": "#F2A22A"
+            }
+          }
+          ActionPanel {
+            Component.onCompleted: {
+              actions = [{
+                  "id": "paste",
+                  "label": "Paste",
+                  "keys": "↵"
+                }, {
+                  "id": "copy",
+                  "label": "Copy",
+                  "keys": "ctrl ↵"
+                }, {
+                  "id": "pin",
+                  "label": "Pin",
+                  "keys": "ctrl shift P"
+                }]
+              visible = true
+            }
+          }
+        }
+        AppPreview {
+          width: 450
+          height: 300
+          row: {
+            "name": "Firefox",
+            "generic": "Web Browser",
+            "comment": "Browse the World Wide Web",
+            "iconName": "firefox",
+            "launches": 14,
+            "raw": {
+              "source": "/usr/share/applications/firefox.desktop",
+              "last_launched": Date.now() / 1000 - 3 * 86400,
+              "actions": [{
+                  "id": "new-window",
+                  "name": "New Window"
+                }]
+            }
+          }
         }
       }
     }

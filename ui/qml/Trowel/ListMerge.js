@@ -85,12 +85,13 @@ function merge(files, apps, query, opts) {
 }
 
 // Clipboard view rows: pinned first, as the daemon returns them; a "Pinned" header when any.
-function clipRows(clips) {
+// `headers: false` for the Images grid, whose cells are all thumbnails.
+function clipRows(clips, headers) {
   var out = []
   var cs = clips || []
   var pinned = 0
   for (var i = 0; i < cs.length; i++)
-    if (cs[i].pinned)
+    if (cs[i].pinned && headers !== false)
       pinned++
   if (pinned > 0)
     out.push({
@@ -148,4 +149,37 @@ function ago(at, now) {
   if (s < 86400)
     return Math.floor(s / 3600) + " h ago"
   return Math.floor(s / 86400) + " d ago"
+}
+
+// Action panel filter: every query character in order (case-insensitive). Labels starting with
+// the query come first, then word-start matches, then the rest; ties keep the given order.
+function filterActions(actions, query) {
+  var q = String(query || "").toLowerCase().replace(/\s+/g, "")
+  var list = actions || []
+  if (!q.length)
+    return list.slice()
+  var scored = []
+  for (var i = 0; i < list.length; i++) {
+    var label = String(list[i].label || "").toLowerCase()
+    var at = 0
+    var ok = true
+    for (var c = 0; c < q.length; c++) {
+      at = label.indexOf(q.charAt(c), at)
+      if (at < 0) {
+        ok = false
+        break
+      }
+      at++
+    }
+    if (!ok)
+      continue
+    var rank = label.indexOf(q) === 0 ? 0 : (new RegExp("(^|[^a-z0-9])" + q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(label) ? 1 : 2)
+    scored.push({ rank: rank, i: i })
+  }
+  scored.sort(function (a, b) {
+    return a.rank - b.rank || a.i - b.i
+  })
+  return scored.map(function (s) {
+    return list[s.i]
+  })
 }

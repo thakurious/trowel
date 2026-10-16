@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 const src = readFileSync(new URL("../ui/qml/Trowel/ListMerge.js", import.meta.url), "utf8")
   .replace(/^\.pragma library\s*$/m, "");
 const M = {};
-vm.runInNewContext(src + "\nthis.M = { strongApp, merge, clipRows, selectable, defaultSelection, ago };", M);
+vm.runInNewContext(src + "\nthis.M = { strongApp, merge, clipRows, selectable, defaultSelection, ago, filterActions };", M);
 const L = M.M;
 
 const files = [
@@ -73,6 +73,7 @@ test("clip rows: pinned section, then recent", () => {
   assert.deepEqual(ids(rows), ["hdr:pinned", "clip:9", "hdr:recent", "clip:8"]);
   assert.equal(rows[3].sourceApp, "google-chrome");
   assert.deepEqual(ids(L.clipRows([clips[1]])), ["clip:8"], "no headers without pins");
+  assert.deepEqual(ids(L.clipRows(clips, false)), ["clip:9", "clip:8"], "grid: no headers");
 });
 
 test("ago", () => {
@@ -80,6 +81,24 @@ test("ago", () => {
   assert.equal(L.ago(100, 100 + 150), "2 m ago");
   assert.equal(L.ago(0, 7200), "2 h ago");
   assert.equal(L.ago(0, 86400 * 3), "3 d ago");
+});
+
+test("action filter: prefix, then word start, then subsequence", () => {
+  const acts = [
+    { id: "copy", label: "Copy" },
+    { id: "paste", label: "Paste" },
+    { id: "plain", label: "Paste as plain text" },
+    { id: "pin", label: "Pin" },
+    { id: "open", label: "Open in browser" },
+  ];
+  const f = (q) => Array.from(L.filterActions(acts, q), (a) => a.id);
+  assert.deepEqual(f(""), ["copy", "paste", "plain", "pin", "open"]);
+  assert.deepEqual(f("pa"), ["paste", "plain"]);
+  assert.deepEqual(f("pl"), ["plain"], "pLain is a subsequence of 'paste as plain' only");
+  assert.deepEqual(f("brow"), ["open"], "word start");
+  assert.deepEqual(f("pn"), ["plain", "pin", "open"], "all subsequences: given order");
+  assert.deepEqual(f("zz"), []);
+  assert.deepEqual(f("P+"), [], "regex characters are literal");
 });
 
 console.log(`listmerge: ${n} tests passed`);

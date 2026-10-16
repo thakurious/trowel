@@ -195,7 +195,9 @@ Optional fields are **absent** when empty, never `null`. `ClipKind` is the close
  "missing_roots": [], "unreadable_roots": [],
  "counts": {"screenshots":120,"images":800,"documents":44,"video":3,"audio":9,"code":0},
  "worker": "down|starting|ready", "vectors_loaded": true,
- "last_error": null}
+ "last_error": null,
+ "clip_paused_until": -1}         // Phase 8 L4; absent while the clipboard is captured. -1 = paused until resumed,
+                                  // else a Unix time (in the past = capturing again)
 ```
 
 The daemon coalesces status events to at most **4 per second**, enough for a smooth progress ring

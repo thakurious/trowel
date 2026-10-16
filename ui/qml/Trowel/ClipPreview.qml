@@ -135,10 +135,11 @@ Item {
       spacing: 12
       visible: root.kind === "color"
 
+      // Three chips and the gaps take ~140 px; the swatch gets what's left, 48–120 px.
       Rectangle {
         anchors.horizontalCenter: parent.horizontalCenter
-        width: 120
-        height: 120
+        width: Math.max(48, Math.min(120, card.height - 150))
+        height: width
         radius: 12
         color: (root.row && root.row.color) ? root.row.color : "transparent"
         border.width: Theme.hairlineWidth()

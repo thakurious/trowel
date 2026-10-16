@@ -7,7 +7,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c, L2 and L3 done** (protocol v2, `state.sqlite`, mock; calculator, app index and clipboard history served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
 - **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release`. The **running** daemon (pid started 2026-10-14 18:16) is the pre-L1 v1 binary, already deleted on disk; `target/release` now holds the L3 build. **Any restart of `troweld.service` brings up the v2 daemon with clipboard capture on** (`[clipboard] capture = true` default) next to the still-v1 panel. omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** L4 slice 2: `ActionPanel.qml` (app desktop actions, clip actions), the Images 3-column grid, bar-widget clipboard pause, the "Launcher & Clipboard" settings tab, gallery entries, `trowel debug ui-trace` for `apps_query`/`clip_query`. Then the one-step live deploy (L4 live acceptance: `fire⏎` < 150 ms, paste into Alacritty/Chromium, P4 evals unchanged; L3 24 h orphan check). Open: question 2 (HTML restore; `clip_paste` is wired as the plan says), the L0.5 password-manager copy.
+- **Next step:** the one-step live deploy, **with the human's go-ahead** (it restarts troweld and omarchy-shell and replaces the installed plugin's `Panel.qml`/`BarWidget.qml`): `cargo build --release && cp ui/omarchy-plugin/{Panel,BarWidget}.qml ~/.local/share/trowel/omarchy-plugin/ && systemctl --user restart troweld.service && omarchy restart shell`. Then the L4 live acceptance and the L3 24 h orphan check, then L5. Open: question 2 (HTML restore; `clip_paste` is wired as the plan says), the L0.5 password-manager copy.
 
 ### Phase 8 map
 
@@ -22,7 +22,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | L2 | apps index: Desktop Entry parser, `AppSearch.js` port + parity gate, icons, `trowel apps/launch` | ✅ this session |
 | L2c | calculator: fend-core wrapper, gate/reject rules, 146-row table, false-positive corpus | ✅ |
 | L3 | clipboard engine: capture, classify, dedup, retention/GC, restore, import | ✅ 2026-10-15 (live script + budgets pass); the 24 h zero-orphan check waits for the live deploy |
-| L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | ◐ slice 1 done 2026-10-16 (merged list, calculator card, app and clip rows and previews, clipboard view with chips, toast, IPC `clipboard`/`apps`, offscreen harness). Left: ActionPanel, Images grid, bar widget pause, settings tab, gallery entries, ui-trace for apps/clip, live acceptance |
+| L4 | UI: merged list, CalcCard, AppRow/ClipRow/ActionPanel, clipboard view, settings tab | ◐ built and checked offscreen against `--mock` (2026-10-16, slices 1–2). Left: the **live acceptance** (needs the deploy: `fire⏎` < 150 ms, paste into Alacritty/Chromium, UI-DESIGN §5 budgets, P4 evals unchanged) and the theme/scale screenshot matrix |
 | L5 | setup prompts, doctor rows, F-C1..F-C5, PKGBUILD | after L3/L4 |
 | L6 | extras: Omarchy commands → window switcher → clipboard OCR | backlog |
 | 8U | upstream 0.6.1 parity U1–U12 | U1 first; independent of L* |
@@ -168,6 +168,24 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-16 — L4 slice 2: actions, image grid, bar, settings, gallery
+
+- `ActionPanel.qml` (Ctrl+K) with `ListMerge.filterActions` (node test); actions per selection type.
+- Clipboard Images chip → 3-column `GridView` (header-less rows), ↑/↓ by three.
+- `status.clip_paused_until` (proto `Status`, engine broadcasts on `clip_pause`, PROTOCOL updated; daemon test asserts it). Bar widget: paused dot, "Clipboard history…" (summon payload), pause/resume.
+- `trowel-app` Settings → "Launcher & Clipboard" tab (rendered offscreen against the mock and checked).
+- Gallery: CalcCard ×2, AppRow ×2, ClipRow per kind, KindChips, Chip, Toast, ClipPreview (color), ActionPanel, AppPreview.
+- `trowel debug ui-trace` adds `apps_fire`, `calc_5ft`, `clip_query` (16 ms each).
+
+Evidence:
+
+```
+$ node scripts/listmerge-test.mjs          → listmerge: 9 tests passed
+$ python3 -I ui/harness/check.py           → 13/13 ok (adds app/clip action lists, Images grid, bar summon payload)
+$ trowel debug ui-trace --socket <mock>    → apps_fire 0.44 ms, calc_5ft 0.29 ms, clip_query 0.55 ms (budget 16)
+$ cargo fmt --check; cargo clippy -D warnings; cargo test --workspace   → clean / green
+```
 
 ### 2026-10-16 — L4 slice 1: merged list, calculator card, clipboard view
 

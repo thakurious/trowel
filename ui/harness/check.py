@@ -10,14 +10,18 @@ steps = [
     {"do": "ready"}, {"do": "open"},
     {"do": "type", "text": "fire", "wait": 700}, {"do": "log", "what": "fire"}, {"do": "shot", "name": "fire"},
     {"do": "type", "text": "notes", "wait": 700}, {"do": "log", "what": "notes"}, {"do": "shot", "name": "notes"},
+    {"do": "type", "text": "fire", "wait": 700}, {"do": "actions", "wait": 300}, {"do": "log", "what": "app-actions"}, {"do": "shot", "name": "app-actions"},
     {"do": "type", "text": "5 ft to cm", "wait": 700}, {"do": "log", "what": "calc"}, {"do": "shot", "name": "calc"},
     {"do": "down", "wait": 200}, {"do": "log", "what": "calc-down"},
     {"do": "tab", "id": "doc", "wait": 600}, {"do": "log", "what": "doc-tab"},
     {"do": "clipboard", "wait": 700}, {"do": "log", "what": "clip"}, {"do": "shot", "name": "clip"},
     {"do": "down", "wait": 200}, {"do": "down", "wait": 200}, {"do": "down", "wait": 200}, {"do": "down", "wait": 500},
     {"do": "log", "what": "color"}, {"do": "shot", "name": "color"},
+    {"do": "actions", "wait": 300}, {"do": "log", "what": "clip-actions"},
+    {"do": "tab", "id": "image", "wait": 600}, {"do": "log", "what": "images"}, {"do": "shot", "name": "images"},
     {"do": "tab", "id": "link", "wait": 600}, {"do": "log", "what": "links"},
     {"do": "open", "wait": 600}, {"do": "log", "what": "back"},
+    {"do": "open", "payload": {"view": "clipboard"}, "wait": 600}, {"do": "log", "what": "bar-summon"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -35,8 +39,12 @@ checks = [
     ("a kind tab drops the launcher sources", lambda s: s["doc-tab"]["calc"] is None and not any(r.startswith("app:") for r in s["doc-tab"]["rows"])),
     ("clipboard view: pinned first, first item selected", lambda s: s["clip"]["view"] == "clipboard" and s["clip"]["rows"][:2] == ["hdr:pinned", "clip:808"] and s["clip"]["selection"] == "clip:808"),
     ("↓ skips headers", lambda s: s["color"]["selection"] == "clip:810"),
+    ("app actions: open, desktop actions, hide", lambda s: s["app-actions"]["actions"] == ["open", "action:new-window", "action:new-private-window", "hide"]),
+    ("clip actions for a color", lambda s: s["clip-actions"]["actions"] == ["paste", "copy", "pin", "delete", "clear", "pause"]),
+    ("Images chip: a grid without headers", lambda s: s["images"]["grid"] is True and s["images"]["rows"] == ["clip:808"] and s["images"]["selection"] == "clip:808"),
     ("Links chip filters", lambda s: s["links"]["rows"] == ["clip:811"] and s["links"]["selection"] == "clip:811"),
     ("opening again returns to search", lambda s: s["back"]["view"] == "search"),
+    ("the bar's summon payload opens the clipboard view", lambda s: s["bar-summon"]["view"] == "clipboard" and s["bar-summon"]["selection"] == "clip:808"),
 ]
 failed = 0
 for name, check in checks:

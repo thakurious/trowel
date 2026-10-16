@@ -645,6 +645,25 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
   hooks, stubs `qs.Commons`, and `check.py` asserts selection and rows against `troweld --mock`. It
   never touches the live session.
 
+**Found while building L4, slice 2 (2026-10-16):**
+
+- **Action panel is `Ctrl+K`** (Raycast's ⌘K): open, desktop actions and "Hide from the launcher"
+  for an app; paste/copy/plain/open/pin/delete/clear/pause for a clip; copy, paste and the `alts`
+  for the calculator; open/reveal/Quick Look/copy for a file. Fuzzy filter in `ListMerge.js`.
+- **Images grid:** the Images chip shows the clipboard as a 3-column grid (rows without headers);
+  `↑`/`↓` move by a row of three.
+- **The pause state needed a home.** Nothing reported clipboard incognito to a client that didn't
+  set it, so the bar widget couldn't show it. `status` gains `clip_paused_until` (absent while
+  capturing; PROTOCOL §4). The bar shows a dot on its icon while paused, and its popup gains
+  "Clipboard history…" (`summon` payload `{"view":"clipboard"}`) and a pause/resume entry.
+- **Settings "Launcher & Clipboard"** (`trowel-app`): capture on/off, the three limits, excluded
+  apps (chips, plus the classes of the windows open now from `hyprctl -j clients`), import from
+  Omarchy, clear, and the hidden-apps list (read from `~/.config/trowel/launcher.hides`, "Show"
+  sends `app_hide false`). The Super+Ctrl+V takeover stays in `trowel setup` (L5) because it edits
+  the Hyprland config; the tab says so.
+- `trowel debug ui-trace` probes `apps_query`, `calc` and `clip_query` when advertised, each with a
+  one-frame (16 ms) budget.
+
 ### L5. Omarchy integration and hardening (2–3 days)
 
 - `trowel setup`: the opt-in prompts from P-D18 and P-D23, each with a backup and recorded in the

@@ -1016,6 +1016,8 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
         }
         Op::ClipPause { minutes } => {
             let until = engine.clip_watch.pause(minutes);
+            engine.status.lock().expect("status").clip_paused_until = until;
+            engine.broadcast_status();
             reply_ok(conn, id, json!({ "paused_until": until }));
         }
         Op::ClipIngest {

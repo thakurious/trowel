@@ -70,6 +70,11 @@ QtObject {
     return null
   }
   readonly property bool paused: !!(root.status && (root.status.paused_reason || root.status.phase === "paused"))
+  // Clipboard incognito from `status.clip_paused_until` (-1 = until resumed, else a Unix time).
+  readonly property real clipPausedUntil: (root.status && root.status.clip_paused_until) ? root.status.clip_paused_until : 0
+  function clipPausedAt(nowSec) {
+    return root.clipPausedUntil === -1 || root.clipPausedUntil > nowSec
+  }
 
   // Strong results per kind for the query without the kind filter (the tab counts),
   // and the query text they belong to.
@@ -91,6 +96,8 @@ QtObject {
   property int clipGen: 0
   property string clipText: ""
   property var clipKinds: []
+  // Off for the Images grid (ListMerge.clipRows).
+  property bool clipHeaders: true
   // rowId → the plain JS item behind each row. ListModel turns nested objects and arrays into
   // models, so previews read app and clip details from here instead.
   property var rowIndex: ({})
@@ -277,7 +284,7 @@ QtObject {
   }
 
   function syncClips() {
-    var wanted = ListMerge.clipRows(root.clips)
+    var wanted = ListMerge.clipRows(root.clips, root.clipHeaders)
     root.clipIndex = indexOf(wanted)
     syncList(root.clipModel, wanted)
   }

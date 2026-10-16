@@ -493,8 +493,15 @@ fn capture_classify_dedup_restore_and_privacy() {
         assert!(Instant::now() < deadline, "{row}");
         thread::sleep(Duration::from_millis(20));
     }
+    let status = c.call(json!({"op":"status"}));
+    assert_eq!(
+        status["clip_paused_until"], -1,
+        "status carries the pause: {status}"
+    );
     let resumed = c.call(json!({"op":"clip_pause","minutes":0}));
     assert_eq!(resumed["paused_until"], 0);
+    let status = c.call(json!({"op":"status"}));
+    assert!(status.get("clip_paused_until").is_none(), "{status}");
     wait_watcher(&mut c);
     text(&stub, 12, "after resume", "Slack");
     let hits = c.call(json!({"op":"clip_query","text":"after resume","gen":7}));

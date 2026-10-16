@@ -118,6 +118,45 @@ pub fn ui_trace(socket: PathBuf, as_json: bool) -> Result<(), String> {
     }
     rows.push(("hybrid_zebra", d, 200));
 
+    // Launcher sources (LAUNCHER-PLAN.md L4): each must answer within one 60 Hz frame so apps and
+    // the calculator card paint in the frame after the keystroke.
+    let caps: Vec<String> = hello["capabilities"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| c.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let has = |c: &str| caps.iter().any(|x| x == c);
+    let launcher: [(&'static str, &str, Value); 3] = [
+        (
+            "apps_fire",
+            "apps",
+            json!({"id":5,"op":"apps_query","text":"fire","gen":1}),
+        ),
+        (
+            "calc_5ft",
+            "calc",
+            json!({"id":6,"op":"calc","text":"5 ft to cm","gen":1}),
+        ),
+        (
+            "clip_query",
+            "clipboard",
+            json!({"id":7,"op":"clip_query","text":"","gen":1}),
+        ),
+    ];
+    for (name, cap, req) in launcher {
+        if !has(cap) {
+            continue;
+        }
+        let (reply, d) = roundtrip(&mut stream, &mut reader, req)?;
+        if reply["ok"] != true {
+            return Err(format!("{name}: {reply}"));
+        }
+        rows.push((name, d, 16));
+    }
+
     let mut failed = Vec::new();
     if as_json {
         let out: Vec<Value> = rows
