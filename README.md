@@ -1,71 +1,143 @@
 # Trowel
 
-**On-device multimodal file search for Omarchy.** Trowel is a Linux port of
-[ARahim3/DigUp](https://github.com/ARahim3/DigUp) (a macOS app).
+**A Raycast-style command bar for [Omarchy](https://omarchy.org): app launcher, inline calculator,
+clipboard history, and on-device search inside your files, all on Super+D.**
 
-This repo holds the plan to port DigUp — on-device, multimodal semantic
-file search built on Google DeepMind's **EmbeddingGemma 2** (text + images + audio + video, 768-d,
-Apache-2.0) — to Linux, targeting **Omarchy (Arch + Hyprland + Quickshell)** on this machine:
-**Intel Core Ultra 7 258V (Lunar Lake), Arc 140V iGPU, 30 GB RAM, Wayland**.
+The file search is a Linux port of [ARahim3/DigUp](https://github.com/ARahim3/DigUp) (macOS). It finds
+screenshots, photos, PDFs, documents, audio, video and code by what's *in* them ("payment error
+screenshot", "the part where they talk about sleep"), using Google DeepMind's **EmbeddingGemma 2** on
+your own GPU. Nothing leaves the machine.
 
-**You do not need a Mac.** Trowel runs on Omarchy (Arch + Hyprland + Quickshell). The product
-name is Trowel (DECISIONS D17); DigUp is the upstream macOS app this port follows.
+## What you get
 
-## Use it
+Press **Super+D** and type.
+
+| You type | You see | Enter does |
+|---|---|---|
+| `fire`, `chro`, `slack` | **Applications**, ranked the way Omarchy's launcher ranks them, plus how often you launch them. An app whose name starts with what you typed comes first. | Launches it (`uwsm-app -- gtk-launch`, like Omarchy) |
+| `5 ft to cm`, `1920*1.25 + 15%`, `0xff to binary`, `3 GiB in MB` | A **calculator card** above the results (offline: units, bases, percentages, functions) | Copies the result (`Ctrl+Enter` pastes it) |
+| `invoice from march`, `zebra in a video` | **Files**, grouped by kind, with a preview: picture, PDF page with the match tinted, code lines, a passage, an audio or video moment | Opens it at the place that matched |
+
+`omarchy-shell trowel clipboard` opens **clipboard history**: text, links, colors, code, formatted
+text, images and copied files, searchable, with pins. Enter pastes into the app you were in;
+`Ctrl+Enter` only copies; `Shift+Enter` pastes as plain text. Tab cycles All · Text · Images · Files
+· Links · Colors (Images is a thumbnail grid).
+
+Everywhere: **`Ctrl+K`** opens the actions for the selected item (an app's desktop actions, hide an
+app, pin/delete a clip, the calculator's hex/binary forms, reveal a file, …). `↑`/`↓` move, `Esc`
+closes. Full keyboard map: [UI-DESIGN.md §3.4](UI-DESIGN.md).
+
+The Trowel app window ("Trowel" in the app launcher, or `quickshell -p /usr/share/trowel/app`) has search,
+Quick Look and Settings: folders, code folders, the shortcut, and **Launcher & Clipboard** (capture
+on/off, how much to keep, apps never to record, import Omarchy's history, hidden apps).
+
+## Install
+
+Requirements: Omarchy (Hyprland 0.56 with the Lua config, omarchy-shell / Quickshell 0.3.x),
+`wl-clipboard`, `wtype`, `libvips`, `poppler`, `tesseract`, `ffmpeg`, a Rust toolchain, and ~1 GB for
+the model.
 
 ```bash
-# from this checkout, after a workspace build:
-export PATH="$PWD/target/debug:$PATH"
-trowel setup --from-tree "$PWD"
+git clone --recurse-submodules https://github.com/thakurious/trowel.git && cd trowel
+scripts/build-llama.sh                 # the embedding worker (llama.cpp, Vulkan)
+cargo build --release
+target/release/trowel setup --from-tree "$PWD"
 ```
 
-That installs the Omarchy plugin (`io.github.thakurious.trowel`), the Super+D bind, and
-`troweld.socket` for your user. **Restart omarchy-shell once** (or log out), then press
-**Super+D**. First open is onboarding; indexing starts after you pick folders.
+`setup` installs `trowel`, `troweld` and `trowel-worker` into `~/.local/bin`, the omarchy-shell plugin
+(`io.github.thakurious.trowel`), the Super+D bind, and the `troweld.socket` user unit. Every config
+file it touches is backed up as `<file>.bak.trowel-<timestamp>`. **Restart omarchy-shell once**
+(`omarchy restart shell`), press **Super+D**, and pick the folders to search; the model (865 MB)
+downloads once. A packaged install is `makepkg -si` in `packaging/`, then `trowel setup`.
 
 ```bash
-trowel doctor              # why isn't it working
-trowel uninstall           # plugin + units
-trowel uninstall --purge   # also deletes ~/.local/share/trowel and config
+trowel doctor              # what's wrong, and how to fix it
+trowel uninstall           # plugin, bind and units
+trowel uninstall --purge   # also ~/.local/share/trowel (index, clipboard history) and config
 ```
 
-Packaged install (Phase 7 PKGBUILD): `makepkg -si` then `trowel setup`.
+Clipboard history coexists with Omarchy's own (Super+Ctrl+V): both can run, and reading the
+clipboard is harmless.
+
+## Command line
+
+```bash
+trowel calc "5 ft to cm"            # 152.4 cm
+trowel apps fire                    # what the launcher would show
+trowel launch firefox               # launch and count it, like the panel
+trowel clip list [query] [--kind link]
+trowel clip get 812 | paste 812 --mode paste | pin 812 | delete 812 | clear [--all]
+trowel clip pause [minutes] | resume | import-omarchy
+trowel search "payment error screenshot"
+trowel status | doctor
+```
+
+## Privacy
+
+Everything runs on this computer. Trowel goes online only to download its model, once. Clipboard
+history lives in `~/.local/share/trowel/state.sqlite` and `~/.local/share/trowel/clipboard/` (owner
+only, `0600`), is capped at 1000 items / 30 days / 512 MB by default (pins are kept), and skips copies
+an app marks as a password, copies from 1Password, Bitwarden and KeePassXC, and any app you add in
+Settings. Pausing (Ctrl+K → "Pause capturing", or `trowel clip pause`) stops the watcher entirely.
+
+## How it works
+
+- **`troweld`** (Rust, systemd user service): the file index (crawler, extractors, `trowel-worker`
+  running EmbeddingGemma 2 through llama.cpp on Vulkan, hybrid vector + SQLite FTS5 search), the app
+  index (Desktop Entry parser, Omarchy's ranking, inotify), the calculator
+  ([`fend-core`](https://github.com/printfn/fend), in-process, 20 ms limit), and the clipboard (a
+  supervised `wl-paste --watch`, a content-addressed blob store with refcounted GC).
+- **UI**: an omarchy-shell plugin panel on the Overlay layer and a separate `trowel-app` Quickshell
+  window, both following the live Omarchy theme. They speak JSON lines to `troweld` over
+  `$XDG_RUNTIME_DIR/trowel/troweld.sock` ([PROTOCOL.md](PROTOCOL.md), v2).
+- **Fidelity:** file search matches upstream DigUp's vectors (cosine ≥ 0.999 against reference
+  vectors), prompts, tokenizer and search math, and its recall evals, so results are the same as on a
+  Mac.
+
+## Status
+
+| Part | State |
+|---|---|
+| File search (Phases 0–7) | Done and in daily use: indexing, hybrid search, previews, code search, onboarding, settings, `doctor`, packaging. The 72-hour soak and a fresh-account `makepkg -si` are still open. |
+| Launcher, calculator, clipboard (Phase 8, L0–L4) | Built and installed on the development machine. Engine budgets measured (apps 0.3 ms, calc p95 0.4 ms, clipboard query p95 0.7 ms, image ingest 18 ms for 18 MB); UI checked offscreen against the mock; live acceptance in progress. |
+| Next | L5 hardening (setup prompts for the Super+Ctrl+V takeover, more `doctor` rows, failure handling), then upstream DigUp 0.6.1 parity (8U). |
+
+Day-to-day progress, measurements and open questions are in [PROGRESS.md](PROGRESS.md).
+
+## Development
+
+```bash
+cargo test --workspace                        # Rust: units, daemon, protocol transcripts, clipboard
+cargo clippy --workspace --all-targets -- -D warnings
+node scripts/listmerge-test.mjs               # the panel's list rules (ListMerge.js)
+python3 -I ui/harness/check.py                # the real panel, offscreen, against troweld --mock
+scripts/clip-live.sh                          # clipboard round trips on the real compositor
+troweld --mock --socket /tmp/t.sock           # canned daemon for UI work
+quickshell -p ui/gallery                      # every component, live-themed
+```
+
+Rules for contributors (human or agent) are in [CLAUDE.md](CLAUDE.md): upstream source in `upstream/`
+is the behavioral truth, fidelity invariants and test gates never move, and docs change with the
+code.
 
 ## Documents
 
 | Doc | What it covers |
 |---|---|
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | How DigUp actually works (engine, runtimes, data model, algorithms), restated precisely from the source, and the target Linux architecture. |
-| **[PORT-MAP.md](PORT-MAP.md)** | File-by-file mapping of every DigUp component to its Linux replacement, with the exact tools/crates and what must be preserved bit-for-bit. |
-| **[DECISIONS.md](DECISIONS.md)** | The load-bearing decisions (language, UI toolkit, process model, vector store, embedder, IPC) with rationale and rejected alternatives. |
-| **[EXECUTION-PLAN.md](EXECUTION-PLAN.md)** | Phased, task-level plan with deliverables and acceptance criteria. |
-| **[BENCHMARKS.md](BENCHMARKS.md)** | This machine's capability profile and expected performance, with the method to verify it. |
-| **[TESTING.md](TESTING.md)** | Unit/eval/vector-parity test strategy — the quality bar DigUp holds itself to (cosine ≥ 0.999, R@1/R@5/MRR evals) — plus protocol conformance and fault injection. |
-| **[UI-DESIGN.md](UI-DESIGN.md)** | The visual and motion spec: Omarchy plugin hosting, theme-token mapping, exact panel/window geometry from the Swift source, keyboard map, motion curves, smoothness budgets, visual QA. |
-| **[PROTOCOL.md](PROTOCOL.md)** | The `troweld` socket protocol v1 that every UI speaks (search with stale-dropping, previews, status, config). It is frozen in Phase 1 so the UI can be built against `troweld --mock`. |
-| **[ROBUSTNESS.md](ROBUSTNESS.md)** | The Linux failure-mode matrix (no FSEvents history, inotify limits, poison files, GPU loss, suspend, disk full, corruption) with the required handling, supervision layout and `trowel doctor`. |
-| **[LAUNCHER-PLAN.md](LAUNCHER-PLAN.md)** | *Proposal (Phase 8+, awaiting sign-off):* Raycast-style app launching, inline calculator and rich clipboard history on Omarchy, with proposed decisions, protocol v2 ops, phases L0–L6, budgets and open questions. |
-
-**Reading order for implementers:** README → ARCHITECTURE §A → DECISIONS → EXECUTION-PLAN (then,
-per phase: PORT-MAP rows + PROTOCOL / UI-DESIGN / ROBUSTNESS as referenced) → TESTING.
-Upstream source: ARahim3/DigUp @ `6faa29e` (MIT), pinned at `upstream/` (DECISIONS D15).
-
-## One-paragraph summary
-
-DigUp is a local hybrid search engine over your own files: a crawler classifies files, per-modality
-extractors turn images/PDFs/documents/audio/video/code into text and sampled media, an
-`EmbeddingGemma 2` model (llama.cpp, Q8_0 GGUF + an `mtmd` vision/audio projector) embeds everything
-into a single 768-d space, and results are a **fusion of vector similarity (per-modality z-scored)
-and SQLite FTS5 keyword search**, with an honest per-query "nothing stands out" gate. The macOS app
-is a SwiftUI/AppKit menu-bar app; the intelligence is portable. The hard parts on Linux are (a)
-reproducing **identical vectors** on a different backend so indexes/evals stay valid, and (b)
-replacing Apple's extractors (ImageIO/PDFKit/Vision/AVFoundation/Spotlight) with `libvips`/`poppler`/
-`tesseract`/`ffmpeg`, Apple's UI shells (menu bar, Quick Look, Sparkle) with an omarchy-shell plugin and a
-QML app that follow the Omarchy theme, and FSEvents with inotify plus startup reconciliation under systemd.
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How DigUp works (engine, runtimes, data model, algorithms) and the Linux architecture. |
+| [PORT-MAP.md](PORT-MAP.md) | Every DigUp component and its Linux replacement, and what must match bit for bit. |
+| [DECISIONS.md](DECISIONS.md) | The load-bearing decisions (D1–D25) with rationale and rejected alternatives. |
+| [EXECUTION-PLAN.md](EXECUTION-PLAN.md) | Phases, tasks, deliverables and acceptance gates. |
+| [LAUNCHER-PLAN.md](LAUNCHER-PLAN.md) | Phase 8: launcher, calculator and clipboard design, and what building it found. |
+| [PROTOCOL.md](PROTOCOL.md) | The `troweld` socket protocol v2 (search, previews, status, config, apps, clipboard, calculator). |
+| [UI-DESIGN.md](UI-DESIGN.md) | Theme mapping, panel geometry, keyboard map, motion, smoothness budgets, visual QA. |
+| [ROBUSTNESS.md](ROBUSTNESS.md) | Failure modes (inotify limits, poison files, GPU loss, suspend, disk full, corruption) and their handling. |
+| [BENCHMARKS.md](BENCHMARKS.md) | This machine's performance targets and measurements. |
+| [TESTING.md](TESTING.md) | Vector parity, recall evals, protocol conformance and fault injection. |
+| [PROGRESS.md](PROGRESS.md) | Where things stand, session by session. |
 
 ## Non-goals
 
-- No Windows/macOS-style self-updater (we use pacman/AUR).
-- No telemetry, no cloud, no account — same as upstream.
-- Not a fork of upstream; this is an independent Linux implementation that shares its model choice,
-  index semantics, prompt framing, and search math so results match.
+- No self-updater (pacman/AUR), no telemetry, no cloud, no account.
+- Not a fork of DigUp: an independent Linux implementation that shares its model, index semantics,
+  prompt framing and search math so results match. Upstream is pinned at `upstream/` (`6faa29e`, MIT).

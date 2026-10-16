@@ -5,7 +5,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 ## Current state
 
 - **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c, L2 and L3 done** (protocol v2, `state.sqlite`, mock; calculator, app index and clipboard history served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
-- **Live:** `troweld.socket` enabled, `~/.local/bin/{trowel,troweld}` → `target/release`. The **running** daemon (pid started 2026-10-14 18:16) is the pre-L1 v1 binary, already deleted on disk; `target/release` now holds the L3 build. **Any restart of `troweld.service` brings up the v2 daemon with clipboard capture on** (`[clipboard] capture = true` default) next to the still-v1 panel. omarchy-shell has the v1 `Client.qml` loaded (keepLoaded). **Deploy v2 as one step** or the panel shows "Trowel was updated, restart it": `cargo build --release && systemctl --user restart troweld.service && omarchy restart shell`. Not done this session.
+- **Live (deployed 2026-10-16 12:54, human's request):** `troweld` (L4 build, protocol v2, clipboard capture on) and the plugin panel (`~/.local/share/trowel/omarchy-plugin/{Panel.qml,manifest.json}` copied; `Trowel/` links to this repo's `ui/qml/Trowel`). The bar widget is removed (D25). Verified live: `hello` capabilities incl. apps/clipboard/calc; `apps_query chro` 2.7 ms → Chromium, Google Chrome; `calc 5 ft to cm` → 152.4 cm; clipboard doctor row OK (watcher running); panel opens on `omarchy-shell trowel open` and closes. Earlier, at 10:17 the old pre-L1 daemon was killed by the systemd watchdog (30 s, just after resume) and restarted on the L3 build, so clipboard capture has run since then.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
 - **Next step:** the one-step live deploy, **with the human's go-ahead** (it restarts troweld and omarchy-shell and replaces the installed plugin's `Panel.qml`/`BarWidget.qml`): `cargo build --release && cp ui/omarchy-plugin/{Panel,BarWidget}.qml ~/.local/share/trowel/omarchy-plugin/ && systemctl --user restart troweld.service && omarchy restart shell`. Then the L4 live acceptance and the L3 24 h orphan check, then L5. Open: question 2 (HTML restore; `clip_paste` is wired as the plan says), the L0.5 password-manager copy.
 
@@ -128,6 +128,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Open questions for the human
 
+1. **Watchdog kill after resume (2026-10-16 10:17, old v1 binary):** systemd's 30 s watchdog fired right after the laptop woke; core dump in `coredumpctl`. Check whether the current build's watchdog thread survives suspend/resume (ROBUSTNESS F7) before L5 closes.
 1. **L0.5 leftover:** copy one test password from Chrome's password manager (or whatever manager is used) with the metadata logger running, to see whether it marks itself sensitive.
 2. **HTML entries pasted into plain-text targets paste markup.** `wl-copy --type text/html` serves the same HTML bytes for `text/plain`/`UTF8_STRING` too (L0.6), so `clip_paste` mode `paste` of an `html` entry into a terminal or plain field inserts `<p><b>…`. Options: (a) approve `wl-clipboard-rs` to offer `text/html` + real `text/plain` in one selection (Raycast-like rich paste); (b) make `paste` restore HTML entries as plain text and keep rich HTML for an explicit "Paste formatted" action; (c) pick by the focused window's class (terminal → plain), a heuristic. Recommendation: (b) now, (a) later if rich paste is wanted. Currently implemented as the plan says (rich HTML in `paste`, text in `plain`).
 
@@ -147,6 +148,8 @@ Backups:
 - `~/.config/fcitx5/profile.bak.trowel-20261012-134601`
 
 Live changes:
+
+- 2026-10-16: `~/.config/omarchy/shell.json` → the Trowel bar-widget slot removed from `bar.layout.center` (D25), then `omarchy plugin enable io.github.thakurious.trowel` added it to `plugins[]` (a panel-only plugin needs that entry; the bar slot used to count). Backup `~/.config/omarchy/shell.json.bak.trowel-20261016-125417`. Revert: restore the backup and `omarchy restart shell`.
 
 - symlink `~/.config/omarchy/plugins/io.github.thakurious.trowel-dev` → `/home/saurabh/Projects/digup-linux/ui/omarchy-plugin`
 - plugin enabled in `~/.config/omarchy/shell.json`
@@ -168,6 +171,16 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-16 — Deployed; bar widget removed; README rewritten
+
+Human: build and make it available on this system; commit and push everything; update the README; remove the bar plugin icon.
+
+- Bar widget removed (D25): manifest `kinds: ["panel"]`, `BarWidget.qml` deleted, docs updated (DECISIONS, PORT-MAP, UI-DESIGN, ARCHITECTURE, EXECUTION-PLAN, LAUNCHER-PLAN). Clipboard pause stays in Ctrl+K, Settings and `trowel clip pause`.
+- Deployed (see Current state and Desktop changes). Found: removing the bar slot disabled the plugin, because the slot was its only `shell.json` entry; fixed with `omarchy plugin enable`.
+- Found: `setup.rs` `patch_shell_json` treats `plugins` as an object, but omarchy-shell's is an array of `{id}`; it never matched (setup enables through `omarchy-shell shell enablePlugin` instead). Fix in L5.
+- README rewritten for users: what Super+D does now, install, CLI, privacy, how it works, status, development, documents.
+- Pushed `phase-8-launcher` to origin (not main).
 
 ### 2026-10-16 — L4 slice 2: actions, image grid, bar, settings, gallery
 

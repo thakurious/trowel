@@ -268,6 +268,13 @@ reverted by `trowel uninstall`.
 **No currency conversion** (D13: no network). *Rejected:* `qalc` (a system package, subprocess per
 keystroke, network for currency) and a hand-written evaluator (no units or bases).
 
+## D25. **No bar widget** (human, 2026-10-16)
+
+The `trowel` plugin is a `panel` only. The bar icon (upstream `StatusMenu`: index progress ring,
+paused state, a popup with search/pause/folders/settings/quit) is removed because the human doesn't
+need it. Its jobs live elsewhere: the panel's footer shows indexing progress, `Ctrl+K` pauses the
+clipboard, and `trowel-app` holds settings. `status.clip_paused_until` stays in the protocol.
+
 ## Related approvals (2026-10-13)
 
 - `wl-clipboard-rs` is **not** approved yet. Decide after spike L0.3 shows whether file paste needs

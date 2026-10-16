@@ -57,7 +57,7 @@ Legend: **[P]** port logic 1:1 · **[R]** replace with a native equivalent · **
 | `App.swift`, `AppController.swift`, `AppModel.swift` | **[R]** daemon + UI clients | Lifecycle splits: `troweld` owns the engine; UI clients attach. Status model → IPC `status` events. |
 | `AppSettings.swift` | **[R]** `config.toml` | Field-for-field (PROTOCOL §5); keep `batteryTitle`/`batteryDetail` copy; default hotkey becomes `SUPER + D`. |
 | `Engine.swift` | **[R]** Rust `troweld` | Watcher, helper restart, debounce, searcher refresh (≤ every 2 s), encoder idle exit, embed-ahead + `QueryVectorCache(256)`, `prewarm`, code-searcher. |
-| `StatusMenu.swift` | **[R]** omarchy-shell `bar-widget` (in the `trowel` plugin) | Icon states (idle/progress ring/paused/update-dot) + popup menu (search, open, pause, choose folders, settings, quit). |
+| `StatusMenu.swift` | **dropped** (D25, 2026-10-16) | Was the `bar-widget`; removed at the human's request. Indexing progress shows in the panel footer; settings and folders in `trowel-app`. |
 | `SearchPanel.swift` + `SearchPanelView.swift` | **[R]** omarchy-shell `panel` plugin (QML) | UI-DESIGN §3: 780/330 px, top at 16 %, two-phase search (120 ms), grouping/folding, preview column, the `navigated` Space rule, focus-loss hide. |
 | `SearchWindow.swift` | **[R]** `trowel-app` `FloatingWindow` | Grid + filters + preview pane + home/examples + status bar. Same ⌘(=Ctrl) shortcuts. |
 | `Results.swift`, `Moments.swift` | **[R]** shared result model | `ResultRow` fields, `reason`, `place`, `focus`, page/moment jump semantics. |

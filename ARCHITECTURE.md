@@ -305,7 +305,7 @@ SYCL stall bug on the 258V) makes **Vulkan** the correct default here; this mach
 |---|---|
 | `NSVisualEffectView`/`NSGlassEffectView` behind-window blur, radius 18 | `PanelWindow` on the **Overlay** layer (namespace `trowel-panel`) plus a Hyprland Lua `layer_rule` with `blur` + `ignore_alpha` + `no_anim`; the radius comes from the Omarchy theme |
 | Floating key panel, Spotlight placement | omarchy-shell `panel` plugin (`keepLoaded`), exclusive keyboard focus, same placement math (top at 16 % of the focused monitor) |
-| `NSMenu` status item | omarchy-shell `bar-widget` from the same plugin, with a `PopupCard` |
+| `NSMenu` status item | none: dropped by D25 (no bar widget) |
 | `QLPreviewPanel` Quick Look | `trowel-app` Quick Look window at the matched place; Sushi as a fallback |
 | SwiftUI windows (main, Settings, Onboarding) | `trowel-app` Quickshell `FloatingWindow`s, same QML components |
 | `UserDefaults` (`AppSettings`) | `~/.config/trowel/config.toml`, owned by `troweld` |

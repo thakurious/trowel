@@ -602,7 +602,8 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
 - **Clipboard view**: the same 780 px panel. The list column shows rows, and **Images** filter
   switches the list to a 3-column thumbnail grid (Raycast does this). Paste flow: `dismiss()` →
   `clip_paste{mode}` → the daemon pastes after the panel is unmapped.
-- **Bar widget**: a clipboard-paused indicator and a toggle in the popup.
+- ~~**Bar widget**: a clipboard-paused indicator and a toggle in the popup.~~ Built in L4 slice 2,
+  then removed with the bar widget itself (D25); pause lives in `Ctrl+K` and Settings.
 - **Settings**: a new tab, "Launcher & Clipboard". It holds the clipboard on/off switch, retention,
   excluded apps (picked from the running Hyprland clients), import from Omarchy, the
   Super+Ctrl+V takeover (P-D23) and the hidden-apps list.

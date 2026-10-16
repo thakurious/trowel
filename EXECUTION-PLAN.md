@@ -34,7 +34,7 @@ trowel/
 │  └─ llama/ (TAG=b11461, llama.cpp-no-logits.patch from upstream/scripts)
 ├─ ui/
 │  ├─ qml/Trowel/                   # shared module: Client, Theme, Motion, components, icons
-│  ├─ omarchy-plugin/              # manifest.json + Panel.qml + BarWidget.qml (thin)
+│  ├─ omarchy-plugin/              # manifest.json + Panel.qml (thin; no bar widget, D25)
 │  ├─ app/                         # trowel-app Quickshell config: main window, Quick Look, settings, onboarding
 │  ├─ gallery/                     # component gallery for visual QA
 │  └─ strings.json                 # every user-visible string, extracted from upstream Swift
