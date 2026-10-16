@@ -2,19 +2,12 @@
   "schemaVersion": 1,
   "id": "io.github.thakurious.trowel",
   "name": "Trowel",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "author": "thakurious",
-  "description": "On-device multimodal file search",
-  "kinds": ["panel", "bar-widget"],
+  "description": "App launcher, calculator, clipboard history and on-device file search",
+  "kinds": ["panel"],
   "keepLoaded": true,
   "entryPoints": {
-    "panel": "Panel.qml",
-    "barWidget": "BarWidget.qml"
-  },
-  "barWidget": {
-    "displayName": "Trowel",
-    "description": "Index status and search",
-    "category": "System",
-    "allowMultiple": false
+    "panel": "Panel.qml"
   }
 }

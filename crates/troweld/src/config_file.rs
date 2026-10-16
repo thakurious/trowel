@@ -45,7 +45,7 @@ fn merge_objects(base: &mut serde_json::Value, patch: &serde_json::Value) {
         return;
     };
     for (k, v) in src {
-        if k == "ui" && v.is_object() {
+        if (k == "ui" || k == "clipboard") && v.is_object() {
             merge_objects(
                 dst.entry(k.clone())
                     .or_insert_with(|| serde_json::json!({})),

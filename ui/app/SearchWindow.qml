@@ -71,9 +71,18 @@ Item {
     FilterBar {
       id: filters
       width: parent.width
-      counts: (client.status && client.status.counts) ? client.status.counts : ({})
+      // The query's strong results per kind, as upstream's kind buttons
+      // (`SearchWindow.swift:208`), not the index totals.
+      counts: client.counts
+      // Dim kinds with no result once the query's file counts are known (also on the Code
+      // tab, which keeps them); a query typed on the Code tab only knows the Code count.
+      dimEmpty: Object.keys(client.counts || {}).some(function (k) {
+        return k !== "code"
+      })
+      showCode: !!(client.config && client.config.code_roots && client.config.code_roots.length)
       onPicked: function (kind) {
-        client.kinds = kind === "all" ? [] : [kind]
+        client.kinds = filters.kindsFor(kind)
+        session.codeTab = kind === "code"
         if (session.query.length)
           session.setQuery(session.query)
       }
@@ -154,12 +163,36 @@ Item {
         anchors.fill: parent
 
         ListView {
+          id: results
           width: parent.width - 325
           height: parent.height
           model: client.rows
           clip: true
           reuseItems: true
           cacheBuffer: 240
+
+          // Keep the selected row in view as the arrows move it (upstream ScrollViewReader
+          // scrollTo): the smallest scroll, with a group's header when its first row is picked.
+          function reveal(rowId) {
+            for (var i = 0; i < count; i++) {
+              if (model.get(i).rowId !== rowId)
+                continue
+              if (i > 0 && model.get(i - 1).rowType === "header")
+                positionViewAtIndex(i - 1, ListView.Contain)
+              positionViewAtIndex(i, ListView.Contain)
+              return
+            }
+          }
+
+          Connections {
+            target: session
+            function onSelectionChanged() {
+              var id = session.selection
+              Qt.callLater(function () {
+                results.reveal(id)
+              })
+            }
+          }
           delegate: Item {
             width: ListView.view.width
             height: model.rowType === "row" ? (session.codeMode ? 46 : 176) : (model.rowType === "header" ? 28 : 26)
@@ -206,6 +239,7 @@ Item {
           height: parent.height
           preview: session.preview
           row: session.selectedRow
+          query: session.query
         }
       }
     }

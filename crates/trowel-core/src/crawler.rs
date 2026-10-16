@@ -53,7 +53,7 @@ impl Crawler {
                 .flat_map(|ex| [ex.clone(), folder_selection::real_path(ex)])
                 .collect();
 
-            let walker = WalkDir::new(root)
+            let mut walker = WalkDir::new(root)
                 .follow_links(false)
                 .into_iter()
                 .filter_entry(|e| {
@@ -61,12 +61,11 @@ impl Crawler {
                     !(name.starts_with('.') && name != "." && name != "..")
                 });
 
-            let mut skip_prefixes: Vec<PathBuf> = Vec::new();
-            for entry in walker.flatten() {
+            // A skipped folder is pruned, not walked: `target/` or `node_modules/` can hold
+            // tens of thousands of folders that the crawl would read only to drop.
+            while let Some(entry) = walker.next() {
+                let Ok(entry) = entry else { continue };
                 let path = entry.path();
-                if skip_prefixes.iter().any(|p| path.starts_with(p)) {
-                    continue;
-                }
                 let Ok(meta) = entry.metadata() else {
                     continue;
                 };
@@ -79,7 +78,7 @@ impl Crawler {
                                 .flatten()
                         })
                     {
-                        skip_prefixes.push(path.to_path_buf());
+                        walker.skip_current_dir();
                         *report.skipped_folders.entry(reason).or_default() += 1;
                     } else if options.code {
                         repos.enter(path);

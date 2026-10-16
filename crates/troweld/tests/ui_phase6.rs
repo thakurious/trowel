@@ -92,7 +92,7 @@ fn two_phase_keyword_then_hybrid_has_groups_and_place() {
     let hello = rpc(
         &mut s,
         &mut r,
-        json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     assert_eq!(hello["ok"], true);
     rpc(&mut s, &mut r, json!({"id":2,"op":"panel_opened"}));
@@ -130,7 +130,7 @@ fn f18_stop_then_cont_leaves_client_able_to_search() {
     rpc(
         &mut s,
         &mut r,
-        json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     Command::new("kill")
         .args(["-STOP", &pid.to_string()])
@@ -159,7 +159,7 @@ fn f18_stop_then_cont_leaves_client_able_to_search() {
     let hello = rpc(
         &mut s,
         &mut r,
-        json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     assert_eq!(hello["ok"], true);
     let kw = rpc(

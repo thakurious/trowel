@@ -212,7 +212,8 @@ fn is_mark(ch: char) -> bool {
 }
 
 /// Apple `CharacterSet.alphanumerics`: Unicode L*, M*, N*.
-pub(crate) fn is_word_character(ch: char) -> bool {
+/// Letters, digits and combining marks: what the FTS tokenizer keeps in a token.
+pub fn is_word_character(ch: char) -> bool {
     ch.is_alphanumeric() || is_mark(ch)
 }
 

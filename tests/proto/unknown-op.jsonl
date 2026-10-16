@@ -1,4 +1,4 @@
-{"send": {"id": 1, "op": "hello", "protocol": 1, "client": "test", "pid": 1}}
-{"recv": {"id": 1, "ok": true, "protocol": 1, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr"], "state": "ready"}}
+{"send": {"id": 1, "op": "hello", "protocol": 2, "client": "test", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
 {"send": {"id": 2, "op": "nope"}}
 {"recv": {"id": 2, "ok": false, "error": {"code": "unknown_op", "message": "unknown op nope"}}}

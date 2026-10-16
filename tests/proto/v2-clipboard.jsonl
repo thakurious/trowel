@@ -1,0 +1,30 @@
+{"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
+{"send": {"id": 2, "op": "clip_query", "kinds": ["image"], "gen": 1}}
+{"recv": {"id": 2, "ok": true, "gen": 1, "total": 1, "rows": [{"id": 808, "kind": "image", "preview": "Screenshot 1920×1200", "mimes": ["image/png"], "bytes": 812345, "thumb": "/tmp/trowel-mock/clip-808@132.png", "source_app": "Hyprland", "created": 1791868900, "last_used": 1791868900, "uses": 1, "pinned": true}]}}
+{"send": {"id": 3, "op": "clip_query", "text": "refund", "gen": 2}}
+{"recv": {"id": 3, "ok": true, "gen": 2, "total": 1, "rows": [{"id": 806, "kind": "html", "preview": "Refund policy: items may be returned within 30 days", "mimes": ["text/html", "text/plain"], "bytes": 1824, "domain": "example.com", "source_app": "google-chrome", "created": 1791868700, "last_used": 1791868700, "uses": 2, "pinned": true}]}}
+{"send": {"id": 4, "op": "clip_get", "clip_id": 807}}
+{"recv": {"id": 4, "ok": true, "row": {"id": 807, "kind": "files", "preview": "invoice-2026-09.pdf, receipt.png", "mimes": ["text/uri-list", "x-special/gnome-copied-files"], "bytes": 96, "files": 2, "source_app": "org.gnome.Nautilus", "created": 1791868800, "last_used": 1791868800, "uses": 1, "pinned": false}, "files": ["/home/u/Documents/invoice-2026-09.pdf", "/home/u/Pictures/receipt.png"]}}
+{"send": {"id": 5, "op": "clip_pin", "clip_id": 812, "pinned": true}}
+{"recv": {"id": 5, "ok": true}}
+{"send": {"id": 6, "op": "clip_paste", "clip_id": 812, "mode": "plain"}}
+{"recv": {"id": 6, "ok": true}}
+{"send": {"id": 7, "op": "clip_delete", "clip_id": 811}}
+{"recv": {"id": 7, "ok": true}}
+{"send": {"id": 8, "op": "clip_get", "clip_id": 811}}
+{"recv": {"id": 8, "ok": false, "error": {"code": "not_found", "message": "*"}}}
+{"send": {"id": 9, "op": "clip_clear"}}
+{"recv": {"id": 9, "ok": true, "removed": 3}}
+{"send": {"id": 10, "op": "clip_query", "gen": 3}}
+{"recv": {"id": 10, "ok": true, "gen": 3, "total": 3, "rows": "*"}}
+{"send": {"id": 11, "op": "clip_pause", "minutes": 15}}
+{"recv": {"id": 11, "ok": true, "paused_until": 1791870300}}
+{"send": {"id": 12, "op": "clip_pause", "minutes": 0}}
+{"recv": {"id": 12, "ok": true, "paused_until": 0}}
+{"send": {"id": 13, "op": "clip_ingest", "types": ["text/plain"], "offers": [{"mime": "text/plain", "file": "/tmp/x"}]}}
+{"recv": {"id": 13, "ok": false, "error": {"code": "bad_request", "message": "*"}}}
+{"send": {"id": 14, "op": "clip_query", "kinds": ["sound"], "gen": 4}}
+{"recv": {"id": 14, "ok": false, "error": {"code": "bad_request", "message": "*"}}}
+{"send": {"id": 15, "op": "clip_import", "source": "omarchy"}}
+{"recv": {"id": 15, "ok": true, "imported": 0, "skipped": 0}}

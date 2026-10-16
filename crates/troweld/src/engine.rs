@@ -1,4 +1,4 @@
-//! Real PROTOCOL v1 daemon. Owns the Searcher; watches folders; speaks the socket.
+//! Real PROTOCOL daemon. Owns the Searcher; watches folders; speaks the socket.
 
 use std::collections::{HashSet, VecDeque};
 use std::fs;
@@ -8,20 +8,27 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use trowel_core::{Embedder, FakeEmbedder, FileKind, IndexStore, Prompts, Searcher};
+use trowel_core::{Embedder, FakeEmbedder, FileKind, IndexStore, Prompts, Rules, Searcher};
 use trowel_proto::ops::KNOWN_OPS;
 use trowel_proto::{
-    Config, ErrorBody, ErrorCode, Meaning, Op, Request, SearchMode, Status, MAX_LINE_BYTES,
-    PROTOCOL_VERSION,
+    CalcReply, Config, ErrorBody, ErrorCode, Meaning, Op, PasteMode, Request, SearchMode, Status,
+    MAX_LINE_BYTES, PROTOCOL_VERSION,
 };
 
 use crate::actions;
+use crate::apps::{self, icons::IconIndex, AppIndex, AppsEnv, Launches};
 use crate::cache::QueryCache;
+use crate::calc::Calculator;
+use crate::clip::{
+    self,
+    store::Limits,
+    watch::{CaptureEnv, Watcher},
+};
 use crate::config_file::{self, expand_tilde};
 use crate::disk;
 use crate::doctor;
@@ -34,11 +41,13 @@ use crate::logind;
 use crate::power;
 use crate::present;
 use crate::previews;
+use crate::state::{self, StateDb};
 use crate::watcher::{FolderWatch, CODE_LONGEST_WAIT, CODE_QUIET, DEBOUNCE};
 
 const QUEUE_CAP: usize = 256;
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr"];
+/// v2: `apps` since L2, `clipboard` since L3; `calc` (D22) has been served since L2c.
+const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps", "clipboard", "calc"];
 const SEARCHER_REFRESH: Duration = Duration::from_secs(2);
 
 pub struct EngineOpts {
@@ -46,6 +55,8 @@ pub struct EngineOpts {
     pub index: Option<PathBuf>,
     pub config: Option<PathBuf>,
     pub fake: bool,
+    /// Where `state.sqlite` lives. Default `$XDG_DATA_HOME/trowel`.
+    pub state_dir: Option<PathBuf>,
 }
 
 struct Engine {
@@ -56,6 +67,10 @@ struct Engine {
     config: Mutex<Config>,
     status: Mutex<Status>,
     searcher: Mutex<Searcher>,
+    /// Separate `code.sqlite` searcher. CLI `cmd_search` already opens
+    /// `IndexStore::CODE_FILE` for `code:` queries; the daemon must too.
+    /// `upstream/Sources/DigUpKit/Searcher.swift` `isCode`.
+    code_searcher: Mutex<Option<Searcher>>,
     last_reload: Mutex<Instant>,
     paused: AtomicBool,
     sync_wanted: AtomicBool,
@@ -63,6 +78,7 @@ struct Engine {
     helper_starting: AtomicBool,
     subscribers: Mutex<Vec<Arc<Outbox>>>,
     query_cache: QueryCache,
+    preview_cache: Mutex<PreviewCache>,
     newest_typed: Mutex<Option<String>>,
     last_use: Mutex<Instant>,
     watch: Mutex<Option<FolderWatch>>,
@@ -72,6 +88,21 @@ struct Engine {
     overflow: Arc<AtomicBool>,
     sleeping: Arc<AtomicBool>,
     was_sleeping: AtomicBool,
+    was_on_battery: AtomicBool,
+    calc: Calculator,
+    state_dir: PathBuf,
+    /// Opened on first use, so a daemon that never launches or copies never creates the file.
+    state: Mutex<Option<StateDb>>,
+    apps_env: AppsEnv,
+    apps: RwLock<AppIndex>,
+    /// `state.sqlite` launches, loaded on the first `apps_query`.
+    app_launches: Mutex<Option<std::collections::HashMap<String, Launches>>>,
+    apps_watch: Mutex<Option<notify::RecommendedWatcher>>,
+    clip_watch: Arc<Watcher>,
+    clip_subscribers: Arc<Mutex<Vec<Arc<Outbox>>>>,
+    clip_events: clip::Events,
+    /// Captures are ignored until then: the daemon's own `wl-copy` from a `clip_paste`.
+    clip_suppress: Mutex<Option<Instant>>,
 }
 
 enum Queued {
@@ -130,7 +161,11 @@ struct Conn {
     out: Arc<Outbox>,
     inflight: Arc<Mutex<Option<u64>>>,
     epoch: Arc<AtomicU64>,
+    /// Bumped by each `preview`; a queued render that is no longer the newest is skipped.
+    preview_epoch: Arc<AtomicU64>,
     last_status: Mutex<Option<Instant>>,
+    /// `SO_PEERCRED` pid: `clip_ingest` is only taken from our own capture child.
+    peer_pid: u32,
 }
 
 pub fn run(opts: EngineOpts) -> io::Result<()> {
@@ -157,6 +192,19 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         worker: if opts.fake { "ready" } else { "down" }.into(),
         ..Default::default()
     };
+    // ~10 ms; icons follow on a thread (`start_apps`).
+    let apps_env = AppsEnv::from_env();
+    let clip_watch = Watcher::new(&socket, clip_env(&cfg));
+    let clip_subscribers: Arc<Mutex<Vec<Arc<Outbox>>>> = Arc::new(Mutex::new(Vec::new()));
+    let event_subs = Arc::clone(&clip_subscribers);
+    let clip_events = clip::Events::new(move |event| {
+        let line = event.to_string();
+        let mut subs = event_subs.lock().expect("clip subscribers");
+        subs.retain(|out| !out.dead.load(Ordering::Relaxed));
+        for out in subs.iter() {
+            out.push_line(line.clone());
+        }
+    });
     let engine = Arc::new(Engine {
         config_path: config_path.clone(),
         index_dir: index_dir.clone(),
@@ -165,6 +213,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         config: Mutex::new(cfg.clone()),
         status: Mutex::new(status),
         searcher: Mutex::new(searcher),
+        code_searcher: Mutex::new(open_code_searcher(&index_dir)),
         last_reload: Mutex::new(Instant::now()),
         paused: AtomicBool::new(false),
         sync_wanted: AtomicBool::new(false),
@@ -172,6 +221,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         helper_starting: AtomicBool::new(false),
         subscribers: Mutex::new(Vec::new()),
         query_cache: QueryCache::default(),
+        preview_cache: Mutex::new(PreviewCache::default()),
         newest_typed: Mutex::new(None),
         last_use: Mutex::new(Instant::now()),
         watch: Mutex::new(None),
@@ -181,8 +231,23 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         overflow: Arc::new(AtomicBool::new(false)),
         sleeping: Arc::new(AtomicBool::new(false)),
         was_sleeping: AtomicBool::new(false),
+        was_on_battery: AtomicBool::new(power::on_battery()),
+        apps: RwLock::new(AppIndex::scan(&apps_env).0),
+        apps_env,
+        app_launches: Mutex::new(None),
+        apps_watch: Mutex::new(None),
+        calc: Calculator::default(),
+        state_dir: opts.state_dir.unwrap_or_else(state::default_state_dir),
+        state: Mutex::new(None),
+        clip_watch,
+        clip_subscribers,
+        clip_events,
+        clip_suppress: Mutex::new(None),
     });
 
+    start_apps(&engine);
+    engine.clip_watch.start();
+    start_clip_gc(&engine);
     logind::bind_signals(&engine.overflow, &engine.sleeping);
     let sleep_eng = Arc::clone(&engine);
     logind::start(move |going| {
@@ -200,13 +265,16 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
     eprintln!("troweld listening on {}", socket.display());
     for incoming in listener.incoming() {
         let stream = incoming?;
-        if let Err(err) = reject_foreign_uid(&stream) {
-            eprintln!("troweld drop peer: {err}");
-            continue;
-        }
+        let peer_pid = match reject_foreign_uid(&stream) {
+            Ok(pid) => pid,
+            Err(err) => {
+                eprintln!("troweld drop peer: {err}");
+                continue;
+            }
+        };
         let engine = Arc::clone(&engine);
         thread::spawn(move || {
-            if let Err(err) = handle_conn(stream, engine) {
+            if let Err(err) = handle_conn(stream, engine, peer_pid) {
                 if err.kind() != io::ErrorKind::BrokenPipe {
                     eprintln!("troweld connection: {err}");
                 }
@@ -220,7 +288,8 @@ fn io_err(err: impl std::fmt::Display) -> io::Error {
     io::Error::other(err.to_string())
 }
 
-fn reject_foreign_uid(stream: &UnixStream) -> io::Result<()> {
+/// Returns the peer's pid.
+fn reject_foreign_uid(stream: &UnixStream) -> io::Result<u32> {
     let mut cred = libc::ucred {
         pid: 0,
         uid: 0,
@@ -246,7 +315,7 @@ fn reject_foreign_uid(stream: &UnixStream) -> io::Result<()> {
             "peer uid mismatch",
         ));
     }
-    Ok(())
+    Ok(cred.pid.max(0) as u32)
 }
 
 /// systemd socket activation (`LISTEN_FDS`) or bind `$XDG_RUNTIME_DIR/trowel/troweld.sock`.
@@ -328,7 +397,7 @@ fn sd_notify(msg: &str) {
     let _ = sock.send_to(msg.as_bytes(), Path::new(&raw));
 }
 
-fn handle_conn(stream: UnixStream, engine: Arc<Engine>) -> io::Result<()> {
+fn handle_conn(stream: UnixStream, engine: Arc<Engine>, peer_pid: u32) -> io::Result<()> {
     let writer = stream.try_clone()?;
     let out = Arc::new(Outbox::new());
     let out_w = Arc::clone(&out);
@@ -338,7 +407,9 @@ fn handle_conn(stream: UnixStream, engine: Arc<Engine>) -> io::Result<()> {
         out: Arc::clone(&out),
         inflight: Arc::new(Mutex::new(None)),
         epoch: Arc::new(AtomicU64::new(0)),
+        preview_epoch: Arc::new(AtomicU64::new(0)),
         last_status: Mutex::new(None),
+        peer_pid,
     };
     let mut reader = BufReader::new(stream);
     loop {
@@ -485,8 +556,10 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
         }
         Op::PanelOpened => {
             engine.touch();
-            reload_searcher(engine, true);
+            // Reply at once: the reload takes the searcher lock (60–80 ms with vectors), and the
+            // panel's first `typing`/`search` lines are queued right behind this one.
             reply_ok(conn, id, json!({}));
+            prewarm(engine);
         }
         Op::Pause => {
             engine.paused.store(true, Ordering::SeqCst);
@@ -558,6 +631,13 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
         }
         Op::Subscribe { topics } => {
             reply_ok(conn, id, json!({}));
+            if topics.iter().any(|t| t == "clipboard") {
+                engine
+                    .clip_subscribers
+                    .lock()
+                    .expect("clip subscribers")
+                    .push(Arc::clone(&conn.out));
+            }
             if topics.iter().any(|t| t == "status") {
                 engine
                     .subscribers
@@ -596,6 +676,7 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             };
             if let Some((prev, next)) = applied {
                 reply_ok(conn, id, serde_json::to_value(&next).unwrap_or(json!({})));
+                engine.clip_watch.set_env(clip_env(&next));
                 let folders_changed = next.roots != prev.roots
                     || next.code_roots != prev.code_roots
                     || next.onboarded != prev.onboarded;
@@ -617,51 +698,82 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             reply_ok(conn, id, json!({}));
         }
         Op::Doctor => {
-            let report = doctor::run(Some(&engine.index_dir), Some(&engine.socket));
+            let mut report = doctor::run(Some(&engine.index_dir), Some(&engine.socket));
+            report.checks.push(engine.clip_doctor());
+            report.ok = report.checks.iter().all(|c| c.status != "FAIL");
             reply_ok(conn, id, doctor::json_report(&report));
         }
-        Op::CopyPath { path } => reply_ok(conn, id, json!({"text": path.display()})),
+        Op::CopyPath { path } => {
+            let dest = PathBuf::from(path.display());
+            thread::spawn(move || actions::copy(&dest));
+            reply_ok(conn, id, json!({"text": path.display()}));
+        }
+        // Renders (vips, pdftoppm, ffmpeg: 80–500 ms) run off the connection thread, so a
+        // keystroke's `search` never waits behind the previews of the rows it is arrowing over.
         Op::Thumbnail {
             segment_id,
             path,
             size,
+            code,
         } => {
-            let searcher = engine.searcher.lock().expect("searcher");
             let file = path.as_ref().map(|p| PathBuf::from(p.display()));
-            reply_preview(
-                conn,
-                id,
-                previews::thumbnail(&searcher, segment_id, file.as_deref(), size),
-            );
+            let prefer_code = prefer_code_store(engine, code);
+            let (out, eng) = (Arc::clone(&conn.out), Arc::clone(engine));
+            render_pool().run(move || {
+                let body = thumbnail_body(&eng, segment_id, file.as_deref(), size, prefer_code);
+                reply_preview_line(&out, id, body);
+            });
         }
-        Op::Preview { segment_id, width } => {
+        Op::Preview {
+            segment_id,
+            width,
+            code,
+        } => {
             let query = engine
                 .newest_typed
                 .lock()
                 .expect("typed")
                 .clone()
                 .and_then(|k| k.split('\u{0}').next_back().map(str::to_string));
-            let searcher = engine.searcher.lock().expect("searcher");
-            reply_preview(
-                conn,
-                id,
-                previews::preview(&searcher, segment_id, width, query.as_deref()),
-            );
+            let prefer_code = prefer_code_store(engine, code);
+            // Only the newest preview of a connection is worth rendering: arrowing down a list
+            // asks for one per row.
+            let ticket = conn.preview_epoch.fetch_add(1, Ordering::SeqCst) + 1;
+            let epoch = Arc::clone(&conn.preview_epoch);
+            let (out, eng) = (Arc::clone(&conn.out), Arc::clone(engine));
+            render_pool().run(move || {
+                if epoch.load(Ordering::SeqCst) != ticket {
+                    reply_error_line(&out, id, ErrorCode::Superseded, "superseded");
+                    return;
+                }
+                let body = cached_preview(&eng, segment_id, width, query.as_deref(), prefer_code);
+                reply_preview_line(&out, id, body);
+            });
         }
-        Op::TextOfSegment { segment_id } => {
-            let searcher = engine.searcher.lock().expect("searcher");
-            reply_preview(conn, id, previews::text_of(&searcher, segment_id));
+        Op::TextOfSegment { segment_id, code } => {
+            let prefer_code = prefer_code_store(engine, code);
+            let (out, eng) = (Arc::clone(&conn.out), Arc::clone(engine));
+            render_pool().run(move || {
+                reply_preview_line(&out, id, text_of_body(&eng, segment_id, prefer_code));
+            });
         }
-        Op::Open { segment_id, path } => {
-            let searcher = engine.searcher.lock().expect("searcher");
-            let meta = segment_id.and_then(|id| previews::segment_meta(&searcher, id));
+        Op::Open {
+            segment_id,
+            path,
+            code,
+            loc,
+        } => {
+            let prefer_code = prefer_code_store(engine, code);
+            let meta = segment_id.and_then(|sid| segment_meta_any(engine, sid, prefer_code));
             let dest = meta
                 .as_ref()
                 .map(|m| m.path.clone())
                 .or_else(|| path.as_ref().map(|p| PathBuf::from(p.display())));
-            let kind = meta.as_ref().map(|m| m.file_kind).unwrap_or(FileKind::Doc);
-            let loc = meta.as_ref().and_then(|m| m.loc);
-            drop(searcher);
+            let mut kind = meta.as_ref().map(|m| m.file_kind).unwrap_or(FileKind::Doc);
+            if prefer_code {
+                kind = FileKind::Code;
+            }
+            let loc = loc.or_else(|| meta.as_ref().and_then(|m| m.loc));
             let editor = engine.config.lock().expect("config").code_editor.clone();
             if let Some(dest) = dest {
                 thread::spawn(move || actions::open(&dest, kind, loc, &editor));
@@ -701,7 +813,308 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err.to_string()),
         },
+        Op::AppsQuery { text, limit, gen } => {
+            let started = Instant::now();
+            let launches = engine.app_launches();
+            let rows = engine.apps.read().expect("apps").query(
+                &text,
+                limit.min(200) as usize,
+                &launches,
+                unix_now(),
+            );
+            reply_ok(
+                conn,
+                id,
+                json!(trowel_proto::AppsResult {
+                    gen,
+                    rows,
+                    took_us: Some(started.elapsed().as_micros() as u64),
+                }),
+            );
+        }
+        Op::AppLaunch { app_id, action } => {
+            let argv = {
+                let apps = engine.apps.read().expect("apps");
+                let Some(entry) = apps.get(&app_id) else {
+                    reply_error(
+                        conn,
+                        Some(id),
+                        ErrorCode::NotFound,
+                        format!("no app {app_id}"),
+                    );
+                    return;
+                };
+                apps::launch_argv(entry, action.as_deref(), apps::uwsm_available())
+            };
+            let argv = match argv {
+                Ok(argv) => argv,
+                Err(err) => {
+                    reply_error(conn, Some(id), ErrorCode::NotFound, err);
+                    return;
+                }
+            };
+            if let Err(err) = apps::spawn(&argv) {
+                reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
+                return;
+            }
+            match engine.with_state(|s| s.record_launch(&app_id, unix_now())) {
+                Ok(row) => {
+                    if let Some(cache) = engine.app_launches.lock().expect("launches").as_mut() {
+                        cache.insert(app_id, row);
+                    }
+                }
+                Err(err) => eprintln!("troweld: launch history: {err}"),
+            }
+            reply_ok(conn, id, json!({}));
+        }
+        Op::AppHide { app_id, hidden } => {
+            if let Err(err) = apps::write_hide(&engine.apps_env.trowel_hides, &app_id, hidden) {
+                reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
+                return;
+            }
+            // Rescan now so the next query reflects it; the watcher's rescan follows.
+            rescan_apps(engine);
+            reply_ok(conn, id, json!({}));
+        }
+        Op::Calc { text, force, gen } => {
+            let out = engine.calc.eval(&text, force);
+            reply_ok(
+                conn,
+                id,
+                json!(CalcReply {
+                    gen,
+                    result: out.result,
+                    error: out.error,
+                    took_us: Some(out.took_us),
+                }),
+            );
+        }
+        Op::CalcHistory { limit } => match engine.with_state(|s| s.calc_history(limit)) {
+            Ok(rows) => reply_ok(conn, id, json!({ "rows": rows })),
+            Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+        },
+        Op::CalcCopy { text, expr, mode } => {
+            // The UI has already hidden the panel (D21), so the keystroke reaches the app below.
+            if let Err(err) = actions::copy_text(&text) {
+                reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
+                return;
+            }
+            // `plain` is a paste too: a result is plain text already.
+            if mode != PasteMode::Copy {
+                actions::paste_keystroke();
+            }
+            if let Some(expr) = expr {
+                let at = unix_now();
+                if let Err(err) = engine.with_state(|s| s.record_calc(&expr, &text, at)) {
+                    eprintln!("troweld: calc history: {err}");
+                }
+            }
+            reply_ok(conn, id, json!({}));
+        }
+        Op::ClipQuery {
+            text,
+            kinds,
+            limit,
+            offset,
+            gen,
+        } => {
+            // No history yet: answer without creating state.sqlite.
+            if !engine.state_exists() {
+                reply_ok(
+                    conn,
+                    id,
+                    json!(trowel_proto::ClipQueryResult {
+                        gen,
+                        rows: vec![],
+                        total: 0
+                    }),
+                );
+                return;
+            }
+            let limit = limit.min(500);
+            match engine.with_state(|s| s.clip_query(&text, kinds.as_deref(), limit, offset)) {
+                Ok((rows, total)) => reply_ok(
+                    conn,
+                    id,
+                    json!(trowel_proto::ClipQueryResult {
+                        gen,
+                        rows: rows.into_iter().map(clip::with_thumb).collect(),
+                        total,
+                    }),
+                ),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipGet { clip_id } => match engine.clip_stored(clip_id) {
+            Ok(Some(stored)) => reply_ok(conn, id, json!(clip::content(stored))),
+            Ok(None) => reply_clip_missing(conn, id, clip_id),
+            Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+        },
+        Op::ClipPaste { clip_id, mode } => {
+            let stored = match engine.clip_stored(clip_id) {
+                Ok(Some(stored)) => stored,
+                Ok(None) => return reply_clip_missing(conn, id, clip_id),
+                Err(err) => return reply_error(conn, Some(id), ErrorCode::Io, err),
+            };
+            *engine.clip_suppress.lock().expect("clip suppress") =
+                Some(Instant::now() + Duration::from_secs(1));
+            match clip::restore(&stored, mode) {
+                Ok(()) => {}
+                Err(clip::RestoreError::Gone(msg)) => {
+                    return reply_error(conn, Some(id), ErrorCode::NotFound, msg)
+                }
+                Err(clip::RestoreError::Io(msg)) => {
+                    return reply_error(conn, Some(id), ErrorCode::Io, msg)
+                }
+            }
+            // The UI has already hidden the panel (D21).
+            if mode != PasteMode::Copy {
+                actions::paste_keystroke();
+            }
+            if let Ok(Some(row)) = engine.with_state(|s| s.clip_touch(clip_id, unix_now())) {
+                engine.clip_events.added(clip::with_thumb(row));
+            }
+            reply_ok(conn, id, json!({}));
+        }
+        Op::ClipPin { clip_id, pinned } => {
+            if !engine.state_exists() {
+                return reply_clip_missing(conn, id, clip_id);
+            }
+            match engine.with_state(|s| s.clip_pin(clip_id, pinned)) {
+                Ok(Some(row)) => {
+                    engine.clip_events.added(clip::with_thumb(row));
+                    reply_ok(conn, id, json!({}));
+                }
+                Ok(None) => reply_clip_missing(conn, id, clip_id),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipDelete { clip_id } => {
+            if !engine.state_exists() {
+                return reply_clip_missing(conn, id, clip_id);
+            }
+            match engine.with_state(|s| s.clip_delete(clip_id)) {
+                Ok(true) => {
+                    engine.clip_removed(&[clip_id]);
+                    reply_ok(conn, id, json!({}));
+                }
+                Ok(false) => reply_clip_missing(conn, id, clip_id),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipClear { keep_pinned } => {
+            if !engine.state_exists() {
+                return reply_ok(conn, id, json!({"removed": 0}));
+            }
+            match engine.with_state(|s| s.clip_clear(keep_pinned)) {
+                Ok(ids) => {
+                    engine.clip_removed(&ids);
+                    reply_ok(conn, id, json!({"removed": ids.len()}));
+                }
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipPause { minutes } => {
+            let until = engine.clip_watch.pause(minutes);
+            engine.status.lock().expect("status").clip_paused_until = until;
+            engine.broadcast_status();
+            reply_ok(conn, id, json!({ "paused_until": until }));
+        }
+        Op::ClipIngest {
+            types,
+            offers,
+            source_app,
+        } => {
+            let files: Vec<PathBuf> = offers.iter().map(|o| o.file.to_path_buf()).collect();
+            if !engine.clip_watch.is_capture_peer(conn.peer_pid) {
+                return reply_error(
+                    conn,
+                    Some(id),
+                    ErrorCode::BadRequest,
+                    "clip_ingest is only accepted from trowel clip-capture",
+                );
+            }
+            if let Some(bad) = files
+                .iter()
+                .find(|f| !clip::spooled(&engine.clip_watch.spool, f))
+            {
+                return reply_error(
+                    conn,
+                    Some(id),
+                    ErrorCode::BadRequest,
+                    format!("{} is not in the spool directory", bad.display()),
+                );
+            }
+            let offers: Vec<clip::ingest::Offer> = offers
+                .into_iter()
+                .zip(&files)
+                .map(|(o, path)| clip::ingest::Offer {
+                    mime: o.mime,
+                    path: path.clone(),
+                })
+                .collect();
+            let outcome = engine.clip_ingest(&types, &offers, source_app);
+            for file in &files {
+                let _ = fs::remove_file(file);
+            }
+            match outcome {
+                Ok(Some((clip_id, new))) => {
+                    reply_ok(conn, id, json!({"clip_id": clip_id, "new": new}))
+                }
+                Ok(None) => reply_ok(conn, id, json!({"skipped": true})),
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
+        Op::ClipImport { source } => {
+            if source != "omarchy" {
+                return reply_error(
+                    conn,
+                    Some(id),
+                    ErrorCode::BadRequest,
+                    format!("unknown import source {source}"),
+                );
+            }
+            match engine.clip_import(&clip::import::default_path()) {
+                Ok((imported, skipped)) => {
+                    reply_ok(conn, id, json!({"imported": imported, "skipped": skipped}))
+                }
+                Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
+            }
+        }
     }
+}
+
+fn reply_clip_missing(conn: &Conn, id: u64, clip_id: i64) {
+    reply_error(
+        conn,
+        Some(id),
+        ErrorCode::NotFound,
+        format!("no clipboard entry {clip_id}"),
+    );
+}
+
+fn clip_env(cfg: &Config) -> CaptureEnv {
+    CaptureEnv {
+        enabled: cfg.clipboard.capture,
+        excluded_apps: cfg.clipboard.excluded_apps.clone(),
+        max_bytes: cfg.clipboard.max_entry_mb.saturating_mul(1024 * 1024),
+    }
+}
+
+/// Retention runs after every ingest; this sweep catches age expiry on an idle machine, heals
+/// blob refcounts and drops orphan files and thumbnails (`LAUNCHER-PLAN.md` L3 "Retention").
+fn start_clip_gc(engine: &Arc<Engine>) {
+    let eng = Arc::clone(engine);
+    thread::Builder::new()
+        .name("troweld-clip-gc".into())
+        .spawn(move || {
+            thread::sleep(Duration::from_secs(30));
+            loop {
+                eng.clip_sweep();
+                thread::sleep(Duration::from_secs(3600));
+            }
+        })
+        .ok();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -735,7 +1148,6 @@ fn start_search(
         }
         let started = Instant::now();
         engine.touch();
-        reload_searcher(&engine, false);
         let kind_set: Option<HashSet<FileKind>> =
             kinds.map(|list| list.into_iter().filter_map(|s| s.parse().ok()).collect());
         let mut q = text.clone();
@@ -748,11 +1160,26 @@ fn start_search(
         // vectors exist. With none yet (first crawl / battery backfill), that
         // path drops prefix keyword hits like "bitw"→bitwig.pdf and the UI
         // shows "No good matches". Keep words+prefix until embeddings land.
-        let has_doc_vectors = engine
-            .searcher
-            .lock()
-            .expect("searcher")
-            .has_document_vectors();
+        if mode == SearchMode::Hybrid {
+            // Meaning search needs the vectors; usually `panel_opened` loaded them already.
+            ensure_vectors(&engine, use_code);
+        }
+        let has_doc_vectors = if use_code {
+            ensure_code_searcher(&engine);
+            engine
+                .code_searcher
+                .lock()
+                .expect("code_searcher")
+                .as_ref()
+                .map(Searcher::has_document_vectors)
+                .unwrap_or(false)
+        } else {
+            engine
+                .searcher
+                .lock()
+                .expect("searcher")
+                .has_document_vectors()
+        };
         let (use_query_vector, fts_prefix) = search_plan(mode, prefix_last, has_doc_vectors);
         let vector = if use_query_vector {
             query_vector(&engine, &q, use_code)
@@ -766,26 +1193,64 @@ fn start_search(
         } else {
             Meaning::Unavailable
         };
+        let mut tab_counts = None;
         let hits = {
-            let mut searcher = engine.searcher.lock().expect("searcher");
-            match searcher.search(
-                &q,
-                vector.as_deref(),
-                kind_set.as_ref(),
-                limit as usize,
-                Searcher::Z_GATE,
-                None,
-                fts_prefix,
-            ) {
-                Ok(h) => h,
-                Err(err) => {
+            let searched = if use_code {
+                ensure_code_searcher(&engine);
+                let mut slot = engine.code_searcher.lock().expect("code_searcher");
+                slot.as_mut().map(|searcher| {
+                    searcher.search(
+                        &q,
+                        vector.as_deref(),
+                        kind_set.as_ref(),
+                        limit as usize,
+                        Searcher::Z_GATE,
+                        None,
+                        fts_prefix,
+                    )
+                })
+            } else {
+                let mut searcher = engine.searcher.lock().expect("searcher");
+                // A kind tab: the counts on the tabs come from the same query unfiltered
+                // (`SearchWindow.swift:311`). The filter is applied after scoring, so the
+                // filtered list ranks exactly as the All tab does.
+                if kind_set.is_some() {
+                    if let Ok(all) = searcher.search(
+                        &q,
+                        vector.as_deref(),
+                        None,
+                        limit as usize,
+                        Searcher::Z_GATE,
+                        None,
+                        fts_prefix,
+                    ) {
+                        tab_counts = Some(present::kind_counts(&all));
+                    }
+                }
+                Some(searcher.search(
+                    &q,
+                    vector.as_deref(),
+                    kind_set.as_ref(),
+                    limit as usize,
+                    Searcher::Z_GATE,
+                    None,
+                    fts_prefix,
+                ))
+            };
+            match searched {
+                Some(Ok(h)) => h,
+                Some(Err(err)) => {
                     reply_error_line(&out, id, ErrorCode::Internal, err.to_string());
                     return;
                 }
+                None => Vec::new(),
             }
         };
         let took_ms = started.elapsed().as_millis() as u64;
-        let result = present::result_set(&hits, gen, took_ms, meaning);
+        let mut result = present::result_set(&hits, gen, took_ms, meaning);
+        if let Some(counts) = tab_counts {
+            result.counts = counts;
+        }
         if conn_epoch.load(Ordering::SeqCst) != epoch {
             return;
         }
@@ -818,30 +1283,14 @@ fn query_vector(engine: &Engine, text: &str, code: bool) -> Option<Vec<f32>> {
         let mut embedder = FakeEmbedder::new();
         embedder.embed_texts(&[prompt]).ok()?.into_iter().next()
     } else {
-        let source = engine
-            .searcher
-            .lock()
-            .expect("searcher")
-            .vector_source
-            .clone();
+        let source = vector_source_for(engine, code);
         if source.as_deref().is_some_and(|s| s.starts_with("fake@")) {
             let mut embedder = FakeEmbedder::new();
             embedder.embed_texts(&[prompt]).ok()?.into_iter().next()
         } else {
             let mut slot = engine.encoder.lock().expect("encoder");
-            if slot.is_none() {
-                engine.status.lock().expect("status").worker = "starting".into();
-                match QueryEncoder::spawn() {
-                    Ok(enc) => {
-                        engine.status.lock().expect("status").worker = "ready".into();
-                        *slot = Some(enc);
-                    }
-                    Err(err) => {
-                        engine.status.lock().expect("status").worker = "down".into();
-                        engine.status.lock().expect("status").last_error = Some(err);
-                        return None;
-                    }
-                }
+            if !start_encoder(engine, &mut slot) {
+                return None;
             }
             slot.as_mut()?
                 .embed_texts(&[prompt])
@@ -866,6 +1315,70 @@ fn search_plan(mode: SearchMode, prefix_last: bool, has_doc_vectors: bool) -> (b
     }
 }
 
+fn start_encoder(engine: &Engine, slot: &mut Option<QueryEncoder>) -> bool {
+    if slot.is_some() {
+        return true;
+    }
+    engine.status.lock().expect("status").worker = "starting".into();
+    match QueryEncoder::spawn() {
+        Ok(enc) => {
+            engine.status.lock().expect("status").worker = "ready".into();
+            *slot = Some(enc);
+            true
+        }
+        Err(err) => {
+            let mut status = engine.status.lock().expect("status");
+            status.worker = "down".into();
+            status.last_error = Some(err);
+            false
+        }
+    }
+}
+
+/// Gets meaning search ready as the panel opens: starts the query encoder (~1 s cold here) and
+/// loads the vectors, in parallel, so both are usually done by the time a few words are typed.
+/// Vectors already loaded are not read again. `upstream/Sources/DigUpApp/Engine.swift:847` `prewarm`.
+fn prewarm(engine: &Arc<Engine>) {
+    let eng = Arc::clone(engine);
+    thread::spawn(move || {
+        ensure_vectors(&eng, false);
+        ensure_vectors(&eng, true);
+    });
+    if engine.fake {
+        return;
+    }
+    let eng = Arc::clone(engine);
+    thread::spawn(move || {
+        let fake_vectors = vector_source_for(&eng, false).is_some_and(|s| s.starts_with("fake@"));
+        if !fake_vectors {
+            if let Ok(mut slot) = eng.encoder.lock() {
+                start_encoder(&eng, &mut slot);
+            }
+        }
+    });
+}
+
+/// Loads the vectors of one searcher if they aren't (released when idle, or never loaded).
+fn ensure_vectors(engine: &Engine, code: bool) {
+    if code {
+        ensure_code_searcher(engine);
+        if let Ok(mut slot) = engine.code_searcher.lock() {
+            if let Some(searcher) = slot.as_mut().filter(|s| !s.vectors_loaded) {
+                let _ = searcher.reload();
+            }
+        }
+    } else if let Ok(mut searcher) = engine.searcher.lock() {
+        if !searcher.vectors_loaded {
+            let _ = searcher.reload();
+        }
+        engine.status.lock().expect("status").vectors_loaded = searcher.vectors_loaded;
+    }
+}
+
+/// New vectors reach search, at most every 2 s during a long pass. A searcher whose vectors
+/// aren't loaded (the panel hasn't been used lately) only re-reads its files; its vectors load
+/// fresh when the panel opens. Reloading them all here kept ~all vectors in memory through an
+/// index pass and re-read them every 2 s. `upstream/Sources/DigUpApp/Engine.swift:673`.
 fn reload_searcher(engine: &Engine, force: bool) {
     {
         let mut last = engine.last_reload.lock().expect("reload");
@@ -874,9 +1387,137 @@ fn reload_searcher(engine: &Engine, force: bool) {
         }
         *last = Instant::now();
     }
+    let refresh = |searcher: &mut Searcher| {
+        let _ = if searcher.vectors_loaded {
+            searcher.reload()
+        } else {
+            searcher.refresh_files()
+        };
+    };
     if let Ok(mut searcher) = engine.searcher.lock() {
-        let _ = searcher.reload();
+        refresh(&mut searcher);
         engine.status.lock().expect("status").vectors_loaded = searcher.vectors_loaded;
+    }
+    ensure_code_searcher(engine);
+    if let Ok(mut slot) = engine.code_searcher.lock() {
+        if let Some(searcher) = slot.as_mut() {
+            refresh(searcher);
+        }
+    }
+}
+
+fn open_code_searcher(index_dir: &Path) -> Option<Searcher> {
+    IndexStore::open_named(index_dir, IndexStore::CODE_FILE)
+        .and_then(|store| Searcher::new(store, true))
+        .ok()
+}
+
+fn ensure_code_searcher(engine: &Engine) {
+    let mut slot = engine.code_searcher.lock().expect("code_searcher");
+    if slot.is_none() {
+        *slot = open_code_searcher(&engine.index_dir);
+    }
+}
+
+fn vector_source_for(engine: &Engine, code: bool) -> Option<String> {
+    if code {
+        if let Ok(slot) = engine.code_searcher.lock() {
+            if let Some(source) = slot.as_ref().and_then(|s| s.vector_source.clone()) {
+                return Some(source);
+            }
+        }
+    }
+    engine
+        .searcher
+        .lock()
+        .ok()
+        .and_then(|s| s.vector_source.clone())
+}
+
+fn prefer_code_store(engine: &Engine, explicit: bool) -> bool {
+    if explicit {
+        return true;
+    }
+    engine
+        .newest_typed
+        .lock()
+        .ok()
+        .and_then(|k| k.clone())
+        .is_some_and(|k| k.starts_with("code\u{0}"))
+}
+
+fn preview_body(
+    engine: &Engine,
+    segment_id: i64,
+    width: u32,
+    query: Option<&str>,
+    prefer_code: bool,
+) -> Value {
+    lookup_segment(engine, segment_id, prefer_code, |searcher| {
+        previews::preview(searcher, segment_id, width, query)
+    })
+    .unwrap_or_else(|| json!({"error": {"code": "not_found", "message": "unknown segment"}}))
+}
+
+fn text_of_body(engine: &Engine, segment_id: i64, prefer_code: bool) -> Value {
+    lookup_segment(engine, segment_id, prefer_code, |searcher| {
+        previews::text_of(searcher, segment_id)
+    })
+    .unwrap_or_else(|| json!({"error": {"code": "not_found", "message": "unknown segment"}}))
+}
+
+fn thumbnail_body(
+    engine: &Engine,
+    segment_id: Option<i64>,
+    path: Option<&Path>,
+    size: u32,
+    prefer_code: bool,
+) -> Value {
+    if let Some(id) = segment_id {
+        if let Some(body) = lookup_segment(engine, id, prefer_code, |searcher| {
+            previews::thumbnail(searcher, Some(id), path, size)
+        }) {
+            return body;
+        }
+        if path.is_none() {
+            return json!({"error": {"code": "not_found", "message": "no file"}});
+        }
+    }
+    let searcher = engine.searcher.lock().expect("searcher");
+    previews::thumbnail(&searcher, segment_id, path, size)
+}
+
+fn segment_meta_any(
+    engine: &Engine,
+    segment_id: i64,
+    prefer_code: bool,
+) -> Option<previews::SegmentMeta> {
+    lookup_segment(engine, segment_id, prefer_code, |searcher| {
+        previews::segment_meta(searcher, segment_id)
+    })
+    .flatten()
+}
+
+fn lookup_segment<T>(
+    engine: &Engine,
+    segment_id: i64,
+    prefer_code: bool,
+    mut f: impl FnMut(&Searcher) -> T,
+) -> Option<T> {
+    let try_main = |engine: &Engine, f: &mut dyn FnMut(&Searcher) -> T| -> Option<T> {
+        let searcher = engine.searcher.lock().expect("searcher");
+        previews::segment_meta(&searcher, segment_id).map(|_| f(&searcher))
+    };
+    let try_code = |engine: &Engine, f: &mut dyn FnMut(&Searcher) -> T| -> Option<T> {
+        ensure_code_searcher(engine);
+        let slot = engine.code_searcher.lock().expect("code_searcher");
+        slot.as_ref()
+            .and_then(|searcher| previews::segment_meta(searcher, segment_id).map(|_| f(searcher)))
+    };
+    if prefer_code {
+        try_code(engine, &mut f).or_else(|| try_main(engine, &mut f))
+    } else {
+        try_main(engine, &mut f).or_else(|| try_code(engine, &mut f))
     }
 }
 
@@ -904,7 +1545,7 @@ fn push_status_event(conn: &Conn, engine: &Engine) {
     conn.out.push_status(v);
 }
 
-fn reply_preview(conn: &Conn, id: u64, body: Value) {
+fn reply_preview_line(out: &Outbox, id: u64, body: Value) {
     if let Some(err) = body.get("error") {
         let code = match err.get("code").and_then(Value::as_str) {
             Some("not_found") => ErrorCode::NotFound,
@@ -915,10 +1556,118 @@ fn reply_preview(conn: &Conn, id: u64, body: Value) {
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("preview failed");
-        reply_error(conn, Some(id), code, message);
+        reply_error_line(out, id, code, message);
         return;
     }
-    reply_ok(conn, id, body);
+    let mut body = body;
+    if let Value::Object(map) = &mut body {
+        map.insert("id".into(), json!(id));
+        map.insert("ok".into(), json!(true));
+    }
+    out.push_line(body.to_string());
+}
+
+/// A few threads for renders, so ten thumbnails don't start ten ffmpegs at once.
+struct RenderPool {
+    tx: Mutex<std::sync::mpsc::Sender<Box<dyn FnOnce() + Send>>>,
+}
+
+impl RenderPool {
+    fn run(&self, job: impl FnOnce() + Send + 'static) {
+        if let Ok(tx) = self.tx.lock() {
+            let _ = tx.send(Box::new(job));
+        }
+    }
+}
+
+fn render_pool() -> &'static RenderPool {
+    static POOL: std::sync::OnceLock<RenderPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let rx = Arc::new(Mutex::new(rx));
+        for n in 0..3 {
+            let rx = Arc::clone(&rx);
+            let _ = thread::Builder::new()
+                .name(format!("troweld-render-{n}"))
+                .spawn(move || loop {
+                    let job = match rx.lock() {
+                        Ok(rx) => rx.recv(),
+                        Err(_) => return,
+                    };
+                    match job {
+                        Ok(job) => job(),
+                        Err(_) => return,
+                    }
+                });
+        }
+        RenderPool { tx: Mutex::new(tx) }
+    })
+}
+
+/// Previews already rendered, by what was asked and the file's mtime: going back up the list
+/// (or an audio waveform, 450 ms each time) is instant. Upstream keeps `Previews.shared`.
+#[derive(Default)]
+struct PreviewCache {
+    entries: VecDeque<(PreviewKey, Value)>,
+}
+
+#[derive(PartialEq, Eq, Clone)]
+struct PreviewKey {
+    code: bool,
+    segment: i64,
+    width: u32,
+    query: Option<String>,
+    path: PathBuf,
+    mtime: Option<std::time::SystemTime>,
+}
+
+const PREVIEW_CACHE_ENTRIES: usize = 48;
+
+fn cached_preview(
+    engine: &Engine,
+    segment_id: i64,
+    width: u32,
+    query: Option<&str>,
+    prefer_code: bool,
+) -> Value {
+    let Some(meta) = segment_meta_any(engine, segment_id, prefer_code) else {
+        return preview_body(engine, segment_id, width, query, prefer_code);
+    };
+    let key = PreviewKey {
+        code: prefer_code,
+        segment: segment_id,
+        width,
+        query: query.map(str::to_string),
+        mtime: fs::metadata(&meta.path).and_then(|m| m.modified()).ok(),
+        path: meta.path,
+    };
+    if let Ok(cache) = engine.preview_cache.lock() {
+        if let Some((_, body)) = cache.entries.iter().find(|(k, _)| *k == key) {
+            if rendered_files_exist(body) {
+                return body.clone();
+            }
+        }
+    }
+    let body = preview_body(engine, segment_id, width, query, prefer_code);
+    if body.get("error").is_none() {
+        if let Ok(mut cache) = engine.preview_cache.lock() {
+            cache.entries.retain(|(k, _)| *k != key);
+            cache.entries.push_back((key, body.clone()));
+            while cache.entries.len() > PREVIEW_CACHE_ENTRIES {
+                cache.entries.pop_front();
+            }
+        }
+    }
+    body
+}
+
+/// Rendered files may have been cleaned up since (`previews` keeps a bounded folder).
+fn rendered_files_exist(body: &Value) -> bool {
+    ["file", "frame", "thumb"].iter().all(|k| {
+        body.get(*k)
+            .and_then(Value::as_str)
+            .is_none_or(|p| Path::new(p).exists())
+    })
 }
 
 fn reply_ok(conn: &Conn, id: u64, body: Value) {
@@ -962,7 +1711,237 @@ fn writer_loop(mut stream: UnixStream, out: Arc<Outbox>) {
     }
 }
 
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+/// The watcher first, then a rescan for anything that changed since the startup scan, then
+/// icons (100–200 ms). Watching only after the icon walk missed installs in that window.
+fn start_apps(engine: &Arc<Engine>) {
+    let eng = Arc::clone(engine);
+    thread::Builder::new()
+        .name("troweld-apps".into())
+        .spawn(move || {
+            let watch_eng = Arc::clone(&eng);
+            let on_change = move || {
+                // Entries first (~10 ms) so a new app is searchable at once; icons follow.
+                rescan_apps(&watch_eng);
+                let icons = IconIndex::build();
+                watch_eng.apps.write().expect("apps").set_icons(icons);
+            };
+            match apps::watch(&eng.apps_env, on_change) {
+                Ok(w) => *eng.apps_watch.lock().expect("apps watch") = Some(w),
+                Err(err) => eprintln!("troweld: cannot watch application dirs: {err}"),
+            }
+            rescan_apps(&eng);
+            let icons = IconIndex::build();
+            eng.apps.write().expect("apps").set_icons(icons);
+        })
+        .ok();
+}
+
+/// Re-reads the entries, keeping the current icon index.
+fn rescan_apps(engine: &Engine) {
+    let (mut index, _) = AppIndex::scan(&engine.apps_env);
+    index.set_icons(engine.apps.read().expect("apps").icons().clone());
+    *engine.apps.write().expect("apps") = index;
+}
+
 impl Engine {
+    /// Launch counts for frecency, read from `state.sqlite` once.
+    fn app_launches(&self) -> std::collections::HashMap<String, Launches> {
+        let mut cache = self.app_launches.lock().expect("launches");
+        if cache.is_none() {
+            // A daemon that never launched anything has no state.sqlite; don't create one here.
+            let exists = self.state_dir.join(crate::state::STATE_FILE).is_file();
+            let loaded = if exists {
+                self.with_state(|s| s.launches()).unwrap_or_default()
+            } else {
+                Default::default()
+            };
+            *cache = Some(loaded);
+        }
+        cache.clone().unwrap_or_default()
+    }
+
+    fn state_exists(&self) -> bool {
+        self.state.lock().expect("state").is_some()
+            || self.state_dir.join(crate::state::STATE_FILE).is_file()
+    }
+
+    fn clip_stored(&self, clip_id: i64) -> Result<Option<clip::store::Stored>, String> {
+        if !self.state_exists() {
+            return Ok(None);
+        }
+        self.with_state(|s| s.clip_stored(clip_id))
+    }
+
+    fn clip_limits(&self) -> Limits {
+        let cfg = self.config.lock().expect("config");
+        Limits {
+            max_entries: cfg.clipboard.max_entries,
+            max_age_days: cfg.clipboard.max_age_days,
+            max_blob_bytes: cfg.clipboard.max_blob_mb.saturating_mul(1024 * 1024),
+        }
+    }
+
+    fn clip_removed(&self, ids: &[i64]) {
+        for id in ids {
+            clip::thumbs::remove(*id);
+        }
+        self.clip_events.removed(ids);
+    }
+
+    /// One capture: skip rules, build, store, retention, thumbnail. `None` when skipped.
+    fn clip_ingest(
+        &self,
+        types: &[String],
+        offers: &[clip::ingest::Offer],
+        source_app: Option<String>,
+    ) -> Result<Option<(i64, bool)>, String> {
+        let env = self.clip_watch.env();
+        if !env.enabled || self.clip_watch.paused() {
+            return Ok(None);
+        }
+        // Belt and braces: `clip-capture` already checks these before reading anything.
+        if types.iter().any(|t| t == clip::ingest::SENSITIVE_MIME) {
+            return Ok(None);
+        }
+        if let Some(app) = source_app.as_deref() {
+            if env
+                .excluded_apps
+                .iter()
+                .any(|x| x.eq_ignore_ascii_case(app))
+            {
+                return Ok(None);
+            }
+        }
+        {
+            let mut suppress = self.clip_suppress.lock().expect("clip suppress");
+            match *suppress {
+                Some(until) if Instant::now() < until => return Ok(None),
+                Some(_) => *suppress = None,
+                None => {}
+            }
+        }
+        let Some(entry) = clip::ingest::build(offers, source_app, unix_now(), env.max_bytes)?
+        else {
+            return Ok(None);
+        };
+        let limits = self.clip_limits();
+        let (row, new, removed, blob_dir) = self.with_state(|s| {
+            let (row, new) = s.clip_upsert(&entry)?;
+            let removed = s.clip_enforce(limits, unix_now())?;
+            Ok((row, new, removed, s.blob_dir()))
+        })?;
+        self.clip_removed(&removed);
+        let id = row.id;
+        let thumb_src = match (&entry.blob, &entry.files) {
+            (Some(blob), _) if row.kind == trowel_proto::ClipKind::Image => {
+                Some(blob_dir.join(format!("{}.{}", blob.sha256, blob.ext)))
+            }
+            (_, Some(files)) => clip::ingest::thumb_source(files),
+            _ => None,
+        };
+        self.clip_events.added(clip::with_thumb(row.clone()));
+        if let Some(src) = thumb_src.filter(|_| clip::thumbs::row_thumb(id).is_none()) {
+            let events = self.clip_events.clone();
+            thread::spawn(move || {
+                if clip::thumbs::render(id, &src) {
+                    events.added(clip::with_thumb(row));
+                }
+            });
+        }
+        Ok(Some((id, new)))
+    }
+
+    /// `clip_import`: Omarchy's history, oldest first, skipping what is already stored.
+    fn clip_import(&self, file: &Path) -> Result<(u64, u64), String> {
+        let max_bytes = self.clip_watch.env().max_bytes;
+        let parsed = clip::import::parse(file, unix_now(), max_bytes)?;
+        let limits = self.clip_limits();
+        let mut skipped = parsed.skipped;
+        let (imported, newest, removed) = self.with_state(|s| {
+            let mut imported = 0u64;
+            let mut newest = None;
+            for entry in &parsed.entries {
+                if s.clip_has(&entry.hash)? {
+                    skipped += 1;
+                    continue;
+                }
+                newest = Some(s.clip_upsert(entry)?.0);
+                imported += 1;
+            }
+            let removed = s.clip_enforce(limits, unix_now())?;
+            Ok((imported, newest, removed))
+        })?;
+        self.clip_removed(&removed);
+        if let Some(row) = newest {
+            self.clip_events.added(clip::with_thumb(row));
+        }
+        Ok((imported, skipped))
+    }
+
+    /// Hourly: retention, GC, thumbnail sweep. Never creates `state.sqlite`.
+    fn clip_sweep(&self) {
+        if !self.state_exists() {
+            return;
+        }
+        let limits = self.clip_limits();
+        let result = self.with_state(|s| {
+            let removed = s.clip_enforce(limits, unix_now())?;
+            let gc = s.clip_gc()?;
+            Ok((removed, gc, s.clip_ids()?))
+        });
+        match result {
+            Ok((removed, gc, ids)) => {
+                self.clip_removed(&removed);
+                let swept = clip::thumbs::sweep(&ids.into_iter().collect());
+                if gc.files + gc.blob_rows + swept > 0 {
+                    eprintln!(
+                        "troweld: clipboard gc removed {} orphan blob files, {} blob rows, {} thumbnails",
+                        gc.files, gc.blob_rows, swept
+                    );
+                }
+            }
+            Err(err) => eprintln!("troweld: clipboard gc: {err}"),
+        }
+    }
+
+    fn clip_doctor(&self) -> doctor::Check {
+        let env = self.clip_watch.env();
+        let stats = if self.state_exists() {
+            self.with_state(|s| s.clip_stats()).ok()
+        } else {
+            Some((0, 0))
+        };
+        doctor::clipboard_check(
+            env.enabled,
+            self.clip_watch.paused(),
+            self.clip_watch.running(),
+            self.clip_watch
+                .last_error
+                .lock()
+                .expect("watch err")
+                .clone(),
+            stats,
+        )
+    }
+
+    /// Runs `f` on `state.sqlite`, opening it on first use.
+    fn with_state<T>(
+        &self,
+        f: impl FnOnce(&StateDb) -> Result<T, trowel_core::DbError>,
+    ) -> Result<T, String> {
+        let mut slot = self.state.lock().expect("state");
+        if slot.is_none() {
+            *slot = Some(StateDb::open(&self.state_dir).map_err(|e| e.to_string())?);
+        }
+        f(slot.as_ref().expect("state open")).map_err(|e| e.to_string())
+    }
+
     fn touch(&self) {
         if let Ok(mut last) = self.last_use.lock() {
             *last = Instant::now();
@@ -1006,6 +1985,35 @@ impl Engine {
         self.start_helper();
     }
 
+    /// Tell a running helper to start or stop the backfill, or spawn one when
+    /// AC (or `index_on_battery`) now allows it.
+    /// `upstream/Sources/DigUpApp/Engine.swift:707` `setBackfillBlocker`.
+    fn apply_backfill_policy(self: &Arc<Self>) {
+        if !self.onboarded() || self.paused.load(Ordering::SeqCst) {
+            return;
+        }
+        let index_on_battery = self
+            .config
+            .lock()
+            .ok()
+            .map(|c| c.index_on_battery)
+            .unwrap_or(false);
+        let allowed = power::backfill_blocker(index_on_battery).is_none();
+        if let Some(helper) = self.helper.lock().expect("helper").clone() {
+            if helper.running() {
+                helper.send(if allowed {
+                    "backfill on"
+                } else {
+                    "backfill off"
+                });
+                return;
+            }
+        }
+        if allowed {
+            self.start_helper();
+        }
+    }
+
     fn request_code_sync(self: &Arc<Self>) {
         if self.paused.load(Ordering::SeqCst) {
             return;
@@ -1022,12 +2030,19 @@ impl Engine {
 
     fn start_helper(self: &Arc<Self>) {
         if self.paused.load(Ordering::SeqCst) || !self.onboarded() {
+            eprintln!(
+                "troweld: not starting the helper: paused={} onboarded={}",
+                self.paused.load(Ordering::SeqCst),
+                self.onboarded()
+            );
             return;
         }
         if self.sleeping.load(Ordering::SeqCst) {
+            eprintln!("troweld: not starting the helper: the system is going to sleep");
             return;
         }
         if let Some(reason) = disk::too_full(&self.index_dir) {
+            eprintln!("troweld: not starting the helper: {reason}");
             let mut status = self.status.lock().expect("status");
             status.paused_reason = Some(reason);
             status.phase = "paused".into();
@@ -1035,11 +2050,13 @@ impl Engine {
         }
         if let Some(helper) = self.helper.lock().expect("helper").clone() {
             if helper.running() {
+                eprintln!("troweld: helper running; asked it to sync");
                 helper.send("sync");
                 return;
             }
         }
         if self.helper_starting.swap(true, Ordering::SeqCst) {
+            eprintln!("troweld: not starting the helper: one is starting");
             return;
         }
         let cfg = self.config.lock().expect("config").clone();
@@ -1084,11 +2101,21 @@ impl Engine {
         let code = event.get("code").and_then(Value::as_bool).unwrap_or(false);
         match kind {
             "sync" => {
-                if event.get("new").and_then(Value::as_i64).unwrap_or(0) > 0 {
+                let new = event.get("new").and_then(Value::as_u64).unwrap_or(0);
+                if new > 0 {
+                    // A code sync is the code pass's progress, never the main one's: it set
+                    // main to 0/N, and nothing about the main index ever corrected it (the
+                    // badge and bar sat at 0% while code was indexed).
+                    // `upstream/Sources/DigUpApp/Engine.swift` handleCode "sync".
                     let mut status = self.status.lock().expect("status");
                     status.phase = "indexing".into();
-                    status.main.total = event.get("new").and_then(Value::as_u64).unwrap_or(0);
-                    status.main.done = 0;
+                    let pass = if code {
+                        &mut status.code
+                    } else {
+                        &mut status.main
+                    };
+                    pass.total = new;
+                    pass.done = 0;
                 } else {
                     self.status.lock().expect("status").phase = "syncing".into();
                 }
@@ -1098,6 +2125,9 @@ impl Engine {
                 let mut status = self.status.lock().expect("status");
                 status.phase = "indexing".into();
                 if code {
+                    // The helper reads code only once the main index has nothing waiting:
+                    // the main pass is over.
+                    status.main = Default::default();
                     status.code.done = event.get("done").and_then(Value::as_u64).unwrap_or(0);
                     status.code.total = event.get("total").and_then(Value::as_u64).unwrap_or(0);
                     status.code.current = event
@@ -1124,7 +2154,8 @@ impl Engine {
                 {
                     let mut status = self.status.lock().expect("status");
                     status.phase = "idle".into();
-                    status.main.current = None;
+                    status.main = Default::default();
+                    status.code = Default::default();
                 }
                 self.apply_counts(&event);
                 reload_searcher(self, true);
@@ -1145,8 +2176,16 @@ impl Engine {
                     status.phase = "error".into();
                 }
             }
+            "reindex" => {
+                let from = event.get("from").and_then(Value::as_str).unwrap_or("?");
+                let to = event.get("to").and_then(Value::as_str).unwrap_or("?");
+                eprintln!("troweld indexer: model or settings changed, reindexing (was: {from}; now: {to})");
+            }
             "exit" | "exited" => {
                 *self.helper.lock().expect("helper") = None;
+                // Must drop this before start_helper(); otherwise the next
+                // spawn is skipped forever after the first helper exits.
+                self.helper_starting.store(false, Ordering::SeqCst);
                 {
                     let mut status = self.status.lock().expect("status");
                     if status.phase == "indexing"
@@ -1166,8 +2205,41 @@ impl Engine {
         self.broadcast_status();
     }
 
-    fn apply_counts(&self, event: &Value) {
-        let _ = event.get("files");
+    /// `status.counts`: searchable files per kind in both indexes (PROTOCOL §5).
+    fn apply_counts(&self, _event: &Value) {
+        let mut counts = trowel_proto::status::Counts::default();
+        let mut add = |by_kind: &std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, usize>,
+        >| {
+            for (kind, states) in by_kind {
+                let n = states
+                    .iter()
+                    .filter(|(state, _)| state.as_str() == "done" || state.as_str() == "partial")
+                    .map(|(_, n)| *n as u64)
+                    .sum::<u64>();
+                match kind.as_str() {
+                    "screenshot" => counts.screenshots += n,
+                    "image" => counts.images += n,
+                    "pdf" | "doc" => counts.documents += n,
+                    "video" => counts.video += n,
+                    "audio" => counts.audio += n,
+                    "code" => counts.code += n,
+                    _ => {}
+                }
+            }
+        };
+        if let Ok(searcher) = self.searcher.lock() {
+            if let Ok(c) = searcher.store.counts() {
+                add(&c.by_kind_and_state);
+            }
+        }
+        if let Ok(slot) = self.code_searcher.lock() {
+            if let Some(c) = slot.as_ref().and_then(|s| s.store.counts().ok()) {
+                add(&c.by_kind_and_state);
+            }
+        }
+        self.status.lock().expect("status").counts = counts;
     }
 
     fn broadcast_status(&self) {
@@ -1202,6 +2274,11 @@ impl Engine {
             searcher.release_vectors();
             self.status.lock().expect("status").vectors_loaded = false;
         }
+        if let Ok(mut slot) = self.code_searcher.lock() {
+            if let Some(searcher) = slot.as_mut() {
+                searcher.release_vectors();
+            }
+        }
         if let Ok(mut slot) = self.encoder.lock() {
             if let Some(mut enc) = slot.take() {
                 enc.close();
@@ -1231,6 +2308,7 @@ impl Engine {
     fn reload_config_file(&self) {
         match config_file::load(&self.config_path) {
             Ok(next) => {
+                self.clip_watch.set_env(clip_env(&next));
                 *self.config.lock().expect("config") = next;
             }
             Err(err) => {
@@ -1260,7 +2338,8 @@ fn start_watch(engine: &Arc<Engine>) {
         *engine.watch.lock().expect("watch") = None;
     } else {
         let eng = Arc::clone(engine);
-        match FolderWatch::start(local, DEBOUNCE, move |_| {
+        let walks = crawl_walks(&cfg.excluded_folders, false);
+        match FolderWatch::start_scoped(local, DEBOUNCE, walks, move |_| {
             if !eng.paused.load(Ordering::SeqCst) && !eng.sleeping.load(Ordering::SeqCst) {
                 eng.request_sync();
             }
@@ -1281,11 +2360,18 @@ fn start_watch(engine: &Arc<Engine>) {
         *engine.code_watch.lock().expect("code_watch") = None;
     } else {
         let eng = Arc::clone(engine);
-        match FolderWatch::start_code(local_code, CODE_QUIET, CODE_LONGEST_WAIT, move |_| {
-            if !eng.paused.load(Ordering::SeqCst) && !eng.sleeping.load(Ordering::SeqCst) {
-                eng.request_code_sync();
-            }
-        }) {
+        let walks = crawl_walks(&cfg.code_excluded, true);
+        match FolderWatch::start_code(
+            local_code,
+            CODE_QUIET,
+            CODE_LONGEST_WAIT,
+            walks,
+            move |_| {
+                if !eng.paused.load(Ordering::SeqCst) && !eng.sleeping.load(Ordering::SeqCst) {
+                    eng.request_code_sync();
+                }
+            },
+        ) {
             Ok(watch) => *engine.code_watch.lock().expect("code_watch") = Some(watch),
             Err(err) => eprintln!("troweld code watcher: {err}"),
         }
@@ -1301,6 +2387,22 @@ fn start_watch(engine: &Arc<Engine>) {
     }
 }
 
+/// The folders the crawl walks, for the watcher (`Rules::walks_into`). Skipped folders are
+/// matched as written and as real paths, as upstream `startWatching` does.
+fn crawl_walks(excluded: &[String], code: bool) -> crate::watcher::Walks {
+    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+    let mut skips: Vec<String> = Vec::new();
+    for folder in excluded {
+        let path = expand_tilde(folder).to_string_lossy().into_owned();
+        let real = trowel_core::folder_selection::real_path(&path);
+        skips.push(path);
+        if !skips.contains(&real) {
+            skips.push(real);
+        }
+    }
+    Arc::new(move |folder: &Path| Rules::walks_into(folder, &home, &skips, code))
+}
+
 fn start_config_watch(engine: &Arc<Engine>) {
     let path = engine.config_path.clone();
     let Some(parent) = path.parent().map(PathBuf::from) else {
@@ -1311,14 +2413,21 @@ fn start_config_watch(engine: &Arc<Engine>) {
     }
     let name = path.file_name().map(|s| s.to_os_string());
     let eng = Arc::clone(engine);
-    match FolderWatch::start(vec![parent], Duration::from_millis(400), move |paths| {
-        if paths.iter().any(|p| {
-            name.as_ref()
-                .is_some_and(|n| p.file_name() == Some(n.as_os_str()))
-        }) {
-            eng.reload_config_file();
-        }
-    }) {
+    // Only the config folder itself, not what is below it.
+    let only_root: crate::watcher::Walks = Arc::new(|_| false);
+    match FolderWatch::start_scoped(
+        vec![parent],
+        Duration::from_millis(400),
+        only_root,
+        move |paths| {
+            if paths.iter().any(|p| {
+                name.as_ref()
+                    .is_some_and(|n| p.file_name() == Some(n.as_os_str()))
+            }) {
+                eng.reload_config_file();
+            }
+        },
+    ) {
         Ok(watch) => *engine.config_watch.lock().expect("config_watch") = Some(watch),
         Err(err) => eprintln!("troweld config watch: {err}"),
     }
@@ -1353,6 +2462,12 @@ fn spawn_idle_reaper(engine: Arc<Engine>) {
         }
         if !sleep && was {
             engine.leave_sleep();
+        }
+        let on_battery = power::on_battery();
+        let was_battery = engine.was_on_battery.swap(on_battery, Ordering::SeqCst);
+        if was_battery != on_battery {
+            // upstream/Sources/DigUpApp/Engine.swift setBackfillBlocker
+            engine.apply_backfill_policy();
         }
     });
 }

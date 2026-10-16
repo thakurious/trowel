@@ -377,6 +377,47 @@ impl Rules {
         None
     }
 
+    /// Whether a change the folder watcher reports at `path` is where the crawl of `root` goes: not inside a
+    /// folder it skips (hidden, `.noindex` and developer folders, the Linux system folders, the skipped ones).
+    /// A change anywhere else asks for a sync that finds nothing new.
+    /// `upstream/Sources/DigUpKit/Rules.swift` `isWalked` (75d95d0).
+    pub fn is_walked(path: &Path, root: &Path, home: &Path, excluded: &[String]) -> bool {
+        Self::walks_to(path, root, |folder| {
+            Self::skip_reason_for_folder(folder, home, excluded).is_none()
+        })
+    }
+
+    /// `is_walked` for a code root: the code crawl also skips vendored and built folders and submodules
+    /// (`code_skip_reason`). Linux-only: inotify reports every write under `target/` or `node_modules/`.
+    pub fn is_code_walked(path: &Path, root: &Path, home: &Path, excluded: &[String]) -> bool {
+        Self::walks_to(path, root, |folder| {
+            Self::skip_reason_for_folder(folder, home, excluded).is_none()
+                && Self::code_skip_reason(folder).is_none()
+        })
+    }
+
+    /// Whether the crawl enters `folder` once it reached its parent (one step of `is_walked`).
+    pub fn walks_into(folder: &Path, home: &Path, excluded: &[String], code: bool) -> bool {
+        !file_name(folder).starts_with('.')
+            && Self::skip_reason_for_folder(folder, home, excluded).is_none()
+            && !(code && Self::code_skip_reason(folder).is_some())
+    }
+
+    /// Whether every folder from `root` down to `path` is one the crawl walks: not hidden, and `walks`.
+    pub fn walks_to(path: &Path, root: &Path, walks: impl Fn(&Path) -> bool) -> bool {
+        let Ok(rest) = path.strip_prefix(root) else {
+            return false;
+        };
+        let mut folder = root.to_path_buf();
+        for part in rest.components() {
+            folder.push(part);
+            if part.as_os_str().to_string_lossy().starts_with('.') || !walks(&folder) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn is_project_root(folder: &Path) -> bool {
         let Ok(entries) = fs::read_dir(folder) else {
             return false;
@@ -569,6 +610,93 @@ mod tests {
     use super::*;
     use std::fs::File;
     use std::io::Write;
+
+    /// `upstream/Tests/DigUpKitTests/RulesTests.swift` `changesCountOnlyWhereTheCrawlGoes`, with the Linux
+    /// system folders in place of ~/Library.
+    #[test]
+    fn changes_count_only_where_the_crawl_goes() {
+        let home = Path::new("/home/me");
+        let walked = |path: &str, root: &str, excluded: &[&str]| {
+            let excluded: Vec<String> = excluded.iter().map(|s| s.to_string()).collect();
+            Rules::is_walked(Path::new(path), Path::new(root), home, &excluded)
+        };
+        assert!(walked("/home/me/Documents/trip.pdf", "/home/me", &[]));
+        assert!(walked("/home/me", "/home/me", &[]));
+        // Trowel's own index and the caches, with the home folder chosen.
+        assert!(!walked(
+            "/home/me/.local/share/trowel/index/index.sqlite-wal",
+            "/home/me",
+            &[]
+        ));
+        assert!(!walked(
+            "/home/me/.cache/mozilla/firefox/cache2/x",
+            "/home/me",
+            &[]
+        ));
+        assert!(!walked("/home/me/snap/firefox/x", "/home/me", &[]));
+        assert!(!walked(
+            "/home/me/Projects/site/node_modules/left-pad/index.js",
+            "/home/me",
+            &[]
+        ));
+        assert!(!walked(
+            "/home/me/Videos/Exports.noindex/clip.mov",
+            "/home/me",
+            &[]
+        ));
+        assert!(!walked("/home/me/Documents/.git/index", "/home/me", &[]));
+        assert!(!walked(
+            "/home/me/Downloads/big.iso",
+            "/home/me",
+            &["/home/me/Downloads"]
+        ));
+        // A chosen folder that is itself hidden is walked; only hidden folders below it are not.
+        let notes = "/home/me/.local/share/notes";
+        assert!(walked("/home/me/.local/share/notes/plan.md", notes, &[]));
+        assert!(!walked("/home/me/Documents/trip.pdf", notes, &[]));
+        assert!(walked(
+            "/home/me/Documentsx/a.pdf",
+            "/home/me/Documentsx",
+            &[]
+        ));
+        assert!(!walked(
+            "/home/me/Documentsx/a.pdf",
+            "/home/me/Documents",
+            &[]
+        ));
+    }
+
+    #[test]
+    fn code_changes_skip_built_and_vendored_folders() {
+        let home = Path::new("/home/me");
+        let code = |path: &str| {
+            Rules::is_code_walked(Path::new(path), Path::new("/home/me/Projects"), home, &[])
+        };
+        assert!(code("/home/me/Projects/app/src/main.rs"));
+        assert!(!code("/home/me/Projects/app/target/debug/build/x.o"));
+        assert!(!code("/home/me/Projects/web/node_modules/react/index.js"));
+        assert!(!code("/home/me/Projects/web/build/out.js"));
+        assert!(!code("/home/me/Projects/app/.git/index.lock"));
+        assert!(!code("/home/me/Projects/app/vendor/lib.c"));
+        assert!(Rules::walks_into(
+            Path::new("/home/me/Projects/app/src"),
+            home,
+            &[],
+            true
+        ));
+        assert!(!Rules::walks_into(
+            Path::new("/home/me/Projects/app/build"),
+            home,
+            &[],
+            true
+        ));
+        assert!(Rules::walks_into(
+            Path::new("/home/me/Projects/app/build"),
+            home,
+            &[],
+            false
+        ));
+    }
 
     fn tmp() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("trowel-rules-{}", std::process::id()));

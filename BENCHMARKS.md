@@ -44,6 +44,11 @@ irrelevant to us.
 | Thumbnail (cached) | ≤ 5 ms daemon, ≤ 100 ms on screen | |
 | Startup reconcile (warm cache) | ≤ 1 s per 100k files | ROBUSTNESS F1 |
 | Desktop impact while indexing | no frame drops in the panel or Hyprland animations | helper in the `trowel-index.slice` (Nice 10, idle IO) |
+| `calc`, daemon side (Phase 8 L2c) | p95 < 1 ms, hard stop at 20 ms | measured 2026-10-15 release: p50 43–64 µs, p95 237–408 µs over `tests/calc/table.tsv`; one-shot `5 ft to cm` 238–565 µs after a 0.44–0.64 ms warm-up |
+| `apps_query`, 200 entries (Phase 8 L2) | p95 < 2 ms | measured 2026-10-15 release, 94 installed apps: 310–330 µs per query; entry scan 4–8 ms; icon index 100–180 ms (background) |
+| `clip_query`, 1000 entries (Phase 8 L3) | p95 < 5 ms | measured 2026-10-15 release (`trowel clip bench`, 300 queries: empty, words, literal `://`, kind filters): p50 0.38 ms, p95 0.66 ms |
+| Clipboard image ingest (Phase 8 L3) | < 150 ms for an 8 MB screenshot, thumbnail excluded | measured 2026-10-15 release: 8 MB synthetic PNG 8.3 ms; 18.5 MB real PNG 18.2 ms (read, SHA-256, blob write + fsync, insert, retention) |
+| Copy → visible in `clip_query` (Phase 8 L3, live) | ≤ 300 ms | measured 2026-10-15 `scripts/clip-live.sh` (real compositor): text, PNG, file, HTML each 61–149 ms over 4 runs, including a `trowel clip list` poll every ~30 ms |
 
 ## What will be *slower* than an Apple Silicon Mac
 

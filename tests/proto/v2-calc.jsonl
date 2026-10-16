@@ -1,0 +1,12 @@
+{"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
+{"send": {"id": 2, "op": "calc", "text": "5 ft to cm", "gen": 1}}
+{"recv": {"id": 2, "ok": true, "gen": 1, "result": {"expr": "5 ft to cm", "pretty_expr": "5 ft to cm", "display": "152.4 cm", "copy": "152.4", "kind": "unit", "approx": false, "alts": [], "unit": "cm"}}}
+{"send": {"id": 3, "op": "calc", "text": "firefox", "gen": 2}}
+{"recv": {"id": 3, "ok": true, "gen": 2}}
+{"send": {"id": 4, "op": "calc", "text": "=1 +", "force": true, "gen": 3}}
+{"recv": {"id": 4, "ok": true, "gen": 3, "error": "*"}}
+{"send": {"id": 5, "op": "calc_copy", "text": "152.4", "expr": "5 ft to cm", "mode": "copy"}}
+{"recv": {"id": 5, "ok": true}}
+{"send": {"id": 6, "op": "calc_history", "limit": 1}}
+{"recv": {"id": 6, "ok": true, "rows": [{"expr": "5 ft to cm", "result": "152.4", "at": 1791869400}]}}

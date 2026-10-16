@@ -70,6 +70,11 @@ fn write_cfg(root: &Path, onboarded: bool, roots: &[PathBuf]) {
 }
 
 fn start(root: PathBuf, extra: &[&str]) -> Daemon {
+    start_with(root, extra, &[])
+}
+
+/// `envs` override the daemon's environment (e.g. a `PATH` with stub `wl-copy`).
+fn start_with(root: PathBuf, extra: &[&str], envs: &[(&str, &str)]) -> Daemon {
     let socket = root.join("troweld.sock");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_troweld"));
     cmd.arg("--fake")
@@ -85,6 +90,15 @@ fn start(root: PathBuf, extra: &[&str]) -> Daemon {
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("TROWEL", trowel_bin())
         .env("TROWEL_LINGER", "3")
+        // Never the developer's session: clipboard writes and keystrokes must fail in tests.
+        .env("WAYLAND_DISPLAY", "trowel-test-no-compositor")
+        // Never the real desktop's applications or Omarchy's hides.
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_DATA_DIRS", root.join("sys"))
+        .env("OMARCHY_PATH", root.join("omarchy"))
+        .arg("--state-dir")
+        .arg(root.join("state"))
+        .envs(envs.iter().copied())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -154,6 +168,29 @@ fn index_note(root: &Path) {
     indexer.finish();
 }
 
+fn index_code_file(root: &Path) {
+    let files = root.join("src");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("RouteValidator.rs"), "fn route_validator() {}\n").unwrap();
+    let store =
+        trowel_core::IndexStore::open_named(root.join("index"), trowel_core::IndexStore::CODE_FILE)
+            .unwrap();
+    let mut indexer = trowel_core::Indexer::new(
+        store,
+        trowel_core::IndexOptions {
+            code: true,
+            ..trowel_core::IndexOptions::default()
+        },
+        Box::new(|| {
+            Ok(Box::new(trowel_core::FakeEmbedder::new()) as Box<dyn trowel_core::Embedder>)
+        }),
+    )
+    .unwrap();
+    indexer.sync(&[files]).unwrap();
+    indexer.run(None, None, &|| false, |_| {}).unwrap();
+    indexer.finish();
+}
+
 #[test]
 fn second_instance_exits_zero() {
     let root = temp();
@@ -191,7 +228,7 @@ fn hello_and_keyword_search() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,
@@ -200,7 +237,7 @@ fn hello_and_keyword_search() {
     let mut reader = BufReader::new(stream);
     let hi = recv(&mut reader);
     assert_eq!(hi["ok"], true);
-    assert_eq!(hi["protocol"], 1);
+    assert_eq!(hi["protocol"], 2);
     let hit = recv(&mut reader);
     assert_eq!(hit["ok"], true, "{hit}");
     let groups = hit["groups"].as_array().cloned().unwrap_or_default();
@@ -218,6 +255,392 @@ fn hello_and_keyword_search() {
 }
 
 #[test]
+fn protocol_v2_handshake_and_capabilities() {
+    let root = temp();
+    let d = start(root, &[]);
+
+    // A v1 client (an old panel left running across an upgrade) is told to restart.
+    let mut old = connect(&d);
+    send(
+        &mut old,
+        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+    );
+    let refused = recv(&mut BufReader::new(old));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["error"]["code"], "bad_request");
+    assert_eq!(
+        refused["error"]["message"], "Trowel was updated, restart it",
+        "{refused}"
+    );
+
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"apps_query","text":"fire","gen":1}),
+    );
+    send(&mut stream, &json!({"id":3,"op":"clip_get","clip_id":1}));
+    let mut reader = BufReader::new(stream);
+    let hi = recv(&mut reader);
+    assert_eq!(hi["protocol"], 2, "{hi}");
+    let caps = hi["capabilities"].as_array().unwrap();
+    assert!(
+        caps.iter().any(|c| c == "apps"),
+        "apps served since L2: {hi}"
+    );
+    assert!(
+        caps.iter().any(|c| c == "clipboard") && caps.iter().any(|c| c == "calc"),
+        "clipboard served since L3, calc since L2c: {hi}"
+    );
+    let apps = recv(&mut reader);
+    assert_eq!(apps["ok"], true, "{apps}");
+    assert_eq!(apps["rows"], json!([]), "no fixture apps: {apps}");
+    let clip = recv(&mut reader);
+    assert_eq!(clip["error"]["code"], "not_found", "empty history: {clip}");
+}
+
+fn desktop(dir: &Path, file: &str, body: &str) {
+    fs::create_dir_all(dir).unwrap();
+    fs::write(
+        dir.join(file),
+        format!("[Desktop Entry]\nType=Application\n{body}"),
+    )
+    .unwrap();
+}
+
+fn query(
+    stream: &mut UnixStream,
+    reader: &mut BufReader<UnixStream>,
+    id: u64,
+    text: &str,
+) -> Value {
+    send(
+        stream,
+        &json!({"id":id,"op":"apps_query","text":text,"gen":id}),
+    );
+    let reply = recv(reader);
+    assert_eq!(reply["id"], id, "{reply}");
+    reply
+}
+
+fn ids(reply: &Value) -> Vec<String> {
+    reply["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn apps_query_launch_hide_and_install() {
+    let root = temp();
+    let sys = root.join("sys/applications");
+    desktop(&sys, "chromium.desktop", "Name=Chromium\nGenericName=Web Browser\nExec=chromium\nActions=incognito;\n\n[Desktop Action incognito]\nName=New Incognito Window\nExec=chromium --incognito %U\n");
+    desktop(&sys, "calc.desktop", "Name=Calculator\nExec=calc\n");
+    desktop(
+        &sys,
+        "gnome-only.desktop",
+        "Name=Cheese\nExec=cheese\nOnlyShowIn=GNOME;\n",
+    );
+    desktop(
+        &root.join("omarchy/default/omarchy"),
+        "unused.desktop",
+        "Name=x\n",
+    );
+    fs::write(
+        root.join("omarchy/default/omarchy/launcher.hides"),
+        "calc-hidden\n",
+    )
+    .unwrap();
+    desktop(&sys, "calc-hidden.desktop", "Name=Calc Hidden\nExec=x\n");
+    // Stubs record what would have been launched.
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let log = root.join("launched.txt");
+    for name in ["uwsm-app", "gtk-launch"] {
+        let path = bin.join(name);
+        fs::write(
+            &path,
+            format!("#!/bin/sh\necho \"$*\" >> '{}'\n", log.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let d = start_with(
+        root.clone(),
+        &[],
+        &[
+            ("PATH", path.as_str()),
+            ("XDG_CURRENT_DESKTOP", "Hyprland"),
+            ("XDG_SESSION_DESKTOP", ""),
+            ("DESKTOP_SESSION", ""),
+        ],
+    );
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    recv(&mut reader);
+
+    let c = query(&mut stream, &mut reader, 2, "c");
+    // Omarchy's order: the shorter name prefix first (10000 − len); hides applied.
+    assert_eq!(ids(&c), ["chromium", "calc"], "{c}");
+    assert!(c["took_us"].as_u64().unwrap() < 2000, "{c}");
+    let chrome = &query(&mut stream, &mut reader, 3, "chro")["rows"][0];
+    assert_eq!(chrome["matched"], json!([[0, 4]]));
+    assert_eq!(chrome["actions"][0]["id"], "incognito");
+
+    send(
+        &mut stream,
+        &json!({"id":4,"op":"app_launch","app_id":"chromium"}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    send(
+        &mut stream,
+        &json!({"id":5,"op":"app_launch","app_id":"chromium","action":"incognito"}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    send(
+        &mut stream,
+        &json!({"id":6,"op":"app_launch","app_id":"nope"}),
+    );
+    assert_eq!(recv(&mut reader)["error"]["code"], "not_found");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while fs::read_to_string(&log).unwrap_or_default().lines().count() < 2
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let launched = fs::read_to_string(&log).unwrap();
+    assert!(
+        launched.contains("-- gtk-launch chromium.desktop"),
+        "{launched}"
+    );
+    assert!(launched.contains("-- chromium --incognito"), "{launched}");
+
+    // Chromium has 2 launches; three of Calculator lift it within the name-prefix tier.
+    for n in 0..3 {
+        send(
+            &mut stream,
+            &json!({"id":70 + n,"op":"app_launch","app_id":"calc"}),
+        );
+        assert_eq!(recv(&mut reader)["ok"], true);
+    }
+    let c = query(&mut stream, &mut reader, 7, "c");
+    assert_eq!(ids(&c), ["calc", "chromium"], "{c}");
+    assert_eq!(c["rows"][0]["launches"], 3);
+    assert_eq!(c["rows"][1]["launches"], 2);
+    assert_eq!(ids(&query(&mut stream, &mut reader, 8, ""))[0], "calc");
+
+    send(
+        &mut stream,
+        &json!({"id":9,"op":"app_hide","app_id":"calc","hidden":true}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    assert_eq!(
+        ids(&query(&mut stream, &mut reader, 10, "calc")),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("trowel/launcher.hides")).unwrap(),
+        "calc\n",
+        "written to Trowel's own hides under XDG_CONFIG_HOME"
+    );
+
+    // Installing a .desktop file shows it within 1 s.
+    let installed = Instant::now();
+    desktop(&sys, "zed.desktop", "Name=Zed\nExec=zed\n");
+    let mut found = false;
+    while installed.elapsed() < Duration::from_secs(1) {
+        if ids(&query(&mut stream, &mut reader, 11, "zed")) == ["zed"] {
+            found = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(
+        found,
+        "new entry not visible after {:?}",
+        installed.elapsed()
+    );
+}
+
+#[test]
+fn calc_copy_and_history() {
+    let root = temp();
+    // Stubs record what would have reached the clipboard and the focused window.
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for (name, body) in [
+        (
+            "wl-copy",
+            format!("#!/bin/sh\ncat > '{}'\n", root.join("clip.txt").display()),
+        ),
+        (
+            "wtype",
+            format!(
+                "#!/bin/sh\necho \"$@\" > '{}'\n",
+                root.join("keys.txt").display()
+            ),
+        ),
+    ] {
+        let path = bin.join(name);
+        fs::write(&path, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let d = start_with(root.clone(), &[], &[("PATH", path.as_str())]);
+    let mut stream = connect(&d);
+    for msg in [
+        json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+        json!({"id":2,"op":"calc","text":"5 ft to cm","gen":7}),
+        json!({"id":3,"op":"calc","text":"firefox","gen":8}),
+        json!({"id":4,"op":"calc","text":"=1 +","force":true,"gen":9}),
+        json!({"id":5,"op":"calc_copy","text":"152.4","expr":"5 ft to cm","mode":"paste"}),
+        json!({"id":6,"op":"calc_history","limit":5}),
+    ] {
+        send(&mut stream, &msg);
+    }
+    let mut reader = BufReader::new(stream);
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let card = recv(&mut reader);
+    assert_eq!(card["gen"], 7, "{card}");
+    assert_eq!(card["result"]["copy"], "152.4", "{card}");
+    assert_eq!(card["result"]["display"], "152.4 cm", "{card}");
+    assert!(card["took_us"].as_u64().unwrap() < 20_000, "{card}");
+    let none = recv(&mut reader);
+    assert!(
+        none.get("result").is_none(),
+        "firefox is not a calculation: {none}"
+    );
+    let forced = recv(&mut reader);
+    assert!(forced["error"].is_string(), "{forced}");
+    let copied = recv(&mut reader);
+    assert_eq!(copied["ok"], true, "{copied}");
+    let history = recv(&mut reader);
+    assert_eq!(history["rows"][0]["expr"], "5 ft to cm", "{history}");
+    assert_eq!(history["rows"][0]["result"], "152.4", "{history}");
+    assert_eq!(fs::read_to_string(root.join("clip.txt")).unwrap(), "152.4");
+    // Paste mode sends Omarchy's keystroke after the delay.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !root.join("keys.txt").exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        fs::read_to_string(root.join("keys.txt")).unwrap().trim(),
+        "-M shift -k Insert -m shift"
+    );
+    assert!(root.join("state/state.sqlite").is_file());
+}
+
+#[test]
+fn calc_copy_without_a_compositor_is_an_error_and_records_nothing() {
+    let root = temp();
+    let d = start(root.clone(), &[]);
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"calc_copy","text":"2","expr":"1+1","mode":"copy"}),
+    );
+    send(&mut stream, &json!({"id":3,"op":"calc_history"}));
+    let mut reader = BufReader::new(stream);
+    recv(&mut reader);
+    let copied = recv(&mut reader);
+    assert_eq!(copied["error"]["code"], "io", "{copied}");
+    let history = recv(&mut reader);
+    assert_eq!(history["rows"], json!([]), "{history}");
+}
+
+#[test]
+fn code_search_uses_code_index_and_preview() {
+    let root = temp();
+    fs::write(
+        root.join("config.toml"),
+        "roots=[]\nexcluded_folders=[]\nexcluded_types=[]\nindex_dir=\"index\"\nmodels_dir=\"models\"\nhotkey=\"SUPER + D\"\nindex_on_battery=false\nencoder_idle_seconds=600\nonboarded=false\ncode_roots=[]\ncode_excluded=[]\ncode_editor=\"\"\ncode_quiet_seconds=2\n[ui]\nreduce_motion=false\n",
+    )
+    .unwrap();
+    index_note(&root);
+    index_code_file(&root);
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"search","text":"route_validator","mode":"keyword","code":true,"prefix_last":true,"gen":1}),
+    );
+    let mut reader = BufReader::new(stream);
+    let hi = recv(&mut reader);
+    assert_eq!(hi["ok"], true);
+    let hit = recv(&mut reader);
+    assert_eq!(hit["ok"], true, "{hit}");
+    let groups = hit["groups"].as_array().cloned().unwrap_or_default();
+    let mut segment_id = None;
+    let mut saw_code = false;
+    for g in &groups {
+        for row in g["rows"].as_array().cloned().unwrap_or_default() {
+            let name = row["name"].as_str().unwrap_or("");
+            let path = row["id"].as_str().unwrap_or("");
+            assert!(
+                !name.ends_with("notes.txt") && !path.ends_with("notes.txt"),
+                "code search leaked the document index: {hit}"
+            );
+            if name == "RouteValidator.rs" || path.ends_with("RouteValidator.rs") {
+                saw_code = true;
+                segment_id = row["segment_id"].as_i64();
+            }
+        }
+    }
+    assert!(saw_code, "expected RouteValidator.rs in code search: {hit}");
+    let sid = segment_id.expect("segment_id");
+    send(
+        reader.get_mut(),
+        &json!({"id":3,"op":"preview","segment_id":sid,"width":450,"code":true}),
+    );
+    let preview = recv(&mut reader);
+    assert_eq!(preview["ok"], true, "{preview}");
+    let ptype = preview["type"].as_str().unwrap_or("");
+    assert!(
+        ptype == "code" || ptype == "text",
+        "preview type {ptype}: {preview}"
+    );
+    let has_body = preview["text"]
+        .as_str()
+        .is_some_and(|t| t.contains("route_validator"))
+        || preview["lines"].as_array().is_some_and(|lines| {
+            lines.iter().any(|line| {
+                line["text"]
+                    .as_str()
+                    .is_some_and(|t| t.contains("route_validator"))
+            })
+        });
+    assert!(has_body, "{preview}");
+}
+
+#[test]
 fn pause_sets_status() {
     let root = temp();
     fs::write(
@@ -229,7 +652,7 @@ fn pause_sets_status() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(&mut stream, &json!({"id":2,"op":"pause"}));
     send(&mut stream, &json!({"id":3,"op":"status"}));
@@ -269,7 +692,7 @@ fn folder_change_indexes_and_search_finds_it() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let hello = recv(&mut reader);
@@ -350,7 +773,7 @@ fn resume_starts_helper_after_pause() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(&mut stream, &json!({"id":2,"op":"pause"}));
     send(&mut stream, &json!({"id":3,"op":"resume"}));
@@ -383,7 +806,7 @@ fn idle_releases_vectors() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(&mut stream, &json!({"id":2,"op":"panel_opened"}));
     send(&mut stream, &json!({"id":3,"op":"status"}));
@@ -471,7 +894,7 @@ fn overflow_signal_rescans() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(recv(&mut reader)["ok"], true);
@@ -498,7 +921,7 @@ fn suspend_resume_signal_syncs() {
         .unwrap();
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     assert_eq!(recv(&mut reader)["ok"], true);
@@ -527,7 +950,7 @@ fn estimate_and_status_subscribe() {
     let mut stream = connect(&d);
     send(
         &mut stream,
-        &json!({"id":1,"op":"hello","protocol":1,"client":"test","pid":1}),
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
     );
     send(
         &mut stream,
@@ -578,4 +1001,253 @@ fn estimate_and_status_subscribe() {
             .unwrap_or_else(|| panic!("missing {name} check in {checks:?}"));
         assert_ne!(check["status"], "FAIL", "{check}");
     }
+}
+
+/// Asks until a keyword search for `word` finds a file, or `secs` pass.
+fn finds(
+    stream: &mut UnixStream,
+    reader: &mut BufReader<UnixStream>,
+    word: &str,
+    secs: u64,
+    id: &mut u64,
+) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        *id += 1;
+        let n = *id;
+        send(
+            stream,
+            &json!({"id":n,"op":"search","text":word,"mode":"keyword","prefix_last":false,"gen":n}),
+        );
+        let reply = loop {
+            let v = recv(reader);
+            if v.get("id") == Some(&json!(n)) {
+                break v;
+            }
+        };
+        let rows = reply["groups"]
+            .as_array()
+            .map(|g| {
+                g.iter()
+                    .map(|g| g["rows"].as_array().map_or(0, Vec::len))
+                    .sum::<usize>()
+            })
+            .unwrap_or(0);
+        if rows > 0 {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    false
+}
+
+/// Pause stops the helper; Resume must start a new one that indexes what changed meanwhile
+/// (live: after pause → helper exit → resume, no helper ever came back).
+#[test]
+fn resume_indexes_again_after_the_helper_stopped() {
+    let root = temp();
+    let files = root.join("files");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("a.txt"), "the harbour meeting notes\n").unwrap();
+    write_cfg(&root, true, std::slice::from_ref(&files));
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let mut id = 10;
+    assert!(
+        finds(&mut stream, &mut reader, "harbour", 20, &mut id),
+        "first pass"
+    );
+    send(&mut stream, &json!({"id":2,"op":"pause"}));
+    // The helper stops between files and exits.
+    thread::sleep(Duration::from_millis(2500));
+    fs::write(files.join("b.txt"), "a zebra crossing near the station\n").unwrap();
+    thread::sleep(Duration::from_millis(1200));
+    send(&mut stream, &json!({"id":3,"op":"resume"}));
+    assert!(
+        finds(&mut stream, &mut reader, "zebra", 20, &mut id),
+        "a helper must index again after resume"
+    );
+}
+
+/// The helper must outlive the connection that asked for it: `PR_SET_PDEATHSIG` is per thread,
+/// and a helper forked on a client's thread died when that client hung up.
+#[test]
+fn helper_outlives_the_connection_that_resumed_it() {
+    let root = temp();
+    let files = root.join("files");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("a.txt"), "the harbour meeting notes\n").unwrap();
+    write_cfg(&root, true, std::slice::from_ref(&files));
+    let d = start(root, &[]);
+    {
+        let mut stream = connect(&d);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        send(
+            &mut stream,
+            &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+        );
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        assert_eq!(recv(&mut reader)["ok"], true);
+        let mut id = 10;
+        assert!(
+            finds(&mut stream, &mut reader, "harbour", 20, &mut id),
+            "first pass"
+        );
+        send(&mut stream, &json!({"id":2,"op":"pause"}));
+        assert_eq!(recv(&mut reader)["ok"], true);
+    }
+    thread::sleep(Duration::from_millis(2500));
+    // Nothing changed meanwhile: no watcher sync can start a helper from a lasting thread.
+    {
+        // A one-shot client, like `trowel resume`: it hangs up right after the reply.
+        let mut stream = connect(&d);
+        stream
+            .set_read_timeout(Some(Duration::from_secs(8)))
+            .unwrap();
+        send(
+            &mut stream,
+            &json!({"id":1,"op":"hello","protocol":2,"client":"cli","pid":1}),
+        );
+        send(&mut stream, &json!({"id":2,"op":"resume"}));
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        assert_eq!(recv(&mut reader)["ok"], true);
+        assert_eq!(recv(&mut reader)["ok"], true);
+    }
+    // A helper forked on the client's thread got SIGTERM when that thread ended.
+    thread::sleep(Duration::from_millis(1500));
+    let mut d = d;
+    let _ = d.child.kill();
+    let _ = d.child.wait();
+    let mut err = String::new();
+    if let Some(mut stderr) = d.child.stderr.take() {
+        let _ = stderr.read_to_string(&mut err);
+    }
+    assert!(
+        !err.contains("helper ended by signal 15"),
+        "the helper must outlive the connection that resumed it:\n{err}"
+    );
+}
+
+/// A kind tab filters the list, but the tab counts are the query's unfiltered strong results.
+/// `upstream/Sources/DigUpApp/SearchWindow.swift:311`.
+#[test]
+fn kind_filter_keeps_unfiltered_tab_counts() {
+    let root = temp();
+    let files = root.join("files");
+    fs::create_dir_all(&files).unwrap();
+    fs::write(files.join("a.txt"), "the harbour meeting notes\n").unwrap();
+    write_cfg(&root, true, std::slice::from_ref(&files));
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let mut id = 10;
+    assert!(finds(&mut stream, &mut reader, "harbour", 20, &mut id));
+    let ask = |stream: &mut UnixStream,
+               reader: &mut BufReader<UnixStream>,
+               n: u64,
+               kinds: Value| {
+        send(
+            stream,
+            &json!({"id":n,"op":"search","text":"harbour","mode":"keyword","prefix_last":false,"gen":n,"kinds":kinds}),
+        );
+        loop {
+            let v = recv(reader);
+            if v.get("id") == Some(&json!(n)) {
+                return v;
+            }
+        }
+    };
+    let all = ask(&mut stream, &mut reader, 100, Value::Null);
+    assert_eq!(all["counts"]["documents"], 1, "{all}");
+    let images = ask(&mut stream, &mut reader, 101, json!(["image"]));
+    assert_eq!(
+        images["groups"].as_array().map(Vec::len),
+        Some(0),
+        "{images}"
+    );
+    assert_eq!(images["counts"]["documents"], 1, "{images}");
+}
+
+/// A code sync is the code pass's progress. It used to set `main` to 0/N, so the panel badge
+/// and the bar read "Indexing 0%" for the whole code pass.
+#[test]
+fn code_sync_progress_is_not_main_progress() {
+    let root = temp();
+    let code = root.join("code");
+    fs::create_dir_all(code.join("src")).unwrap();
+    fs::write(
+        code.join("src/route_validator.rs"),
+        "pub fn route_validator(path: &str) -> bool {\n    path.starts_with('/')\n}\n",
+    )
+    .unwrap();
+    let cfg = trowel_proto::Config {
+        roots: vec![],
+        code_roots: vec![code.to_string_lossy().into_owned()],
+        onboarded: true,
+        index_dir: root.join("index").to_string_lossy().into_owned(),
+        ..Default::default()
+    };
+    troweld::config_file::save(&root.join("config.toml"), &cfg).unwrap();
+    let d = start(root, &[]);
+    let mut stream = connect(&d);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"subscribe","topics":["status"]}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut statuses = 0;
+    let mut n = 100u64;
+    let mut found = false;
+    while Instant::now() < deadline && !found {
+        n += 1;
+        send(
+            &mut stream,
+            &json!({"id":n,"op":"search","text":"route_validator","mode":"keyword","code":true,"prefix_last":false,"gen":n}),
+        );
+        loop {
+            let v = recv(&mut reader);
+            if v["event"] == "status" {
+                statuses += 1;
+                assert_eq!(
+                    v["main"]["total"], 0,
+                    "code indexing reported as main progress: {v}"
+                );
+                continue;
+            }
+            if v.get("id") == Some(&json!(n)) {
+                found = v["groups"].as_array().is_some_and(|g| !g.is_empty());
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    assert!(found, "the code file must be indexed");
+    assert!(statuses > 0, "no status events seen");
 }

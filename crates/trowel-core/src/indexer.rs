@@ -1359,3 +1359,112 @@ fn prepare(
     }
     prepared
 }
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+    use crate::embedder::{Embedder, FakeEmbedder, WorkerInfo};
+    use crate::index_store::IndexStore;
+    use crate::model::Candidate;
+    use crate::model_files::ModelFiles;
+    use crate::vectors::DIMENSION;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static N: AtomicU64 = AtomicU64::new(0);
+
+    fn temp() -> PathBuf {
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("trowel-fp-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn live_source() -> String {
+        WorkerInfo {
+            model: "google/embeddinggemma-2".into(),
+            revision: ModelFiles::REVISION.into(),
+            runtime: "llama.cpp-vectors1".into(),
+            dtype: "text-q8_0+mmproj-q8_0".into(),
+            dim: DIMENSION,
+            text_only: false,
+            load_seconds: None,
+        }
+        .vector_source()
+    }
+
+    fn seeded() -> (PathBuf, Indexer) {
+        let dir = temp();
+        let store = IndexStore::open(&dir).unwrap();
+        let id = store
+            .insert(&Candidate {
+                path: "/a/x.png".into(),
+                kind: FileKind::Image,
+                size: 10,
+                mtime: 1.0,
+                inode: 1,
+                device: 1,
+            })
+            .unwrap();
+        let vector = FakeEmbedder::vector_for("x");
+        store
+            .add_segment(
+                id,
+                SegmentKind::Image,
+                Modality::Image,
+                None,
+                None,
+                None,
+                None,
+                Some(&vector),
+            )
+            .unwrap();
+        store.finish(id, "done", None, &BTreeMap::new()).unwrap();
+        let fingerprint = format!(
+            "{} | {}",
+            live_source(),
+            IndexOptions::default().fingerprint()
+        );
+        store.set_meta("fingerprint", Some(&fingerprint)).unwrap();
+        let indexer = Indexer::new(
+            store,
+            IndexOptions::default(),
+            Box::new(|| Ok(Box::new(FakeEmbedder::new()) as Box<dyn Embedder>)),
+        )
+        .unwrap();
+        (dir, indexer)
+    }
+
+    #[test]
+    fn matching_embedder_source_keeps_vectors() {
+        let (dir, mut indexer) = seeded();
+        indexer.embedder_source = Some(live_source());
+        indexer.reset_on_model_change = Some(Box::new(|_, _| {
+            panic!("check_model must not reset a matching fingerprint");
+        }));
+        indexer.check_model().unwrap();
+        assert_eq!(indexer.store.counts().unwrap().vectors, 1);
+        indexer.finish();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn guessed_backend_source_resets_when_callback_is_set() {
+        let (dir, mut indexer) = seeded();
+        indexer.embedder_source = Some(format!(
+            "embeddinggemma-2@{} llama.cpp-vulkan q8_0",
+            &ModelFiles::REVISION[..7]
+        ));
+        let reset = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = reset.clone();
+        indexer.reset_on_model_change = Some(Box::new(move |_, _| {
+            flag.store(true, Ordering::SeqCst);
+        }));
+        indexer.check_model().unwrap();
+        assert!(reset.load(Ordering::SeqCst));
+        assert_eq!(indexer.store.counts().unwrap().vectors, 0);
+        assert!(indexer.store.meta("fingerprint").unwrap().is_none());
+        indexer.finish();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

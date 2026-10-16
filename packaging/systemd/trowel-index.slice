@@ -1,9 +1,9 @@
 [Unit]
 Description=Trowel indexing helper and worker
 
+# Resource control only: a slice can't carry Nice= or IOSchedulingClass=. troweld sets nice 10
+# and the idle I/O class on the helper itself (ROBUSTNESS.md §2).
 [Slice]
 CPUWeight=20
-IOSchedulingClass=idle
 MemoryHigh=3G
 MemoryMax=4G
-Nice=10

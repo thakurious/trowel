@@ -11,25 +11,44 @@ ShellRoot {
     var s = Quickshell.env("TROWEL_SURFACE")
     return (s && s.length) ? s : "search"
   }
+  // Folders Continue sets onboarded so indexing can start; keep the wizard
+  // until Done instead of swapping this window to search.
+  property bool wizardOpen: false
 
   Client {
     id: client
     clientName: "app"
+    onConfigArrived: function (cfg) {
+      if (cfg && cfg.onboarded === false)
+        rootShell.wizardOpen = true
+    }
   }
 
   FloatingWindow {
     id: main
     visible: surface === "search" || surface === "onboarding" || surface === "settings"
     title: "Trowel"
-    implicitWidth: surface === "settings" ? 640 : (surface === "onboarding" ? 560 : 1040)
-    implicitHeight: surface === "settings" ? 520 : (surface === "onboarding" ? 640 : 700)
+    implicitWidth: {
+      if (surface === "settings")
+        return 640
+      if (surface === "onboarding" || rootShell.wizardOpen || (client.config && client.config.onboarded === false))
+        return 680
+      return 1040
+    }
+    implicitHeight: {
+      if (surface === "settings")
+        return 520
+      if (surface === "onboarding" || rootShell.wizardOpen || (client.config && client.config.onboarded === false))
+        return 600
+      return 700
+    }
     color: Theme.background
 
     Loader {
       anchors.fill: parent
       focus: true
       sourceComponent: {
-        if (surface === "onboarding" || (client.config && client.config.onboarded === false && surface === "search"))
+        if (surface === "onboarding" || rootShell.wizardOpen || (client.config && client.config.onboarded === false))
           return onboardingComp
         if (surface === "settings")
           return settingsComp
@@ -69,7 +88,10 @@ ShellRoot {
     id: onboardingComp
     Onboarding {
       client: client
-      onFinished: rootShell.surface = "search"
+      onFinished: {
+        rootShell.wizardOpen = false
+        rootShell.surface = "search"
+      }
     }
   }
 }

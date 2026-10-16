@@ -256,6 +256,12 @@ MemoryHigh=400M\nWatchdogSec=30\nNotifyAccess=main\n\n[Install]\nWantedBy=defaul
 [Install]\nWantedBy=sockets.target\n";
     fs::write(unit_dir.join("troweld.service"), service).map_err(io_err)?;
     fs::write(unit_dir.join("troweld.socket"), socket).map_err(io_err)?;
+    // ROBUSTNESS §2: troweld runs the helper and worker in this slice, outside its own 400M.
+    fs::write(
+        unit_dir.join("trowel-index.slice"),
+        include_str!("../../../packaging/systemd/trowel-index.slice"),
+    )
+    .map_err(io_err)?;
     Ok(())
 }
 

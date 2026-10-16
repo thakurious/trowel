@@ -251,13 +251,25 @@ pub fn locate_worker(backend: &str) -> Result<PathBuf, String> {
     })
 }
 
-pub fn worker_source(backend: &str) -> Option<String> {
-    locate_worker(backend).ok().map(|_| {
-        format!(
-            "embeddinggemma-2@{} llama.cpp-{backend} q8_0",
-            &ModelFiles::REVISION[..7]
-        )
-    })
+/// Vector source known without starting the worker. Must match
+/// `cpp/embedder.h` `WorkerInfo` / the live `trowel-worker` hello line.
+/// `upstream/Sources/digup/main.swift` `embedderSource()` — llama.cpp's
+/// `LlamaEmbedder.modelInfo.vectorSource`. A guessed `llama.cpp-{backend} q8_0`
+/// string does **not** match, and `Indexer.check_model` + `reset_on_model_change`
+/// would empty every vector (`reset_all`).
+pub fn worker_source(_backend: &str) -> Option<String> {
+    Some(
+        WorkerInfo {
+            model: "google/embeddinggemma-2".into(),
+            revision: ModelFiles::REVISION.into(),
+            runtime: "llama.cpp-vectors1".into(),
+            dtype: "text-q8_0+mmproj-q8_0".into(),
+            dim: DIMENSION,
+            text_only: false,
+            load_seconds: None,
+        }
+        .vector_source(),
+    )
 }
 
 pub fn default_backend() -> &'static str {
@@ -269,5 +281,24 @@ pub fn default_backend() -> &'static str {
         "vulkan"
     } else {
         "cpu"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn worker_source_matches_llama_cpp_hello() {
+        let source = worker_source("vulkan").expect("source");
+        assert_eq!(
+            source,
+            "google/embeddinggemma-2@bfcd298 llama.cpp-vectors1 text-q8_0+mmproj-q8_0"
+        );
+        assert_eq!(worker_source("cpu").as_deref(), Some(source.as_str()));
+        assert!(
+            !source.contains("llama.cpp-vulkan"),
+            "backend must not appear in the fingerprint: {source}"
+        );
     }
 }

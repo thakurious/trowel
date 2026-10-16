@@ -16,7 +16,7 @@ Verified environment: omarchy-shell (Quickshell 0.3.1, Qt 6.11) running from
 | Surface | Host | Why |
 |---|---|---|
 | **Quick panel** (upstream `SearchPanel`) | Omarchy shell **plugin** `trowel` (kind `panel`, `keepLoaded: true`), namespace `trowel-panel` | Summoning a panel is an IPC call into the already-running shell, so the open is instant. It gets `Color`/`Style` theme tokens for free and behaves like Omarchy's own launcher, clipboard and emoji overlays. |
-| **Bar status** (upstream `StatusMenu`) | Same plugin, kind `bar-widget` | Placed through `omarchy bar move`, with a popup that uses the kit's `PopupCard`. |
+| ~~**Bar status**~~ (upstream `StatusMenu`) | none (D25) | Removed 2026-10-16 at the human's request: the panel footer shows indexing progress, `trowel-app` holds settings. |
 | **Main window, Quick Look, Settings, Onboarding, Model download** | `trowel-app`, a **separate Quickshell instance** (`quickshell -p /usr/share/trowel/app`) using `FloatingWindow` | Image grids, video playback (QtMultimedia) and long forms are heavy. Keeping them out of omarchy-shell means a Trowel bug can never take down the user's bar, notifications or **lock screen** (which run in that process). It uses the same QML components, so both look identical. |
 | Non-Omarchy fallback | `quickshell -p /usr/share/trowel/panel` runs the panel plugin's QML standalone, with a theme shim | So the panel still works on plain Hyprland or Sway. This is secondary; do not let it constrain the Omarchy design. |
 
@@ -161,7 +161,13 @@ hl.layer_rule({ match = { namespace = "^trowel-(panel|popup)$" }, no_anim = true
 | `Ctrl+Y` | Toggle Quick Look | upstream `⌘Y` |
 | `Ctrl+C` | Copy the path (when there is no text selection in the field) | |
 | `Ctrl+O` | Open the query in the main window | |
-| `Tab` | Toggle code mode | |
+| `Tab` / `Shift+Tab` | Next / previous kind tab: All · Screenshots · Images · Documents · Video · Audio · Code. Skips kinds with no strong result for the query (All and Code always stop). Each tab re-runs the query with `search.kinds`; counts are the unfiltered query's strong results | Port of DigUp's window kind filters (`SearchWindow.swift:133`) into the panel; Code replaces the old code-mode toggle, and typing `code:` selects it |
+| `Ctrl+1` … `Ctrl+7` | All, Screenshots, Images, Documents, Video, Audio, Code | DigUp ⌘1…⌘7 |
+| `Enter` on the calculator card / an app / a clip | Copy the result / launch / paste into the app below | Phase 8 L4. `Ctrl+Enter`: paste the result / copy the clip without pasting. A copy shows a toast and closes the panel 450 ms later |
+| `Shift+Enter` on a clip | Paste as plain text | |
+| `Ctrl+K` | Action panel for the selection (filter as you type, `Enter` runs, `Esc` closes) | Raycast ⌘K |
+| `Enter` on a command (`Clipboard History`) | Opens it inside the panel, with its name as a pill in the field | `Esc`, or `Backspace` on an empty field, goes back to the search it came from |
+| `Ctrl+Shift+P`, `Ctrl+Delete` on a clip | Pin or unpin, delete | Clipboard view (`omarchy-shell trowel clipboard`); `Tab` cycles All · Text · Images · Files · Links · Colors there |
 
 **Focus loss** hides the panel (upstream hides on `didResignActive`, Spotlight-style). Also hide
 when another Trowel window comes forward. On Hyprland, watch `HyprlandFocusedMonitor` and

@@ -114,12 +114,12 @@ pub fn preview(
     };
     let text = searcher.text_of_segment(segment_id).ok().flatten();
     let terms: Vec<String> = query.map(Searcher::terms).unwrap_or_default();
-    match meta.segment {
-        SegmentKind::Image | SegmentKind::Ocr => {
-            let file = render_thumb(&meta.path, nearest_size(width)).ok();
-            json!({"type": "image", "file": file, "text": text})
-        }
-        SegmentKind::Page | SegmentKind::PageImage => {
+    // DigUp loads a picture from the *file* (Quick Look) unless the hit is
+    // code or a document chunk. A Name match on a PNG must still be an image.
+    // `upstream/Sources/DigUpApp/Previews.swift` PreviewPicture.
+    match preview_type_for(meta.file_kind, meta.segment) {
+        "image" => picture_preview(&meta.path, width, text.as_deref()),
+        "pdf_page" => {
             let page = meta.loc.map(|n| n.max(1.0) as i32).unwrap_or(1);
             let file = PdfExtractor::render(&meta.path, page, width.max(64) as i32, &preview_dir())
                 .ok()
@@ -131,8 +131,13 @@ pub fn preview(
                 .unwrap_or(serde_json::Value::Null);
             json!({"type": "pdf_page", "file": file, "text": text, "band": band})
         }
-        SegmentKind::Lines | SegmentKind::Cells => {
-            let lines = text.as_deref().map(code_lines);
+        "code" => {
+            let start = if meta.segment == SegmentKind::Lines {
+                meta.loc.map(|n| n.max(1.0) as i32).unwrap_or(1)
+            } else {
+                1
+            };
+            let lines = text.as_deref().map(|t| code_lines(t, start));
             json!({
                 "type": "code",
                 "text": text,
@@ -140,7 +145,7 @@ pub fn preview(
                 "focus_line": meta.loc,
             })
         }
-        SegmentKind::Audio => {
+        "audio" => {
             let peaks = audio_peaks(&meta.path);
             let duration = MediaInfo::duration(&meta.path);
             json!({
@@ -151,7 +156,7 @@ pub fn preview(
                 "peaks": peaks,
             })
         }
-        SegmentKind::Frame => {
+        "video" => {
             let start = meta.loc.unwrap_or(0.0);
             let frame = video_frame(&meta.path, start, width).map(|p| remember_preview(&p));
             let duration = MediaInfo::duration(&meta.path);
@@ -163,8 +168,34 @@ pub fn preview(
                 "frame": frame,
             })
         }
-        SegmentKind::Chunk | SegmentKind::Name => json!({"type": "text", "text": text}),
+        _ => json!({"type": "text", "text": text}),
     }
+}
+
+/// PROTOCOL `preview.type` from the file + which piece matched.
+fn preview_type_for(file_kind: FileKind, segment: SegmentKind) -> &'static str {
+    match segment {
+        SegmentKind::Image | SegmentKind::Ocr => "image",
+        SegmentKind::Page | SegmentKind::PageImage => "pdf_page",
+        SegmentKind::Lines | SegmentKind::Cells => "code",
+        SegmentKind::Audio => "audio",
+        SegmentKind::Frame => "video",
+        SegmentKind::Chunk | SegmentKind::Name => match file_kind {
+            FileKind::Image | FileKind::Screenshot => "image",
+            FileKind::Pdf => "pdf_page",
+            FileKind::Audio => "audio",
+            FileKind::Video => "video",
+            FileKind::Code => "code",
+            FileKind::Doc => "text",
+        },
+    }
+}
+
+fn picture_preview(path: &Path, width: u32, text: Option<&str>) -> serde_json::Value {
+    let file = render_thumb(path, nearest_size(width))
+        .ok()
+        .or_else(|| path.is_file().then(|| path.to_path_buf()));
+    json!({"type": "image", "file": file, "text": text})
 }
 
 /// Matched band in page coordinates 0–1. `upstream/Sources/DigUpApp/Previews.swift` page marks.
@@ -189,11 +220,16 @@ pub fn pdf_band(text: &str, words: &[String]) -> Option<[f64; 2]> {
     Some([top, (top + height).min(1.0)])
 }
 
-fn code_lines(text: &str) -> Vec<serde_json::Value> {
+fn code_lines(text: &str, start: i32) -> Vec<serde_json::Value> {
     text.lines()
         .take(200)
         .enumerate()
-        .map(|(i, line)| json!({"n": i + 1, "text": line}))
+        .map(|(i, line)| {
+            json!({
+                "n": start + i as i32,
+                "text": line.replace('\t', "    "),
+            })
+        })
         .collect()
 }
 
@@ -567,6 +603,26 @@ mod tests {
     fn nearest_round() {
         assert_eq!(nearest_size(128), 132);
         assert_eq!(nearest_size(64), 64);
+    }
+
+    #[test]
+    fn name_hit_on_a_picture_is_still_an_image() {
+        assert_eq!(
+            preview_type_for(FileKind::Screenshot, SegmentKind::Name),
+            "image"
+        );
+        assert_eq!(
+            preview_type_for(FileKind::Image, SegmentKind::Name),
+            "image"
+        );
+        assert_eq!(preview_type_for(FileKind::Doc, SegmentKind::Name), "text");
+        assert_eq!(preview_type_for(FileKind::Doc, SegmentKind::Chunk), "text");
+        assert_eq!(preview_type_for(FileKind::Code, SegmentKind::Lines), "code");
+        assert_eq!(preview_type_for(FileKind::Code, SegmentKind::Name), "code");
+        assert_eq!(
+            preview_type_for(FileKind::Pdf, SegmentKind::Name),
+            "pdf_page"
+        );
     }
 
     #[test]

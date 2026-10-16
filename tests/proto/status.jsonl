@@ -1,5 +1,5 @@
-{"send": {"id": 1, "op": "hello", "protocol": 1, "client": "panel", "pid": 1}}
-{"recv": {"id": 1, "ok": true, "protocol": 1, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr"], "state": "ready"}}
+{"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
 {"send": {"id": 2, "op": "subscribe", "topics": ["status"]}}
 {"recv": {"id": 2, "ok": true}}
 {"recv": {"event": "status", "phase": "idle", "main": {"done": 120, "total": 900, "current": "~/Pictures/x.png"}, "code": {"done": 0, "total": 0}, "missing_roots": [], "unreadable_roots": [], "counts": {"screenshots": 120, "images": 800, "documents": 44, "video": 3, "audio": 9, "code": 0}, "worker": "ready", "vectors_loaded": true}}

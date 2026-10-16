@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::launcher::{ClipKind, ClipOffer, PasteMode};
 use crate::path::PathValue;
 use crate::results::SearchMode;
 
@@ -50,19 +51,29 @@ pub enum Op {
         #[serde(default)]
         path: Option<PathValue>,
         size: u32,
+        #[serde(default)]
+        code: bool,
     },
     Preview {
         segment_id: i64,
         width: u32,
+        #[serde(default)]
+        code: bool,
     },
     TextOfSegment {
         segment_id: i64,
+        #[serde(default)]
+        code: bool,
     },
     Open {
         #[serde(default)]
         segment_id: Option<i64>,
         #[serde(default)]
         path: Option<PathValue>,
+        #[serde(default)]
+        code: bool,
+        #[serde(default)]
+        loc: Option<f64>,
     },
     Reveal {
         path: PathValue,
@@ -100,13 +111,119 @@ pub enum Op {
     SetHotkey {
         chord: String,
     },
+    // Protocol v2 (D22): applications, clipboard, calculator. `LAUNCHER-PLAN.md` §3.
+    /// Supersedes the connection's older `apps_query`. Empty `text` is frecency order.
+    AppsQuery {
+        #[serde(default)]
+        text: String,
+        #[serde(default = "default_apps_limit")]
+        limit: u32,
+        gen: u64,
+    },
+    // Params are `app_id` / `clip_id`: a bare `id` would collide with the envelope's request id.
+    AppLaunch {
+        app_id: String,
+        #[serde(default)]
+        action: Option<String>,
+    },
+    AppHide {
+        app_id: String,
+        hidden: bool,
+    },
+    ClipQuery {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        kinds: Option<Vec<ClipKind>>,
+        #[serde(default = "default_clip_limit")]
+        limit: u32,
+        #[serde(default)]
+        offset: u32,
+        gen: u64,
+    },
+    ClipGet {
+        clip_id: i64,
+    },
+    /// The UI hides the panel before sending this (D21).
+    ClipPaste {
+        clip_id: i64,
+        #[serde(default)]
+        mode: PasteMode,
+    },
+    ClipPin {
+        clip_id: i64,
+        pinned: bool,
+    },
+    ClipDelete {
+        clip_id: i64,
+    },
+    ClipClear {
+        #[serde(default = "yes")]
+        keep_pinned: bool,
+    },
+    /// Incognito. `minutes: 0` resumes; absent pauses until resumed.
+    ClipPause {
+        #[serde(default)]
+        minutes: Option<u32>,
+    },
+    /// Internal: `trowel clip-capture` hands over spooled offers. Refused for other peers.
+    ClipIngest {
+        types: Vec<String>,
+        offers: Vec<ClipOffer>,
+        #[serde(default)]
+        source_app: Option<String>,
+    },
+    /// Copies Omarchy's clipboard history into Trowel's (D20). Existing entries are left alone.
+    ClipImport {
+        #[serde(default = "omarchy")]
+        source: String,
+    },
+    /// Supersedes the connection's older `calc`.
+    Calc {
+        text: String,
+        #[serde(default)]
+        force: bool,
+        gen: u64,
+    },
+    CalcHistory {
+        #[serde(default = "default_calc_history_limit")]
+        limit: u32,
+    },
+    /// Copies or pastes a result through the clipboard path (D21); `expr` is recorded in history.
+    CalcCopy {
+        text: String,
+        #[serde(default)]
+        expr: Option<String>,
+        #[serde(default)]
+        mode: PasteMode,
+    },
 }
 
 fn default_limit() -> u32 {
     60
 }
 
-/// Closed set of `op` names in protocol v1. Anything else is `unknown_op`.
+fn default_apps_limit() -> u32 {
+    8
+}
+
+fn default_clip_limit() -> u32 {
+    50
+}
+
+fn default_calc_history_limit() -> u32 {
+    20
+}
+
+fn omarchy() -> String {
+    "omarchy".into()
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Closed set of `op` names in protocol v2. Anything else is `unknown_op`.
 pub const KNOWN_OPS: &[&str] = &[
     "hello",
     "panel_opened",
@@ -132,9 +249,46 @@ pub const KNOWN_OPS: &[&str] = &[
     "model_download",
     "doctor",
     "set_hotkey",
+    "apps_query",
+    "app_launch",
+    "app_hide",
+    "clip_query",
+    "clip_get",
+    "clip_paste",
+    "clip_pin",
+    "clip_delete",
+    "clip_clear",
+    "clip_pause",
+    "clip_ingest",
+    "clip_import",
+    "calc",
+    "calc_history",
+    "calc_copy",
 ];
 
 impl Op {
+    /// Ops added in protocol v2 (apps, clipboard, calculator).
+    pub fn is_v2(&self) -> bool {
+        matches!(
+            self,
+            Self::AppsQuery { .. }
+                | Self::AppLaunch { .. }
+                | Self::AppHide { .. }
+                | Self::ClipQuery { .. }
+                | Self::ClipGet { .. }
+                | Self::ClipPaste { .. }
+                | Self::ClipPin { .. }
+                | Self::ClipDelete { .. }
+                | Self::ClipClear { .. }
+                | Self::ClipPause { .. }
+                | Self::ClipIngest { .. }
+                | Self::ClipImport { .. }
+                | Self::Calc { .. }
+                | Self::CalcHistory { .. }
+                | Self::CalcCopy { .. }
+        )
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Self::Hello { .. } => "hello",
@@ -161,6 +315,21 @@ impl Op {
             Self::ModelDownload { .. } => "model_download",
             Self::Doctor => "doctor",
             Self::SetHotkey { .. } => "set_hotkey",
+            Self::AppsQuery { .. } => "apps_query",
+            Self::AppLaunch { .. } => "app_launch",
+            Self::AppHide { .. } => "app_hide",
+            Self::ClipQuery { .. } => "clip_query",
+            Self::ClipGet { .. } => "clip_get",
+            Self::ClipPaste { .. } => "clip_paste",
+            Self::ClipPin { .. } => "clip_pin",
+            Self::ClipDelete { .. } => "clip_delete",
+            Self::ClipClear { .. } => "clip_clear",
+            Self::ClipPause { .. } => "clip_pause",
+            Self::ClipIngest { .. } => "clip_ingest",
+            Self::ClipImport { .. } => "clip_import",
+            Self::Calc { .. } => "calc",
+            Self::CalcHistory { .. } => "calc_history",
+            Self::CalcCopy { .. } => "calc_copy",
         }
     }
 }

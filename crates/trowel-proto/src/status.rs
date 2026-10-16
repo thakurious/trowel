@@ -18,9 +18,17 @@ pub struct Status {
     pub vectors_loaded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Clipboard incognito (Phase 8 L4): `clip_pause`'s `paused_until`, `-1` until resumed, a Unix
+    /// time otherwise (past = capturing again). Absent while capturing.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub clip_paused_until: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+fn is_zero(v: &i64) -> bool {
+    *v == 0
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Progress {
     pub done: u64,
     pub total: u64,
@@ -28,7 +36,7 @@ pub struct Progress {
     pub current: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Counts {
     pub screenshots: u64,
     pub images: u64,
@@ -66,6 +74,7 @@ impl Default for Status {
             worker: "down".into(),
             vectors_loaded: false,
             last_error: None,
+            clip_paused_until: 0,
         }
     }
 }

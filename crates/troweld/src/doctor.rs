@@ -44,6 +44,42 @@ pub fn run(index_dir: Option<&Path>, socket: Option<&Path>) -> Report {
     Report { ok, checks }
 }
 
+/// The clipboard watcher (`LAUNCHER-PLAN.md` L3): running, paused, off, or failing to start.
+pub fn clipboard_check(
+    enabled: bool,
+    paused: bool,
+    running: bool,
+    last_error: Option<String>,
+    stats: Option<(u64, u64)>,
+) -> Check {
+    let size = stats.map_or_else(
+        || "history unreadable".to_string(),
+        |(n, bytes)| format!("{n} entries, {:.1} MB of blobs", bytes as f64 / 1e6),
+    );
+    let (status, detail, fix) = if !enabled {
+        ("OK", format!("capture off; {size}"), None)
+    } else if paused {
+        ("OK", format!("paused; {size}"), None)
+    } else if running {
+        ("OK", format!("wl-paste --watch running; {size}"), None)
+    } else {
+        (
+            "WARN",
+            format!(
+                "watcher not running ({}); {size}",
+                last_error.unwrap_or_else(|| "starting".into())
+            ),
+            Some("check that wl-clipboard is installed and a Wayland session is running".into()),
+        )
+    };
+    Check {
+        name: "clipboard".into(),
+        status,
+        detail,
+        fix,
+    }
+}
+
 fn daemon_check(socket: Option<&Path>) -> Check {
     match socket {
         Some(path) if path.exists() => Check {

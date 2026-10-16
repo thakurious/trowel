@@ -162,6 +162,12 @@ impl Searcher {
         self.matrix.is_some() && !self.row_file.is_empty()
     }
 
+    /// Re-reads the files' kinds only (new files reach keyword search) and leaves the vectors as
+    /// they are: what a searcher whose vectors are released does when indexing adds files.
+    pub fn refresh_files(&mut self) -> Result<(), DbError> {
+        self.reload_files()
+    }
+
     /// Frees the vectors' memory; keyword search keeps working.
     pub fn release_vectors(&mut self) {
         self.matrix = None;
@@ -248,10 +254,25 @@ impl Searcher {
         }
         let mut words: Vec<WordHit> = Vec::new();
         let mut coverage: HashMap<i64, f64> = HashMap::new();
-        let patterns = identifier
+        let mut patterns = identifier
             .as_ref()
             .map(|id| vec![CodeLookup::phrase(id)])
             .unwrap_or_else(|| Self::patterns(&terms, prefix_last));
+        // A word that's in no file as typed matches as the start of longer words, as the last word
+        // does while it's being typed: "grok" finds "Grok4" and "Grokipedia". Otherwise a file the
+        // panel showed while you typed dropped out once you stopped. A word that is in the index as
+        // typed stays whole, so "cat" doesn't bring in "category"; so does a word of two letters.
+        // `upstream/Sources/DigUpKit/Searcher.swift:139` (836ea4a).
+        if identifier.is_none() {
+            for (index, term) in terms.iter().enumerate() {
+                if term.chars().count() >= 3
+                    && !patterns[index].ends_with('*')
+                    && !self.is_indexed(&patterns[index])?
+                {
+                    patterns[index].push('*');
+                }
+            }
+        }
         if !patterns.is_empty() {
             let mut seen = HashSet::new();
             let match_sql = patterns.join(" OR ");
@@ -684,6 +705,20 @@ impl Searcher {
             .collect()
     }
 
+    /// Whether keyword search finds `pattern` in any file.
+    fn is_indexed(&self, pattern: &str) -> Result<bool, DbError> {
+        let mut found = false;
+        self.store.db.query(
+            "SELECT 1 FROM fts WHERE fts MATCH ? LIMIT 1",
+            &[SqlValue::Text(pattern.to_string())],
+            |_| {
+                found = true;
+                Ok(())
+            },
+        )?;
+        Ok(found)
+    }
+
     /// The query's words as an FTS5 OR-query.
     pub fn fts_query(text: &str, prefix_last: bool) -> Option<String> {
         let words = Self::terms(text);
@@ -948,6 +983,94 @@ mod tests {
             Searcher::kind_hints("صورة حمار وحشي"),
             HashSet::from([FileKind::Image])
         );
+    }
+
+    /// `upstream/Tests/DigUpKitTests/SearchTextTests.swift` `aWordInNoFileIsFoundAtTheStartOfLongerOnes`.
+    #[test]
+    fn a_word_in_no_file_is_found_at_the_start_of_longer_ones() {
+        let dir = temp();
+        let store = IndexStore::open(&dir).unwrap();
+        let add = |path: &str, text: &str, kind: FileKind, segment: SegmentKind| {
+            let id = store
+                .insert(&candidate(path, kind, path.len() as u64))
+                .unwrap();
+            store
+                .add_segment(
+                    id,
+                    segment,
+                    Modality::Text,
+                    Some(1.0),
+                    None,
+                    None,
+                    Some(text),
+                    None,
+                )
+                .unwrap();
+        };
+        add(
+            "/shots/settings.png",
+            "Model picker: Grok4 (default)",
+            FileKind::Screenshot,
+            SegmentKind::Ocr,
+        );
+        add(
+            "/notes/wiki.txt",
+            "Read the Grokipedia page about rivers.",
+            FileKind::Doc,
+            SegmentKind::Chunk,
+        );
+        add(
+            "/notes/pets.txt",
+            "The cat sleeps on the sofa.",
+            FileKind::Doc,
+            SegmentKind::Chunk,
+        );
+        add(
+            "/notes/tags.txt",
+            "Pick a category for each photo.",
+            FileKind::Doc,
+            SegmentKind::Chunk,
+        );
+        let mut searcher = Searcher::new(store, false).unwrap();
+        let mut paths = |q: &str, prefix_last: bool| -> Vec<String> {
+            searcher
+                .search(q, None, None, 20, 2.0, None, prefix_last)
+                .unwrap()
+                .into_iter()
+                .map(|h| h.path)
+                .collect()
+        };
+        let typing: HashSet<String> = paths("grok", true).into_iter().collect();
+        let stopped: HashSet<String> = paths("grok", false).into_iter().collect();
+        assert_eq!(
+            stopped,
+            HashSet::from([
+                "/shots/settings.png".to_string(),
+                "/notes/wiki.txt".to_string()
+            ])
+        );
+        assert_eq!(typing, stopped);
+        assert_eq!(
+            paths("grok rivers", false),
+            ["/notes/wiki.txt", "/shots/settings.png"]
+        );
+        assert_eq!(paths("cat", false), ["/notes/pets.txt"]);
+        assert!(paths("gr", false).is_empty());
+        let hits = searcher
+            .search("grok", None, None, 20, 2.0, None, false)
+            .unwrap();
+        let shot = hits
+            .iter()
+            .find(|h| h.path == "/shots/settings.png")
+            .unwrap();
+        assert!(
+            shot.excerpt
+                .as_deref()
+                .is_some_and(|e| e.contains("«Grok4»")),
+            "excerpt={:?}",
+            shot.excerpt
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

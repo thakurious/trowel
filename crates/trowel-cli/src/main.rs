@@ -1,4 +1,7 @@
+mod apps_cmd;
 mod autostart;
+mod calc_cmd;
+mod clip_cmd;
 mod debug_ui;
 mod index_service;
 mod parity;
@@ -98,6 +101,61 @@ enum Commands {
         #[arg(long)]
         word_weight: Option<f64>,
     },
+    /// Applications as Trowel's launcher ranks them (Omarchy's `AppSearch.js`, no frecency here).
+    Apps {
+        query: Option<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(short = 'n', long, default_value_t = 8)]
+        limit: usize,
+        /// Resolve icons too (reports `icons_ms`).
+        #[arg(long)]
+        icons: bool,
+        /// Print the visible entries with the fields `AppSearch.js` reads (parity gate input).
+        #[arg(long)]
+        dump_entries: bool,
+        /// With --rank-queries: the entries file from --dump-entries.
+        #[arg(long, value_name = "FILE")]
+        entries: Option<PathBuf>,
+        /// Rank each line of FILE over --entries with no frecency; prints {query: [ids]}.
+        #[arg(long, value_name = "FILE")]
+        rank_queries: Option<PathBuf>,
+    },
+    /// Launch an application by desktop id, the way the panel does.
+    Launch {
+        id: String,
+        /// A `[Desktop Action …]` id.
+        #[arg(long)]
+        action: Option<String>,
+    },
+    /// Inline calculator (the daemon's `calc` op, in-process). Prints the result, or nothing
+    /// (exit 1) when the text is not a calculation.
+    Calc {
+        /// The expression, e.g. "5 ft to cm".
+        text: Option<String>,
+        /// Show errors too, as the `=` view does.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+        /// Check a TSV of `expr<TAB>expected copy` and report p50/p95 (budget: p95 < 1 ms).
+        #[arg(long, value_name = "FILE")]
+        bench: Option<PathBuf>,
+        /// Lines that must never show a card; exits 1 if any does.
+        #[arg(long, value_name = "FILE")]
+        corpus: Vec<PathBuf>,
+        /// With --corpus: print line numbers, not the text (private corpora).
+        #[arg(long)]
+        quiet: bool,
+    },
+    /// Clipboard history kept by the daemon (Phase 8 L3).
+    Clip {
+        #[command(subcommand)]
+        action: ClipCmd,
+    },
+    /// Run by the daemon's `wl-paste --watch`: hands the new selection to troweld.
+    #[command(hide = true)]
+    ClipCapture,
     /// What's in the index.
     Status {
         #[arg(long)]
@@ -139,7 +197,7 @@ enum Commands {
     },
     /// The app's indexing helper (JSON lines on stdout).
     IndexService {
-        #[arg(required = true)]
+        /// The folders to index. May be empty when only code folders (`--code-root`) are chosen.
         path: Vec<PathBuf>,
         #[arg(long)]
         index: Option<PathBuf>,
@@ -190,6 +248,62 @@ enum Commands {
         purge: bool,
         #[arg(long)]
         no_enable: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClipCmd {
+    /// Newest first (pinned on top); an optional search.
+    List {
+        query: Option<String>,
+        /// text, link, color, code, image, files, html (repeatable).
+        #[arg(long = "kind")]
+        kinds: Vec<String>,
+        #[arg(short = 'n', long, default_value_t = 20)]
+        limit: u32,
+        #[arg(long)]
+        json: bool,
+    },
+    /// An entry's full content.
+    Get {
+        id: i64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Put an entry back on the clipboard (`paste` also sends Shift+Insert).
+    Paste {
+        id: i64,
+        #[arg(long, default_value = "copy", value_parser = ["copy", "paste", "plain"])]
+        mode: String,
+    },
+    Pin {
+        id: i64,
+        /// Unpin.
+        #[arg(long)]
+        off: bool,
+    },
+    Delete {
+        id: i64,
+    },
+    /// Remove entries (pinned ones stay unless --all).
+    Clear {
+        #[arg(long)]
+        all: bool,
+    },
+    /// Stop capturing (incognito), for MINUTES or until `resume`.
+    Pause {
+        minutes: Option<u32>,
+    },
+    Resume,
+    /// Copy Omarchy's clipboard history in (its files are left alone).
+    ImportOmarchy,
+    /// L3 budgets on a scratch store: query p95 over N entries, one large image ingest.
+    Bench {
+        #[arg(long, default_value_t = 1000)]
+        entries: u32,
+        /// A real screenshot to ingest (default: 8 MB of synthetic PNG).
+        #[arg(long)]
+        image: Option<PathBuf>,
     },
 }
 
@@ -366,6 +480,57 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        Commands::Apps {
+            query,
+            json,
+            limit,
+            icons,
+            dump_entries,
+            entries,
+            rank_queries,
+        } => std::process::exit(apps_cmd::apps(apps_cmd::AppsArgs {
+            query,
+            json,
+            limit,
+            icons,
+            dump_entries,
+            entries,
+            rank_queries,
+        })),
+        Commands::Launch { id, action } => {
+            std::process::exit(apps_cmd::launch(&id, action.as_deref()))
+        }
+        Commands::Calc {
+            text,
+            force,
+            json,
+            bench,
+            corpus,
+            quiet,
+        } => std::process::exit(calc_cmd::run(text, force, json, bench, corpus, quiet)),
+        Commands::ClipCapture => std::process::exit(clip_cmd::capture()),
+        Commands::Clip { action } => std::process::exit(clip_cmd::run(match action {
+            ClipCmd::List {
+                query,
+                kinds,
+                limit,
+                json,
+            } => clip_cmd::ClipAction::List {
+                query,
+                kinds,
+                limit,
+                json,
+            },
+            ClipCmd::Get { id, json } => clip_cmd::ClipAction::Get { id, json },
+            ClipCmd::Paste { id, mode } => clip_cmd::ClipAction::Paste { id, mode },
+            ClipCmd::Pin { id, off } => clip_cmd::ClipAction::Pin { id, off },
+            ClipCmd::Delete { id } => clip_cmd::ClipAction::Delete { id },
+            ClipCmd::Clear { all } => clip_cmd::ClipAction::Clear { all },
+            ClipCmd::Pause { minutes } => clip_cmd::ClipAction::Pause { minutes },
+            ClipCmd::Resume => clip_cmd::ClipAction::Resume,
+            ClipCmd::ImportOmarchy => clip_cmd::ClipAction::ImportOmarchy,
+            ClipCmd::Bench { entries, image } => clip_cmd::ClipAction::Bench { entries, image },
+        })),
         Commands::Status { index, code, json } => {
             if let Err(err) = cmd_status(index.unwrap_or_else(default_index_dir), code, json) {
                 eprintln!("{err}");
@@ -438,6 +603,10 @@ fn main() {
             exclude,
             exclude_ext,
         } => {
+            if path.is_empty() && code_root.is_empty() {
+                eprintln!("trowel index-service: no folders to index (give a PATH or --code-root)");
+                std::process::exit(2);
+            }
             let code = cmd_index_service(
                 path,
                 index.unwrap_or_else(default_index_dir),
@@ -620,10 +789,10 @@ fn cmd_index(
     }
     let mut indexer = Indexer::new(store, options, Box::new(move || make_embedder(fake)))
         .map_err(|e| e.to_string())?;
-    // Fingerprint is written from the live worker in Indexer::full_worker. Do not
-    // pre-check a guessed `worker_source()` string — it does not match the
-    // worker's `google/embeddinggemma-2@… llama.cpp-vectors1 …` line, so a
-    // second `trowel index` would refuse to resume.
+    // Fingerprint is written from the live worker in Indexer::full_worker.
+    // `worker_source()` now matches that line (`cpp/embedder.h`); index-service
+    // uses it for `check_model`. `trowel index` still waits for the live worker
+    // so a missing binary cannot pre-fail a resume.
     let summary = indexer.sync(paths).map_err(|e| e.to_string())?;
     if json {
         println!(

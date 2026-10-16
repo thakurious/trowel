@@ -29,3 +29,10 @@ walkdir = "2"
 notify = "6"
 toml = "0.8"
 libc = "0.2"
+# D24: calculator, offline, no transitive deps (L0.7).
+fend-core = "=1.5.8"
+
+# The 20 ms calc deadline and the < 1 ms budget are about optimized fend; debug fend is ~10x
+# slower and would make tests time out on inputs that are instant in the shipped build.
+[profile.dev.package.fend-core]
+opt-level = 3
