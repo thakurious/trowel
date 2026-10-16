@@ -8,6 +8,8 @@ Item {
   property bool codeMode: false
   property string countText: ""
   property bool hybridPending: false
+  // The command the panel is inside ("Clipboard History"), shown as a pill before the text.
+  property string crumb: ""
   property string placeholder: "Describe it: “payment error screenshot”, “zebra in a video”…"
   signal accepted
   signal textEdited
@@ -57,9 +59,28 @@ Item {
       }
     }
 
+    Rectangle {
+      id: crumbPill
+      visible: root.crumb.length > 0
+      anchors.verticalCenter: parent.verticalCenter
+      implicitWidth: crumbLabel.implicitWidth + 18
+      implicitHeight: crumbLabel.implicitHeight + 8
+      radius: 6
+      color: Theme.selectedFill
+      Text {
+        id: crumbLabel
+        anchors.centerIn: parent
+        text: root.crumb
+        color: Theme.foreground
+        font.family: Theme.fontFamily
+        font.pixelSize: Theme.captionSize
+        font.weight: Font.DemiBold
+      }
+    }
+
     TextField {
       id: field
-      width: parent.width - 24 - 11 - (capsule.visible ? capsule.width + 8 : 0)
+      width: parent.width - 24 - 11 - (capsule.visible ? capsule.width + 8 : 0) - (crumbPill.visible ? crumbPill.width + 11 : 0)
       anchors.verticalCenter: parent.verticalCenter
       placeholderText: root.placeholder
       color: Theme.foreground

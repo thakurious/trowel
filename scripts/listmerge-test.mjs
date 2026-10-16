@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 const src = readFileSync(new URL("../ui/qml/Trowel/ListMerge.js", import.meta.url), "utf8")
   .replace(/^\.pragma library\s*$/m, "");
 const M = {};
-vm.runInNewContext(src + "\nthis.M = { strongApp, merge, clipRows, selectable, defaultSelection, ago, filterActions };", M);
+vm.runInNewContext(src + "\nthis.M = { strongApp, merge, clipRows, selectable, defaultSelection, ago, filterActions, matchCommands };", M);
 const L = M.M;
 
 const files = [
@@ -48,6 +48,30 @@ test("prefix is case-insensitive and trimmed; name only", () => {
   assert.ok(!L.strongApp(firefox, "fox"));
   assert.ok(!L.strongApp({ id: "firefox", name: "Web" }, "fire"), "id prefix is a lower band");
   assert.ok(!L.strongApp(firefox, ""));
+});
+
+test("commands: a strong match goes first, before apps", () => {
+  const rows = L.merge(files, [firefox], "clip");
+  assert.deepEqual(ids(rows).slice(0, 2), ["hdr:commands", "cmd:clipboard"]);
+  assert.equal(L.defaultSelection(rows, false), "cmd:clipboard");
+  assert.equal(rows[1].glyph, "clipboard");
+  // Both strong: commands, then apps, then files.
+  const both = L.merge(files, [{ id: "clipgrab", name: "ClipGrab" }], "clip");
+  assert.deepEqual(ids(both).slice(0, 4), ["hdr:commands", "cmd:clipboard", "hdr:apps", "app:clipgrab"]);
+});
+
+test("commands: name, word and keyword prefixes; weak ones go below the files", () => {
+  const ok = (q) => Array.from(L.matchCommands(q), (m) => m.command.id + (m.strong ? "!" : ""));
+  assert.deepEqual(ok("Clipboard"), ["clipboard!"]);
+  assert.deepEqual(ok("paste"), ["clipboard!"], "keyword");
+  assert.deepEqual(ok("hist"), ["clipboard!"], "keyword 'history'");
+  assert.deepEqual(ok("board"), [], "not mid-word");
+  assert.deepEqual(ok(""), []);
+  const custom = [{ id: "x", name: "Toggle Night Light", keywords: [] }];
+  assert.deepEqual(Array.from(L.matchCommands("night", custom), (m) => m.strong), [false], "a later name word is weak");
+  const rows = L.merge(files, [], "night", { commands: custom });
+  assert.deepEqual(ids(rows).slice(-3), ["hdr:commands", "cmd:x", "\u0000weaker"]);
+  assert.deepEqual(ids(L.merge(files, [], "fire", { commands: [] })), ids(files));
 });
 
 test("app cap", () => {

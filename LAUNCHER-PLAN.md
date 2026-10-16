@@ -665,6 +665,14 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
 - `trowel debug ui-trace` probes `apps_query`, `calc` and `clip_query` when advertised, each with a
   one-frame (16 ms) budget.
 
+**Commands (human, 2026-10-16):** the clipboard is reached Raycast-style, as a **command** in the
+main search rather than only a hotkey. `ListMerge.COMMANDS` is the registry (id, name, subtitle,
+keywords, glyph); a command matches on a prefix of its name, a name word or a keyword, shows in a
+"Commands" section (first when the name or a keyword starts with the query, ahead of apps), and
+Enter runs it inside the panel. Clipboard History is the first; the L6 "Omarchy commands" extra
+adds entries here. Inside a command the field shows a crumb pill and `Esc` / `Backspace` on an empty
+field return to the search (query and selection restored).
+
 ### L5. Omarchy integration and hardening (2–3 days)
 
 - `trowel setup`: the opt-in prompts from P-D18 and P-D23, each with a backup and recorded in the

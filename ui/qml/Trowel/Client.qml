@@ -87,6 +87,9 @@ QtObject {
   // Launcher (v2). `apps` belong to `appsText`; the merged list shows them with the file groups.
   property var apps: []
   property string appsText: ""
+  // The query the launcher sources (commands, apps) answer; "" when they are off (a kind tab,
+  // code search). Commands are local, so they show on the keystroke.
+  property string launcherQuery: ""
   property int appsGen: 0
   property var calcResult: null
   property string calcError: ""
@@ -169,6 +172,7 @@ QtObject {
     root.appsGen += 1
     root.apps = []
     root.appsText = ""
+    root.launcherQuery = ""
   }
 
   function calc(text, force) {
@@ -510,7 +514,8 @@ QtObject {
 
   // File groups, then the launcher sources merged in (ListMerge.js).
   function flatten() {
-    return ListMerge.merge(flattenFiles(), root.apps, root.appsText)
+    var q = root.launcherQuery
+    return ListMerge.merge(flattenFiles(), root.appsText === q ? root.apps : [], q)
   }
 
   function flattenFiles() {

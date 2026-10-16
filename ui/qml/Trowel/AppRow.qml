@@ -53,7 +53,7 @@ Rectangle {
 
       KindIcon {
         anchors.centerIn: parent
-        kind: "app"
+        kind: (root.row && root.row.glyph) ? root.row.glyph : "app"
         side: 22
         visible: icon.status !== Image.Ready
       }
@@ -78,7 +78,7 @@ Rectangle {
         width: parent.width
         text: {
           var r = root.row || {}
-          return r.generic || r.comment || "Application"
+          return r.generic || r.comment || (r.rowType === "command" ? "Command" : "Application")
         }
         color: Theme.secondary
         font.family: Theme.fontFamily
@@ -87,10 +87,10 @@ Rectangle {
       }
     }
 
-    // "3 actions" (desktop actions, run from the action panel).
+    // "3 actions" (desktop actions, run from the action panel); "Command" for a built-in command.
     Rectangle {
       id: badge
-      visible: (root.row && root.row.actionCount > 0) === true
+      visible: (root.row && (root.row.actionCount > 0 || root.row.rowType === "command")) === true
       anchors.verticalCenter: parent.verticalCenter
       width: badgeText.implicitWidth + 12
       height: badgeText.implicitHeight + 4
@@ -103,6 +103,8 @@ Rectangle {
         id: badgeText
         anchors.centerIn: parent
         text: {
+          if (root.row && root.row.rowType === "command")
+            return "Command"
           var n = (root.row && root.row.actionCount) ? root.row.actionCount : 0
           return n === 1 ? "1 action" : n + " actions"
         }

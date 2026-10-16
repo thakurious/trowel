@@ -32,6 +32,10 @@ Item {
   // "search" (files + apps + calculator) or "clipboard" (history; LAUNCHER-PLAN.md L4).
   property string view: "search"
   property var clipContent: ({})
+  // Clipboard History opened as a command from the search list: Esc (or Backspace on an empty
+  // field) goes back to that search, as in Raycast.
+  property bool clipFromSearch: false
+  property string savedQuery: ""
   property real now: Date.now() / 1000
   // Launcher sources join the All tab only; a kind tab or code search is files alone.
   readonly property bool launcherOn: root.view === "search" && tabs.current === "all" && !root.codeMode
@@ -112,6 +116,12 @@ Item {
         })
       return out
     }
+    if (t === "command")
+      return [{
+          "id": "open",
+          "label": "Open " + r.name,
+          "keys": "↵"
+        }]
     if (t === "app") {
       var acts = [{
           "id": "open",
@@ -157,7 +167,7 @@ Item {
         "keys": "ctrl shift P"
       }, {
         "id": "delete",
-        "label": "Delete",
+        "label": "Remove from history",
         "keys": "ctrl del"
       }, {
         "id": "clear",
@@ -202,6 +212,9 @@ Item {
           root.closeWithToast("Copied " + alt.copy)
         }
       }
+    } else if (t === "command") {
+      if (id === "open")
+        openSelected()
     } else if (t === "app") {
       if (id === "open")
         openSelected()
@@ -277,8 +290,11 @@ Item {
     })
   }
 
-  // Straight into clipboard history (`omarchy-shell trowel clipboard`, LAUNCHER-PLAN.md L4).
-  function openClipboard() {
+  // Clipboard history: the "Clipboard History" command (fromSearch) or straight in from
+  // `omarchy-shell trowel clipboard` (LAUNCHER-PLAN.md L4).
+  function openClipboard(fromSearch) {
+    root.clipFromSearch = fromSearch === true
+    root.savedQuery = root.clipFromSearch ? query.text : ""
     unmapTimer.stop()
     actions.visible = false
     root.view = "clipboard"
@@ -365,16 +381,40 @@ Item {
     hybridTimer.restart()
   }
 
+  // Built-in commands (ListMerge.COMMANDS) run inside the panel.
+  function runCommand(id) {
+    if (id === "clipboard")
+      openClipboard(true)
+  }
+
+  // Esc / Backspace on an empty field inside a command: back to the search it came from.
+  function goBack() {
+    if (root.view !== "clipboard" || !root.clipFromSearch)
+      return false
+    actions.visible = false
+    root.view = "search"
+    root.clipFromSearch = false
+    root.selection = ""
+    root.selectedRow = null
+    root.navigated = false
+    query.text = root.savedQuery
+    root.onQueryEdited()
+    query.forceActiveFocus()
+    return true
+  }
+
   // Apps and the calculator for the same text, each with its own gen (Client.qml).
   function askLauncher(text) {
     if (!root.launcherOn || !text.length) {
-      if (client.apps.length) {
-        client.clearApps()
-        client.syncModel()
-      }
+      client.launcherQuery = ""
+      client.clearApps()
+      client.syncModel()
       client.clearCalc()
       return
     }
+    client.launcherQuery = text
+    client.syncModel()
+    root.settleSelection()
     if (client.hasApps)
       client.appsQuery(text)
     if (client.hasCalc)
@@ -456,7 +496,7 @@ Item {
       return
     }
     var app = client.rowIndex[root.selection]
-    if (root.view === "search" && app && app.rowType === "app") {
+    if (root.view === "search" && app && (app.rowType === "app" || app.rowType === "command")) {
       root.selectedRow = app
       return
     }
@@ -491,6 +531,10 @@ Item {
     if (t === "app") {
       client.appLaunch(root.selectedRow.appId)
       dismiss()
+      return
+    }
+    if (t === "command") {
+      runCommand(root.selectedRow.commandId)
       return
     }
     if (t === "clip") {
@@ -580,7 +624,7 @@ Item {
     var next = ids[at + 1] || ids[at - 1] || ""
     client.clipDelete(root.selectedRow.clipId)
     root.selection = next
-    toast.show("Deleted")
+    toast.show("Removed")
   }
 
   IpcHandler {
@@ -853,6 +897,7 @@ Item {
             id: query
             width: parent.width
             codeMode: root.codeMode
+            crumb: root.view === "clipboard" ? "Clipboard History" : ""
             hybridPending: root.phase === "words"
             countText: root.activityBadge
             placeholder: root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
@@ -865,8 +910,10 @@ Item {
               if (event.key === Qt.Key_Escape) {
                 if (query.text.length > 0)
                   query.text = ""
-                else
+                else if (!root.goBack())
                   root.dismiss()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Backspace && query.text.length === 0 && root.goBack()) {
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_K) {
                 actions.actions = root.actionsFor()
@@ -1191,9 +1238,9 @@ Item {
                   }
                 }
                 AppRow {
-                  visible: rowType === "app"
+                  visible: rowType === "app" || rowType === "command"
                   width: parent.width
-                  row: rowType === "app" ? (client.rowIndex[rowId] || ({})) : ({})
+                  row: (rowType === "app" || rowType === "command") ? (client.rowIndex[rowId] || ({})) : ({})
                   selected: root.selection === rowId
                   onClicked: {
                     root.selection = rowId
@@ -1249,8 +1296,8 @@ Item {
               }
               AppPreview {
                 anchors.fill: parent
-                visible: root.selectedType === "app"
-                row: root.selectedType === "app" ? root.selectedRow : ({})
+                visible: root.selectedType === "app" || root.selectedType === "command"
+                row: (root.selectedType === "app" || root.selectedType === "command") ? root.selectedRow : ({})
                 now: root.now
               }
               ClipPreview {
@@ -1300,8 +1347,10 @@ Item {
                   return [["↵", "Copy"], ["ctrl ↵", "Paste"], ["ctrl K", "Actions"]]
                 case "app":
                   return [["↵", "Open"], ["ctrl K", "Actions"]]
+                case "command":
+                  return [["↵", "Open"]]
                 case "clip":
-                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["ctrl K", "Actions"]]
+                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["ctrl del", "Remove"], ["ctrl K", "Actions"]].concat(root.clipFromSearch ? [["esc", "Back"]] : [])
                 case "row":
                   return [["↵", "Open"], ["ctrl ↵", "Reveal"], ["space", "Quick Look"], ["ctrl K", "Actions"]]
                 default:

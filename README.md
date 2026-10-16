@@ -18,10 +18,13 @@ Press **Super+D** and type.
 | `5 ft to cm`, `1920*1.25 + 15%`, `0xff to binary`, `3 GiB in MB` | A **calculator card** above the results (offline: units, bases, percentages, functions) | Copies the result (`Ctrl+Enter` pastes it) |
 | `invoice from march`, `zebra in a video` | **Files**, grouped by kind, with a preview: picture, PDF page with the match tinted, code lines, a passage, an audio or video moment | Opens it at the place that matched |
 
-`omarchy-shell trowel clipboard` opens **clipboard history**: text, links, colors, code, formatted
-text, images and copied files, searchable, with pins. Enter pastes into the app you were in;
-`Ctrl+Enter` only copies; `Shift+Enter` pastes as plain text. Tab cycles All · Text · Images · Files
-· Links · Colors (Images is a thumbnail grid).
+**Commands** work like Raycast's: type `clipboard` (or `clip`, `paste`, `history`) and press Enter
+on **Clipboard History** to open your clipboard inside the panel: text, links, colors, code,
+formatted text, images and copied files, searchable, with a preview and pins. Enter pastes into the
+app you were in; `Ctrl+Enter` only copies; `Ctrl+Delete` removes it; `Shift+Enter` pastes as plain
+text; Tab cycles All · Text · Images · Files · Links · Colors (Images is a thumbnail grid); `Esc`
+goes back to your search. More commands will join it. (`omarchy-shell trowel clipboard` opens the
+history directly, for a key binding.)
 
 Everywhere: **`Ctrl+K`** opens the actions for the selected item (an app's desktop actions, hide an
 app, pin/delete a clip, the calculator's hex/binary forms, reveal a file, …). `↑`/`↓` move, `Esc`

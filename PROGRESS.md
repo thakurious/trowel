@@ -172,6 +172,14 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
 
 ## Session log
 
+### 2026-10-16 — Clipboard History as a command
+
+Human: do it like Raycast: "Clipboard" is a command found by searching; opening it shows the items with preview, copy and remove.
+
+- `ListMerge.COMMANDS` registry + `matchCommands` (node tests: 11), Commands section in the merged list (strong match first, before apps), shown on the keystroke (local, no daemon round trip).
+- Enter on a command opens Clipboard History inside the panel with a crumb pill; footer `↵ Paste · ctrl ↵ Copy · ctrl del Remove · ctrl K Actions · esc Back`; `Esc`/`Backspace` on an empty field go back with the query and selection restored.
+- Harness 16/16 (adds command first + selected, opens in-panel, back restores). Deployed (`Panel.qml` copied, shell restarted, plugin enabled).
+
 ### 2026-10-16 — Deployed; bar widget removed; README rewritten
 
 Human: build and make it available on this system; commit and push everything; update the README; remove the bar plugin icon.

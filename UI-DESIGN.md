@@ -166,6 +166,7 @@ hl.layer_rule({ match = { namespace = "^trowel-(panel|popup)$" }, no_anim = true
 | `Enter` on the calculator card / an app / a clip | Copy the result / launch / paste into the app below | Phase 8 L4. `Ctrl+Enter`: paste the result / copy the clip without pasting. A copy shows a toast and closes the panel 450 ms later |
 | `Shift+Enter` on a clip | Paste as plain text | |
 | `Ctrl+K` | Action panel for the selection (filter as you type, `Enter` runs, `Esc` closes) | Raycast ⌘K |
+| `Enter` on a command (`Clipboard History`) | Opens it inside the panel, with its name as a pill in the field | `Esc`, or `Backspace` on an empty field, goes back to the search it came from |
 | `Ctrl+Shift+P`, `Ctrl+Delete` on a clip | Pin or unpin, delete | Clipboard view (`omarchy-shell trowel clipboard`); `Tab` cycles All · Text · Images · Files · Links · Colors there |
 
 **Focus loss** hides the panel (upstream hides on `didResignActive`, Spotlight-style). Also hide

@@ -40,7 +40,7 @@ Item {
       }
       KindIcon {
         anchors.centerIn: parent
-        kind: "app"
+        kind: (root.row && root.row.glyph) ? root.row.glyph : "app"
         side: 40
         visible: big.status !== Image.Ready
       }
@@ -77,6 +77,8 @@ Item {
     Text {
       width: parent.width
       text: {
+        if (root.row && root.row.rowType === "command")
+          return "Press Enter to open"
         var n = (root.row && root.row.launches) ? root.row.launches : 0
         if (!n)
           return "Not launched from Trowel yet"

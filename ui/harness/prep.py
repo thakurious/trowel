@@ -25,7 +25,7 @@ hooks = """
   function harnessState() {
     return JSON.stringify({view: root.view, phase: root.phase, selection: root.selection, type: root.selectedType,
       rows: root.shownRows().map(function (r) { return r.rowId }), calc: client.calcResult ? client.calcResult.display : null,
-      caps: client.capabilities, err: client.lastError, grid: root.gridMode,
+      caps: client.capabilities, err: client.lastError, grid: root.gridMode, fromSearch: root.clipFromSearch, query: query.text,
       actions: actions.visible ? actions.shown.map(function (a) { return a.id }) : []})
   }
 """

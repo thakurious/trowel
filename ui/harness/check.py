@@ -22,6 +22,9 @@ steps = [
     {"do": "tab", "id": "link", "wait": 600}, {"do": "log", "what": "links"},
     {"do": "open", "wait": 600}, {"do": "log", "what": "back"},
     {"do": "open", "payload": {"view": "clipboard"}, "wait": 600}, {"do": "log", "what": "bar-summon"},
+    {"do": "open", "wait": 400}, {"do": "tab", "id": "all", "wait": 300}, {"do": "type", "text": "clip", "wait": 700}, {"do": "log", "what": "cmd"}, {"do": "shot", "name": "command"},
+    {"do": "enter", "wait": 700}, {"do": "log", "what": "cmd-open"}, {"do": "shot", "name": "command-clipboard"},
+    {"do": "back", "wait": 600}, {"do": "log", "what": "cmd-back"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -44,7 +47,10 @@ checks = [
     ("Images chip: a grid without headers", lambda s: s["images"]["grid"] is True and s["images"]["rows"] == ["clip:808"] and s["images"]["selection"] == "clip:808"),
     ("Links chip filters", lambda s: s["links"]["rows"] == ["clip:811"] and s["links"]["selection"] == "clip:811"),
     ("opening again returns to search", lambda s: s["back"]["view"] == "search"),
-    ("the bar's summon payload opens the clipboard view", lambda s: s["bar-summon"]["view"] == "clipboard" and s["bar-summon"]["selection"] == "clip:808"),
+    ("'clip' puts the Clipboard History command first and selects it", lambda s: s["cmd"]["rows"][:2] == ["hdr:commands", "cmd:clipboard"] and s["cmd"]["selection"] == "cmd:clipboard"),
+    ("Enter on it opens the history inside the panel", lambda s: s["cmd-open"]["view"] == "clipboard" and s["cmd-open"]["fromSearch"] is True and s["cmd-open"]["selection"] == "clip:808"),
+    ("Back returns to the search, query and selection restored", lambda s: s["cmd-back"]["view"] == "search" and s["cmd-back"]["query"] == "clip" and s["cmd-back"]["selection"] == "cmd:clipboard"),
+    ("the summon payload opens the clipboard view", lambda s: s["bar-summon"]["view"] == "clipboard" and s["bar-summon"]["selection"] == "clip:808"),
 ]
 failed = 0
 for name, check in checks:
