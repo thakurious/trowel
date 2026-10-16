@@ -1,5 +1,5 @@
 {"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
-{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard"], "state": "ready"}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
 {"send": {"id": 2, "op": "apps_query", "text": "fire", "limit": 1, "gen": 1}}
 {"recv": {"id": 2, "ok": true, "gen": 1, "rows": [{"id": "firefox", "name": "Firefox", "generic": "Web Browser", "comment": "Browse the World Wide Web", "icon_name": "firefox", "terminal": false, "actions": [{"id": "new-window", "name": "New Window"}, {"id": "new-private-window", "name": "New Private Window"}], "source": "/usr/share/applications/firefox.desktop", "launches": 14, "last_launched": 1791869000, "matched": [[0, 4]]}]}}
 {"send": {"id": 3, "op": "apps_query", "gen": 2, "limit": 2}}

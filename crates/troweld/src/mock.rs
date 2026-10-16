@@ -25,7 +25,7 @@ const QUEUE_CAP: usize = 256;
 const DEFAULT_FIXTURE: &str = include_str!("fixture_default.json");
 const DAEMON_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// v2 adds `apps` and `clipboard` (D22); the mock serves both from `fixture_launcher.json`.
-const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps", "clipboard"];
+const CAPABILITIES: &[&str] = &["code", "audio", "video", "ocr", "apps", "clipboard", "calc"];
 
 pub struct MockOpts {
     pub socket: Option<PathBuf>,

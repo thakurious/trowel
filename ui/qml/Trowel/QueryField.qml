@@ -25,6 +25,11 @@ Item {
     field.selectAll()
   }
 
+  // Ctrl+C copies the selected text, not the row, when the field has a selection.
+  function hasSelectedText() {
+    return String(field.selectedText || "").length > 0
+  }
+
   function composing() {
     try {
       return String(field.preeditText || "").length > 0

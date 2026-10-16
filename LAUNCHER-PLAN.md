@@ -622,6 +622,29 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
 - **P4 evals re-run green with identical numbers** (proof file search did not move).
 - `cargo test`, `qmllint` and clippy are clean.
 
+**Found while building L4, slice 1 (2026-10-16; the code follows these):**
+
+- **Where Applications go.** "Sections ahead of file groups" and "row 0 is the first file unless an
+  app is strong" conflict: the default selection would sit below a section. `ListMerge.js` puts
+  Applications **first only when the top app's name starts with the query** (Omarchy's name-prefix
+  band, checked in the UI from `AppRow.name`); otherwise the section follows the file groups, ahead
+  of the weaker fold. At most 5 apps. Row 0 is then always the default selection.
+- **The clipboard is its own view, not a section of the main list** (Raycast keeps clipboard history
+  out of root search too). The main list is calculator + apps + files.
+- **Keys** (UI-DESIGN §3.4): calculator `↵` copy, `Ctrl+↵` paste; app `↵` launch; clip `↵` paste,
+  `Ctrl+↵` copy only, `Shift+↵` paste as text, `Ctrl+Shift+P` pin, `Ctrl+Delete` delete; `Tab`
+  cycles the clipboard chips. A copy shows a toast and closes the panel 450 ms later.
+- **Plain rows next to the ListModel.** ListModel turns nested objects and arrays into models, so the
+  previews read app and clip details from `Client.rowIndex` / `clipIndex` (plain JS by row id).
+- **Bugs found on the way (existing):** a non-UTF-8 path's `{b64, display}` id broke the ListModel's
+  `rowId` role as soon as a string id came first (now `"b64:<…>"`, and open/reveal/copy send the
+  original object back); `GroupHeader { title: title }` and `WeakerFold { count: count }` bound the
+  properties to themselves, so group headers were blank and the fold count 0.
+- **Offscreen harness** (`ui/harness/`): Qt's offscreen platform has no layer-shell backend, so
+  `prep.py` copies the plugin's Panel with a `FloatingWindow` in place of `PanelWindow` and test
+  hooks, stubs `qs.Commons`, and `check.py` asserts selection and rows against `troweld --mock`. It
+  never touches the live session.
+
 ### L5. Omarchy integration and hardening (2–3 days)
 
 - `trowel setup`: the opt-in prompts from P-D18 and P-D23, each with a backup and recorded in the

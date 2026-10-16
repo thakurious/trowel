@@ -6,6 +6,7 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Trowel"
+import "Trowel/ListMerge.js" as ListMerge
 
 // UI-DESIGN §3 quick panel. Production plugin id (DECISIONS D12/D17).
 Item {
@@ -28,9 +29,26 @@ Item {
   // Stays true until Done even after folders Continue sets onboarded
   // (indexing starts then; the wizard must not flip to search).
   property bool wizardOpen: false
+  // "search" (files + apps + calculator) or "clipboard" (history; LAUNCHER-PLAN.md L4).
+  property string view: "search"
+  property var clipContent: ({})
+  property real now: Date.now() / 1000
+  // Launcher sources join the All tab only; a kind tab or code search is files alone.
+  readonly property bool launcherOn: root.view === "search" && tabs.current === "all" && !root.codeMode
+  readonly property bool showCalc: root.launcherOn && root.phase !== "empty" && client.calcResult !== null
+  readonly property string selectedType: {
+    if (root.selection === "calc:")
+      return "calc"
+    var r = root.selectedRow
+    return (r && r.rowType) ? r.rowType : ""
+  }
 
   // Footer, left: `upstream/Sources/DigUpApp/SearchPanelView.swift:131` statusText.
   readonly property string statusText: {
+    if (root.view === "clipboard") {
+      var n = client.clipTotal
+      return (n === 1 ? "1 item" : n + " items") + (root.clipPaused ? " · capture paused" : "")
+    }
     if (root.phase === "words") {
       var st = client.status || {}
       return st.worker === "starting" ? "Matching words; meaning search is warming up…" : "Matching words…"
@@ -67,17 +85,50 @@ Item {
   readonly property real topFraction: 0.16
   readonly property int maxPanelHeight: Math.min(560, Math.round(panel.height * 0.6))
 
+  property bool clipPaused: false
+
   function open(payloadJson) {
     unmapTimer.stop()
+    var wasClipboard = root.view === "clipboard"
+    root.view = "search"
     root.mapped = true
     root.opened = true
     root.navigated = false
+    root.now = Date.now() / 1000
     if (root.needsOnboarding)
       return
     client.panelOpened()
+    if (wasClipboard) {
+      query.text = ""
+      root.onQueryEdited()
+    }
     Qt.callLater(function () {
       query.forceActiveFocus()
       query.selectAll()
+    })
+  }
+
+  // Straight into clipboard history (`omarchy-shell trowel clipboard`, LAUNCHER-PLAN.md L4).
+  function openClipboard() {
+    unmapTimer.stop()
+    root.view = "clipboard"
+    root.mapped = true
+    root.opened = true
+    root.navigated = false
+    root.now = Date.now() / 1000
+    root.selection = ""
+    root.selectedRow = null
+    root.clipContent = ({})
+    if (root.needsOnboarding)
+      return
+    query.text = ""
+    chips.current = "all"
+    root.phase = "clipboard"
+    client.clearApps()
+    client.clearCalc()
+    client.clipQuery("", [])
+    Qt.callLater(function () {
+      query.forceActiveFocus()
     })
   }
 
@@ -102,6 +153,11 @@ Item {
 
   function onQueryEdited() {
     root.navigated = false
+    if (root.view === "clipboard") {
+      root.phase = "clipboard"
+      client.clipQuery(query.text.replace(/^\s+|\s+$/g, ""), chips.kindsFor(chips.current))
+      return
+    }
     var raw = query.text
     var trimmed = raw.replace(/^\s+|\s+$/g, "")
     // Typing "code:" picks the Code tab; the tab alone is enough too.
@@ -117,10 +173,13 @@ Item {
       client.countsText = ""
       client.groups = []
       client.weaker = []
+      client.clearApps()
+      client.clearCalc()
       client.syncModel()
       hybridTimer.stop()
       return
     }
+    root.askLauncher(text)
     if (root.codeMode && text.length === 0) {
       root.phase = "codeHint"
       client.groups = []
@@ -132,6 +191,22 @@ Item {
     client.typing(text, root.codeMode)
     client.search(text, "keyword", root.codeMode, true)
     hybridTimer.restart()
+  }
+
+  // Apps and the calculator for the same text, each with its own gen (Client.qml).
+  function askLauncher(text) {
+    if (!root.launcherOn || !text.length) {
+      if (client.apps.length) {
+        client.clearApps()
+        client.syncModel()
+      }
+      client.clearCalc()
+      return
+    }
+    if (client.hasApps)
+      client.appsQuery(text)
+    if (client.hasCalc)
+      client.calc(text, false)
   }
 
   function runHybrid() {
@@ -158,19 +233,40 @@ Item {
       onQueryEdited()
       return
     }
+    // `launcherOn` follows `tabs.current`, which FilterBar set before emitting `picked`.
+    root.askLauncher(text)
     // Same text: its vector is cached, so go straight to the full search. A keyword pass
     // first showed other rows and counts for a moment.
     hybridTimer.stop()
     client.search(text, "hybrid", root.codeMode, false)
   }
 
-  function moveSelection(step) {
-    var ids = []
-    for (var i = 0; i < client.rows.count; i++) {
-      var it = client.rows.get(i)
-      if (it.rowType === "row" || it.rowType === "fold")
-        ids.push(it.rowId)
+  readonly property var listModel: root.view === "clipboard" ? client.clipModel : client.rows
+
+  // {rowType, rowId} of the list on screen, for ListMerge's selection rules.
+  function shownRows() {
+    var out = []
+    var m = root.listModel
+    for (var i = 0; i < m.count; i++) {
+      var it = m.get(i)
+      out.push({
+        rowType: it.rowType,
+        rowId: it.rowId
+      })
     }
+    return out
+  }
+
+  // A reply landed: keep the user's pick if it is still there, else the default (the calculator
+  // card, a strong app, or the first row).
+  function settleSelection() {
+    if (!root.navigated || !selectionStillPresent())
+      root.selection = ListMerge.defaultSelection(shownRows(), root.showCalc)
+    pickSelected()
+  }
+
+  function moveSelection(step) {
+    var ids = ListMerge.selectable(shownRows(), root.showCalc)
     if (ids.length === 0)
       return
     var idx = ids.indexOf(root.selection)
@@ -183,6 +279,22 @@ Item {
   }
 
   function pickSelected() {
+    if (root.selection === "calc:") {
+      root.selectedRow = null
+      return
+    }
+    var app = client.rowIndex[root.selection]
+    if (root.view === "search" && app && app.rowType === "app") {
+      root.selectedRow = app
+      return
+    }
+    var clip = client.clipIndex[root.selection]
+    if (root.view === "clipboard" && clip && clip.rowType === "clip") {
+      if (!root.selectedRow || root.selectedRow.rowId !== clip.rowId)
+        client.clipGet(clip.clipId)
+      root.selectedRow = clip
+      return
+    }
     for (var i = 0; i < client.rows.count; i++) {
       var it = client.rows.get(i)
       if (it.rowId === root.selection && it.rowType === "row") {
@@ -196,7 +308,25 @@ Item {
     root.selectedRow = null
   }
 
+  // Enter: the calculator copies, an app launches, a clip pastes into the app below (D21: the
+  // panel hides first, the daemon sends Shift+Insert after 150 ms), a file opens.
   function openSelected() {
+    var t = root.selectedType
+    if (t === "calc") {
+      copyCalc("copy")
+      return
+    }
+    if (t === "app") {
+      client.appLaunch(root.selectedRow.appId)
+      dismiss()
+      return
+    }
+    if (t === "clip") {
+      var id = root.selectedRow.clipId
+      dismiss()
+      client.clipPaste(id, "paste")
+      return
+    }
     if (root.selection === client.weakerId) {
       client.showWeaker = !client.showWeaker
       root.showWeaker = client.showWeaker
@@ -216,9 +346,69 @@ Item {
   }
 
   function revealSelected() {
+    var t = root.selectedType
+    if (t === "calc") {
+      copyCalc("paste")
+      return
+    }
+    if (t === "clip") {
+      // Ctrl+Enter on a clip: back on the clipboard only, nothing typed.
+      client.clipPaste(root.selectedRow.clipId, "copy")
+      root.closeWithToast("Copied")
+      return
+    }
+    if (t === "app")
+      return
     if (root.selectedRow)
       client.revealRow(root.selectedRow)
     dismiss()
+  }
+
+  function copyCalc(mode) {
+    var r = client.calcResult
+    if (!r)
+      return
+    if (mode === "paste") {
+      dismiss()
+      client.calcCopy(r.copy, r.expr, "paste")
+      return
+    }
+    client.calcCopy(r.copy, r.expr, "copy")
+    root.closeWithToast("Copied " + r.copy)
+  }
+
+  // A confirmation the user can read, then the panel closes.
+  function closeWithToast(text) {
+    toast.show(text)
+    toastClose.restart()
+  }
+
+  function pasteSelectedPlain() {
+    if (root.selectedType !== "clip")
+      return
+    var id = root.selectedRow.clipId
+    dismiss()
+    client.clipPaste(id, "plain")
+  }
+
+  function togglePin() {
+    if (root.selectedType !== "clip")
+      return
+    var pinned = !(root.selectedRow.pinned === true)
+    client.clipPin(root.selectedRow.clipId, pinned)
+    toast.show(pinned ? "Pinned" : "Unpinned")
+  }
+
+  function deleteSelected() {
+    if (root.selectedType !== "clip")
+      return
+    // The next row takes the selection.
+    var ids = ListMerge.selectable(shownRows(), false)
+    var at = ids.indexOf(root.selection)
+    var next = ids[at + 1] || ids[at - 1] || ""
+    client.clipDelete(root.selectedRow.clipId)
+    root.selection = next
+    toast.show("Deleted")
   }
 
   IpcHandler {
@@ -232,6 +422,28 @@ Item {
     function toggle(): void {
       root.toggle()
     }
+    function clipboard(): void {
+      if (root.opened && root.view === "clipboard")
+        root.dismiss()
+      else
+        root.openClipboard()
+    }
+    function apps(): void {
+      root.open("{}")
+    }
+  }
+
+  Timer {
+    id: toastClose
+    interval: 450
+    onTriggered: root.dismiss()
+  }
+
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.opened
+    onTriggered: root.now = Date.now() / 1000
   }
 
   Client {
@@ -258,15 +470,37 @@ Item {
         root.phase = "meaning"
       else if (meaning === "unavailable")
         root.phase = "wordsOnly"
-      if (!root.navigated || !selectionStillPresent()) {
-        for (var i = 0; i < rows.count; i++) {
-          if (rows.get(i).rowType === "row") {
-            root.selection = rows.get(i).rowId
-            break
-          }
-        }
-      }
-      pickSelected()
+      root.settleSelection()
+    }
+    onAppsArrived: root.settleSelection()
+    onCalcArrived: root.settleSelection()
+    onClipsArrived: {
+      if (root.view === "clipboard")
+        root.settleSelection()
+    }
+    onClipContentArrived: function (msg) {
+      root.clipContent = msg
+    }
+    onClipboardChanged: function (msg) {
+      if (root.opened && root.view === "clipboard")
+        client.clipRefresh()
+    }
+    onOpFailed: function (op, error) {
+      var code = error.code || ""
+      if (op === "clip_paste")
+        toast.show(code === "not_found" ? "That item is no longer available" : "Couldn't use the clipboard")
+      else if (op === "calc_copy")
+        toast.show("Couldn't copy")
+      else if (op === "app_launch")
+        toast.show("Couldn't open the app")
+      else if (op === "clip_delete" || op === "clip_pin")
+        client.clipRefresh()
+    }
+    onOpDone: function (op, msg) {
+      if (op === "clip_pause")
+        root.clipPaused = msg.paused_until !== 0
+      else if ((op === "clip_pin" || op === "clip_delete") && root.view === "clipboard")
+        client.clipRefresh()
     }
     onPreviewArrived: function (msg) {
       root.preview = msg
@@ -278,8 +512,11 @@ Item {
   }
 
   function selectionStillPresent() {
-    for (var i = 0; i < client.rows.count; i++) {
-      if (client.rows.get(i).rowId === root.selection)
+    if (root.selection === "calc:")
+      return root.showCalc
+    var m = root.listModel
+    for (var i = 0; i < m.count; i++) {
+      if (m.get(i).rowId === root.selection)
         return true
     }
     return false
@@ -396,6 +633,14 @@ Item {
           }
         }
 
+        Toast {
+          id: toast
+          z: 3
+          anchors.horizontalCenter: parent.horizontalCenter
+          anchors.bottom: parent.bottom
+          anchors.bottomMargin: 40
+        }
+
         Onboarding {
           id: onboard
           z: 2
@@ -427,10 +672,11 @@ Item {
             codeMode: root.codeMode
             hybridPending: root.phase === "words"
             countText: root.activityBadge
-            placeholder: root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…"
+            placeholder: root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
             onTextEdited: root.onQueryEdited()
             onKeyPressed: function (event) {
               var ctrl = event.modifiers & Qt.ControlModifier
+              var shift = event.modifiers & Qt.ShiftModifier
               if (query.composing() && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Up || event.key === Qt.Key_Down || event.key === Qt.Key_Escape))
                 return
               if (event.key === Qt.Key_Escape) {
@@ -438,6 +684,12 @@ Item {
                   query.text = ""
                 else
                   root.dismiss()
+                event.accepted = true
+              } else if (ctrl && shift && event.key === Qt.Key_P) {
+                root.togglePin()
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_Delete) {
+                root.deleteSelected()
                 event.accepted = true
               } else if (event.key === Qt.Key_Down || (ctrl && event.key === Qt.Key_N)) {
                 root.moveSelection(1)
@@ -448,10 +700,12 @@ Item {
               } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if (ctrl)
                   root.revealSelected()
+                else if (shift && root.selectedType === "clip")
+                  root.pasteSelectedPlain()
                 else
                   root.openSelected()
                 event.accepted = true
-              } else if (event.key === Qt.Key_Space && (root.navigated) && root.selection.length) {
+              } else if (event.key === Qt.Key_Space && root.navigated && root.selection.length && (root.selectedType === "row" || root.selection === client.weakerId)) {
                 if (root.selection === client.weakerId) {
                   client.showWeaker = !client.showWeaker
                   root.showWeaker = client.showWeaker
@@ -461,19 +715,28 @@ Item {
               } else if (ctrl && event.key === Qt.Key_Y) {
                 root.quickLookSelected()
                 event.accepted = true
-              } else if (ctrl && event.key === Qt.Key_C && root.navigated) {
-                client.copyPath(root.selectedRow)
+              } else if (ctrl && event.key === Qt.Key_C && (root.navigated || root.selectedType === "calc") && !query.hasSelectedText()) {
+                if (root.selectedType === "row")
+                  client.copyPath(root.selectedRow)
+                else
+                  root.revealSelected()
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_O) {
                 appProc.running = true
                 event.accepted = true
               } else if (event.key === Qt.Key_Tab && !ctrl) {
-                tabs.cycle(1)
+                if (root.view === "clipboard")
+                  chips.cycle(1)
+                else
+                  tabs.cycle(1)
                 event.accepted = true
               } else if (event.key === Qt.Key_Backtab) {
-                tabs.cycle(-1)
+                if (root.view === "clipboard")
+                  chips.cycle(-1)
+                else
+                  tabs.cycle(-1)
                 event.accepted = true
-              } else if (ctrl && event.key >= Qt.Key_1 && event.key <= Qt.Key_7) {
+              } else if (ctrl && root.view === "search" && event.key >= Qt.Key_1 && event.key <= Qt.Key_7) {
                 // Ctrl+1 All, Ctrl+2…6 one kind, Ctrl+7 Code (`SearchWindow.swift:133`, ⌘ there).
                 tabs.pick(tabs.ids[event.key - Qt.Key_1] || tabs.current)
                 event.accepted = true
@@ -485,8 +748,21 @@ Item {
             width: parent.width
             height: visible ? 34 : 0
             visible: root.phase !== "empty"
+            KindChips {
+              id: chips
+              visible: root.view === "clipboard"
+              anchors.left: parent.left
+              anchors.leftMargin: 14
+              anchors.verticalCenter: parent.verticalCenter
+              onPicked: function (id) {
+                root.selection = ""
+                root.navigated = false
+                root.onQueryEdited()
+              }
+            }
             FilterBar {
               id: tabs
+              visible: root.view === "search"
               anchors.left: parent.left
               anchors.leftMargin: 14
               anchors.verticalCenter: parent.verticalCenter
@@ -535,11 +811,32 @@ Item {
           height: root.phase === "empty" ? 0 : Math.max(180, card.height - fieldCol.implicitHeight - footer.implicitHeight)
           visible: root.phase !== "empty"
 
+          CalcCard {
+            id: calcCard
+            visible: root.showCalc
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: 10
+            anchors.topMargin: 2
+            height: visible ? implicitHeight : 0
+            result: client.calcResult
+            selected: root.selection === "calc:"
+            onClicked: {
+              root.selection = "calc:"
+              root.navigated = true
+              root.pickSelected()
+            }
+            onOpened: root.copyCalc("copy")
+          }
+
           EmptyState {
-            visible: client.rows.count === 0
+            visible: root.listModel.count === 0 && !root.showCalc
             anchors.centerIn: parent
             width: parent.width - 48
             title: {
+              if (root.view === "clipboard")
+                return query.text.length ? "No matches in your clipboard history" : "Nothing copied yet"
               if (root.phase === "codeHint")
                 return "Search your code"
               if (root.phase === "codeOff")
@@ -551,6 +848,8 @@ Item {
               return "No good matches"
             }
             detail: {
+              if (root.view === "clipboard")
+                return query.text.length ? "" : "Text, images, links and files you copy show up here."
               if (root.phase === "words")
                 return ""
               if (root.codeMode)
@@ -560,14 +859,18 @@ Item {
           }
 
           Row {
-            visible: client.rows.count > 0
-            anchors.fill: parent
+            visible: root.listModel.count > 0
+            anchors.top: calcCard.visible ? calcCard.bottom : parent.top
+            anchors.topMargin: calcCard.visible ? 8 : 0
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
 
             ListView {
               id: list
               width: root.listWidth
               height: parent.height
-              model: client.rows
+              model: root.listModel
               clip: true
               reuseItems: true
               cacheBuffer: 240
@@ -607,13 +910,13 @@ Item {
                 }
                 GroupHeader {
                   visible: rowType === "header"
-                  title: title
+                  title: model.title
                   width: parent.width
                 }
                 WeakerFold {
                   visible: rowType === "fold"
                   width: parent.width
-                  count: count
+                  count: model.count
                   expanded: client.showWeaker
                   selected: root.selection === rowId
                   onToggled: {
@@ -622,6 +925,31 @@ Item {
                     root.selection = client.weakerId
                     root.navigated = true
                   }
+                }
+                AppRow {
+                  visible: rowType === "app"
+                  width: parent.width
+                  row: rowType === "app" ? (client.rowIndex[rowId] || ({})) : ({})
+                  selected: root.selection === rowId
+                  onClicked: {
+                    root.selection = rowId
+                    root.navigated = true
+                    root.pickSelected()
+                  }
+                  onOpened: root.openSelected()
+                }
+                ClipRow {
+                  visible: rowType === "clip"
+                  width: parent.width
+                  row: rowType === "clip" ? (client.clipIndex[rowId] || ({})) : ({})
+                  now: root.now
+                  selected: root.selection === rowId
+                  onClicked: {
+                    root.selection = rowId
+                    root.navigated = true
+                    root.pickSelected()
+                  }
+                  onOpened: root.openSelected()
                 }
                 ResultRow {
                   visible: rowType === "row"
@@ -644,12 +972,38 @@ Item {
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14)
             }
 
-            PreviewPane {
+            Item {
               width: parent.width - root.listWidth - 1
               height: parent.height
-              preview: root.preview
-              row: root.selectedRow
-              query: query.text
+
+              PreviewPane {
+                anchors.fill: parent
+                visible: root.selectedType === "row" || root.selectedType === ""
+                preview: root.preview
+                row: root.selectedType === "row" ? root.selectedRow : ({})
+                query: query.text
+              }
+              AppPreview {
+                anchors.fill: parent
+                visible: root.selectedType === "app"
+                row: root.selectedType === "app" ? root.selectedRow : ({})
+                now: root.now
+              }
+              ClipPreview {
+                anchors.fill: parent
+                visible: root.selectedType === "clip"
+                row: root.selectedType === "clip" ? root.selectedRow : ({})
+                content: root.clipContent
+                now: root.now
+                onOpenLink: function (url) {
+                  Quickshell.execDetached(["omarchy-launch-browser", url])
+                  root.dismiss()
+                }
+                onCopyText: function (text) {
+                  client.calcCopy(text, "", "copy")
+                  toast.show("Copied " + text)
+                }
+              }
             }
           }
         }
@@ -676,7 +1030,18 @@ Item {
             spacing: 6
             // `SearchPanelView.swift` keysText, with Ctrl for ⌘.
             Repeater {
-              model: [["↵", "Open"], ["ctrl ↵", "Reveal"], ["space", "Quick Look"], ["ctrl C", "Copy"]]
+              model: {
+                switch (root.selectedType) {
+                case "calc":
+                  return [["↵", "Copy"], ["ctrl ↵", "Paste"]]
+                case "app":
+                  return [["↵", "Open"]]
+                case "clip":
+                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["shift ↵", "As text"], ["ctrl shift P", root.selectedRow && root.selectedRow.pinned ? "Unpin" : "Pin"]]
+                default:
+                  return [["↵", "Open"], ["ctrl ↵", "Reveal"], ["space", "Quick Look"], ["ctrl C", "Copy"]]
+                }
+              }
               delegate: Row {
                 spacing: 4
                 anchors.verticalCenter: parent ? parent.verticalCenter : undefined

@@ -149,7 +149,8 @@ Item {
     if (root.showPicture && root.row) {
       var kind = root.row.kind || ""
       if (kind === "image" || kind === "screenshot" || kind === "pdf" || kind === "video")
-        return root.row.rowId || ""
+        // A non-UTF-8 path's key is "b64:…" (Client.rowKey); the daemon's preview file is used then.
+        return String(root.row.rowId || "").indexOf("b64:") === 0 ? "" : (root.row.rowId || "")
     }
     return ""
   }
@@ -310,7 +311,7 @@ Item {
     anchors.right: card.right
     anchors.bottom: card.bottom
     anchors.margins: 8
-    visible: card.visible && root.row && root.row.place
+    visible: !!(card.visible && root.row && root.row.place)
     text: (root.row && root.row.place) ? root.row.place : ""
     onImage: root.showPicture
   }

@@ -1,9 +1,12 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import "ListMerge.js" as ListMerge
 
-// PROTOCOL v1 client. UI-DESIGN §5: gen-based stale dropping; ListModel
-// insert/remove/move, never clear()+append() of the whole set.
+// PROTOCOL v2 client. UI-DESIGN §5: gen-based stale dropping; ListModel
+// insert/remove/move, never clear()+append() of the whole set. Launcher sources (apps, calc,
+// clipboard; LAUNCHER-PLAN.md L4) keep their own gen, so a slow file search never drops a fresh
+// apps reply, and their replies are routed by request id.
 QtObject {
   id: root
 
@@ -76,6 +79,28 @@ QtObject {
   property var genMeta: ({})
   property bool lastSearchCode: false
 
+  // Launcher (v2). `apps` belong to `appsText`; the merged list shows them with the file groups.
+  property var apps: []
+  property string appsText: ""
+  property int appsGen: 0
+  property var calcResult: null
+  property string calcError: ""
+  property int calcGen: 0
+  property var clips: []
+  property int clipTotal: 0
+  property int clipGen: 0
+  property string clipText: ""
+  property var clipKinds: []
+  // rowId → the plain JS item behind each row. ListModel turns nested objects and arrays into
+  // models, so previews read app and clip details from here instead.
+  property var rowIndex: ({})
+  property var clipIndex: ({})
+  // Request id → op, for replies that only make sense to the op that asked.
+  property var routes: ({})
+  readonly property bool hasApps: (root.capabilities || []).indexOf("apps") >= 0
+  readonly property bool hasClipboard: (root.capabilities || []).indexOf("clipboard") >= 0
+  readonly property bool hasCalc: (root.capabilities || []).indexOf("calc") >= 0
+
   readonly property string weakerId: "\u0000weaker"
   readonly property string bannerText: {
     if (stalled)
@@ -89,8 +114,17 @@ QtObject {
   signal lineEvent(var msg)
   signal previewArrived(var msg)
   signal configArrived(var cfg)
+  signal appsArrived
+  signal calcArrived
+  signal clipsArrived
+  signal clipContentArrived(var msg)
+  signal clipboardChanged(var msg)
+  // A routed op failed (not_found, io, …) or finished: the panel shows a toast.
+  signal opFailed(string op, var error)
+  signal opDone(string op, var msg)
 
   property ListModel rows: ListModel {}
+  property ListModel clipModel: ListModel {}
 
   function send(obj) {
     if (!sock.connected)
@@ -101,6 +135,184 @@ QtObject {
     sock.flush()
     stallTimer.restart()
     return id
+  }
+
+  function sendRouted(op, obj) {
+    obj.op = op
+    var id = send(obj)
+    if (id) {
+      var r = root.routes
+      r[id] = op
+    }
+    return id
+  }
+
+  // Apps for the query (an empty text is frecency order; the panel only asks with text).
+  function appsQuery(text) {
+    root.appsGen += 1
+    root.appsText = String(text)
+    return sendRouted("apps_query", {
+      text: String(text),
+      limit: 8,
+      gen: root.appsGen
+    })
+  }
+
+  function clearApps() {
+    root.appsGen += 1
+    root.apps = []
+    root.appsText = ""
+  }
+
+  function calc(text, force) {
+    root.calcGen += 1
+    return sendRouted("calc", {
+      text: String(text),
+      force: !!force,
+      gen: root.calcGen
+    })
+  }
+
+  function clearCalc() {
+    root.calcGen += 1
+    root.calcResult = null
+    root.calcError = ""
+  }
+
+  // mode: "copy" | "paste". `expr` goes to the calculator history.
+  function calcCopy(text, expr, mode) {
+    return sendRouted("calc_copy", {
+      text: String(text),
+      expr: expr || undefined,
+      mode: mode || "copy"
+    })
+  }
+
+  function appLaunch(appId, action) {
+    var req = {
+      app_id: appId
+    }
+    if (action)
+      req.action = action
+    return sendRouted("app_launch", req)
+  }
+
+  function appHide(appId, hidden) {
+    return sendRouted("app_hide", {
+      app_id: appId,
+      hidden: hidden !== false
+    })
+  }
+
+  function clipQuery(text, kinds) {
+    root.clipGen += 1
+    root.clipText = String(text || "")
+    root.clipKinds = kinds || []
+    var req = {
+      text: root.clipText,
+      limit: 100,
+      gen: root.clipGen
+    }
+    if (root.clipKinds.length)
+      req.kinds = root.clipKinds
+    return sendRouted("clip_query", req)
+  }
+
+  function clipRefresh() {
+    clipQuery(root.clipText, root.clipKinds)
+  }
+
+  function clipGet(clipId) {
+    return sendRouted("clip_get", {
+      clip_id: clipId
+    })
+  }
+
+  // The panel must already be hidden for "paste"/"plain" (D21): the daemon sends Shift+Insert.
+  function clipPaste(clipId, mode) {
+    return sendRouted("clip_paste", {
+      clip_id: clipId,
+      mode: mode || "paste"
+    })
+  }
+
+  function clipPin(clipId, pinned) {
+    return sendRouted("clip_pin", {
+      clip_id: clipId,
+      pinned: !!pinned
+    })
+  }
+
+  function clipDelete(clipId) {
+    return sendRouted("clip_delete", {
+      clip_id: clipId
+    })
+  }
+
+  function clipClear(keepPinned) {
+    return sendRouted("clip_clear", {
+      keep_pinned: keepPinned !== false
+    })
+  }
+
+  // minutes: undefined pauses until resumed, 0 resumes.
+  function clipPause(minutes) {
+    var req = {}
+    if (minutes !== undefined && minutes !== null)
+      req.minutes = minutes
+    return sendRouted("clip_pause", req)
+  }
+
+  function clipImport() {
+    return sendRouted("clip_import", {
+      source: "omarchy"
+    })
+  }
+
+  function indexOf(items) {
+    var map = ({})
+    for (var i = 0; i < items.length; i++)
+      map[items[i].rowId] = items[i]
+    return map
+  }
+
+  function syncClips() {
+    var wanted = ListMerge.clipRows(root.clips)
+    root.clipIndex = indexOf(wanted)
+    syncList(root.clipModel, wanted)
+  }
+
+  // A routed reply: true when handled.
+  function onRouted(op, msg) {
+    if (msg.ok === false) {
+      root.opFailed(op, msg.error || {})
+      return true
+    }
+    if (op === "apps_query") {
+      if (msg.gen < root.appsGen)
+        return true
+      root.apps = msg.rows || []
+      syncModel()
+      root.appsArrived()
+    } else if (op === "calc") {
+      if (msg.gen < root.calcGen)
+        return true
+      root.calcResult = msg.result || null
+      root.calcError = msg.error || ""
+      root.calcArrived()
+    } else if (op === "clip_query") {
+      if (msg.gen < root.clipGen)
+        return true
+      root.clips = msg.rows || []
+      root.clipTotal = msg.total || 0
+      syncClips()
+      root.clipsArrived()
+    } else if (op === "clip_get") {
+      root.clipContentArrived(msg)
+    } else {
+      root.opDone(op, msg)
+    }
+    return true
   }
 
   function hello() {
@@ -189,7 +401,7 @@ QtObject {
   function subscribe() {
     send({
       op: "subscribe",
-      topics: ["status"]
+      topics: ["status", "clipboard"]
     })
   }
 
@@ -230,7 +442,7 @@ QtObject {
       loc = row.loc
     send({
       op: "open",
-      path: row.rowId || row.id || row.path,
+      path: pathOf(row),
       segment_id: row.segment_id || null,
       code: root.lastSearchCode,
       loc: loc
@@ -242,7 +454,7 @@ QtObject {
       return
     send({
       op: "reveal",
-      path: row.rowId || row.id || row.path
+      path: pathOf(row)
     })
   }
 
@@ -251,7 +463,7 @@ QtObject {
       return
     send({
       op: "copy_path",
-      path: row.rowId || row.id || row.path
+      path: pathOf(row)
     })
   }
 
@@ -289,7 +501,12 @@ QtObject {
     reconnectTimer.restart()
   }
 
+  // File groups, then the launcher sources merged in (ListMerge.js).
   function flatten() {
+    return ListMerge.merge(flattenFiles(), root.apps, root.appsText)
+  }
+
+  function flattenFiles() {
     var out = []
     var gs = root.groups || []
     for (var i = 0; i < gs.length; i++) {
@@ -323,10 +540,26 @@ QtObject {
     return out
   }
 
+  // A path on the wire is a string, or {b64, display} when it isn't UTF-8 (PROTOCOL §6). Row ids
+  // must be one ListModel type, so those become "b64:<…>"; `pathOf` sends the original back.
+  function rowKey(id) {
+    if (typeof id === "string")
+      return id
+    return id && id.b64 ? "b64:" + id.b64 : String(id)
+  }
+
+  function pathOf(row) {
+    var key = row.rowId || row.id || row.path
+    var item = root.rowIndex[key]
+    if (item && item.raw && item.raw.id !== undefined)
+      return item.raw.id
+    return key
+  }
+
   function rowItem(r, weak) {
     return {
       rowType: "row",
-      rowId: r.id,
+      rowId: rowKey(r.id),
       name: r.name || "",
       title: r.name || "",
       folder: r.folder || "",
@@ -347,7 +580,11 @@ QtObject {
 
   function syncModel() {
     var wanted = flatten()
-    var model = root.rows
+    root.rowIndex = indexOf(wanted)
+    syncList(root.rows, wanted)
+  }
+
+  function syncList(model, wanted) {
     var i = 0
     while (i < wanted.length || i < model.count) {
       if (i >= wanted.length) {
@@ -422,7 +659,15 @@ QtObject {
     if (msg.event) {
       if (msg.event === "status")
         root.status = msg
+      else if (msg.event === "clipboard")
+        root.clipboardChanged(msg)
       root.lineEvent(msg)
+      return
+    }
+    if (msg.id !== undefined && root.routes[msg.id] !== undefined) {
+      var op = root.routes[msg.id]
+      delete root.routes[msg.id]
+      root.onRouted(op, msg)
       return
     }
     if (msg.ok === false && msg.error) {
@@ -535,6 +780,7 @@ QtObject {
         root.hello()
       } else {
         root.helloOk = false
+        root.routes = ({})
         root.state = "offline"
         if (root.wantConnected)
           root.reconnectTimer.restart()

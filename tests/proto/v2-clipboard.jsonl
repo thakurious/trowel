@@ -1,5 +1,5 @@
 {"send": {"id": 1, "op": "hello", "protocol": 2, "client": "panel", "pid": 1}}
-{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard"], "state": "ready"}}
+{"recv": {"id": 1, "ok": true, "protocol": 2, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
 {"send": {"id": 2, "op": "clip_query", "kinds": ["image"], "gen": 1}}
 {"recv": {"id": 2, "ok": true, "gen": 1, "total": 1, "rows": [{"id": 808, "kind": "image", "preview": "Screenshot 1920×1200", "mimes": ["image/png"], "bytes": 812345, "thumb": "/tmp/trowel-mock/clip-808@132.png", "source_app": "Hyprland", "created": 1791868900, "last_used": 1791868900, "uses": 1, "pinned": true}]}}
 {"send": {"id": 3, "op": "clip_query", "text": "refund", "gen": 2}}
