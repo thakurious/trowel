@@ -462,16 +462,20 @@ fn capture_classify_dedup_restore_and_privacy() {
         fs::read_to_string(root.join("keys")).unwrap().trim(),
         "-M shift -k Insert -m shift"
     );
-    // Plain drops the HTML.
-    c.call(json!({"op":"clip_paste","clip_id":html_id,"mode":"plain"}));
-    assert_eq!(
-        fs::read_to_string(root.join("copy-type")).unwrap().trim(),
-        "text/plain;charset=utf-8"
-    );
-    assert_eq!(
-        fs::read_to_string(root.join("copy-data")).unwrap(),
-        "Refund policy: 30 days"
-    );
+    // HTML entries restore as their text in every mode, never as markup.
+    for mode in ["paste", "copy", "plain"] {
+        c.call(json!({"op":"clip_paste","clip_id":html_id,"mode":mode}));
+        assert_eq!(
+            fs::read_to_string(root.join("copy-type")).unwrap().trim(),
+            "text/plain;charset=utf-8",
+            "{mode}"
+        );
+        assert_eq!(
+            fs::read_to_string(root.join("copy-data")).unwrap(),
+            "Refund policy: 30 days",
+            "{mode}"
+        );
+    }
     thread::sleep(Duration::from_millis(1100));
 
     // Incognito: nothing is captured while paused; capture resumes after.

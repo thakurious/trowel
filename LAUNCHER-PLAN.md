@@ -427,7 +427,7 @@ browser is Chrome. Demonstrated with installed apps: `ghost` → Ghostty, `chro`
   off-thread. The first paint shows the kind icon, as file rows do (UI-DESIGN §5).
 - **Restore** (`clip_paste`):
   - text: `wl-copy` (text/plain);
-  - html: `wl-copy --type text/html`, with plain text when `mode:"plain"`;
+  - html: its text, `wl-copy` (text/plain), in every mode (see the HTML restore note below);
   - image: `wl-copy --type <mime> < blob`;
   - files: `wl-copy --type text/uri-list` (L0.3: one offer pastes into Chromium, Nautilus and Strata with the real file name; no multi-type offer needed).
 
@@ -477,10 +477,11 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
 - **`clip_import` op added.** The plan named `trowel clip import-omarchy` but no op, and the daemon
   is the only writer of `state.sqlite`, so the CLI asks the daemon. Existing entries are skipped,
   not bumped.
-- **HTML restore caveat (open question).** `wl-copy --type text/html` also offers the same bytes as
-  `text/plain`, `UTF8_STRING`, … (L0.6), so pasting an `html` entry in `paste` mode into a
-  plain-text target (a terminal, a plain field) pastes the **markup**. `plain` mode is correct.
-  Offering HTML and its text together needs a multi-type offer (`wl-clipboard-rs`, not approved).
+- **HTML restore (resolved 2026-10-22, human's bug report).** `wl-copy --type text/html` also offers
+  the same bytes as `text/plain`, `UTF8_STRING`, … (L0.6), so restoring an `html` entry as HTML
+  pasted the **markup** into terminals and plain fields. Every mode now restores the entry's text.
+  Rich (formatted) paste would need a multi-type offer of `text/html` plus real `text/plain`
+  (`wl-clipboard-rs`, not approved).
 - A bare `wl-copy` (no `--type`) spends ~150 ms sniffing the MIME type with `xdg-mime` before it
   owns the selection. The daemon always passes `--type`; the live script does too.
 
