@@ -7,7 +7,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c, L2 and L3 done** (protocol v2, `state.sqlite`, mock; calculator, app index and clipboard history served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
 - **Live (deployed 2026-10-16 12:54, human's request):** `troweld` (L4 build, protocol v2, clipboard capture on) and the plugin panel (`~/.local/share/trowel/omarchy-plugin/{Panel.qml,manifest.json}` copied; `Trowel/` links to this repo's `ui/qml/Trowel`). The bar widget is removed (D25). Verified live: `hello` capabilities incl. apps/clipboard/calc; `apps_query chro` 2.7 ms → Chromium, Google Chrome; `calc 5 ft to cm` → 152.4 cm; clipboard doctor row OK (watcher running); panel opens on `omarchy-shell trowel open` and closes. Earlier, at 10:17 the old pre-L1 daemon was killed by the systemd watchdog (30 s, just after resume) and restarted on the L3 build, so clipboard capture has run since then.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** the one-step live deploy, **with the human's go-ahead** (it restarts troweld and omarchy-shell and replaces the installed plugin's `Panel.qml`/`BarWidget.qml`): `cargo build --release && cp ui/omarchy-plugin/{Panel,BarWidget}.qml ~/.local/share/trowel/omarchy-plugin/ && systemctl --user restart troweld.service && omarchy restart shell`. Then the L4 live acceptance and the L3 24 h orphan check, then L5. Open: question 2 (rich HTML paste), the L0.5 password-manager copy.
+- **Next step:** deploy, **with the human's go-ahead** (restarts troweld and omarchy-shell; `state.sqlite` migrates to v4 on start): `cargo build --release && install target/release/{troweld,trowel} ~/.local/bin/ && cp ui/omarchy-plugin/Panel.qml ~/.local/share/trowel/omarchy-plugin/ && systemctl --user restart troweld.service && omarchy restart shell`. Then check live: pick Chrome with `c` once, reopen, `c` → Chrome first; close and reopen within 90 s → same view/query/selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
 
 ### Phase 8 map
 
@@ -171,6 +171,27 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-22 — HTML paste fix; Raycast-style learning and pop to root
+
+- **HTML paste (human's bug report):** pasting an `html` entry put the markup on the clipboard (`wl-copy --type text/html` serves it for `text/plain` too, L0.6). `clip_paste` now restores html entries as their text in every mode (`cccd53f`). Rich paste would need `wl-clipboard-rs` (not approved).
+- **Learning (human: D19 amended, apps + commands only):** `troweld/src/learn.rs` ports oma-cast's `Frecency.js` + `searchTermMatch` (`typecraft-dev/oma-cast` `90efedd`, which reproduces Raycast). `state.sqlite` v4 `learned` table seeded from `apps_launches`. `rank.rs` ranks remembered queries above text matches; `app_launch.query`, `command_run`, `apps_query.commands`, `AppRow.learned` (PROTOCOL §4). `ListMerge.js` ranks commands and orders the launcher sections by learned signals. The mock learns in memory but keeps its stand-in app order.
+- **Pop to root:** `ui.pop_to_root_seconds` (default 90, Settings → Launcher & Clipboard). Reopening within it keeps the view, query and selection; the Super+Ctrl+V summon goes through the same rule. After it: a blank search. The panel re-reads config on each close, so a changed setting holds from the next open.
+- Gates (2026-10-22):
+  ```
+  $ cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+  $ cargo test --workspace    # all ok (troweld lib 96, daemon 18, clipboard 2, proto_replay 3, …)
+  $ bash scripts/apps-parity.sh
+  95 entries, 553 queries, 3592 ranked rows, 0 diffs
+  $ node scripts/listmerge-test.mjs
+  listmerge: 13 tests passed
+  $ python3 -I ui/harness/check.py   # 21 ok, 0 FAIL, incl.
+  ok   reopened within 90 s: the clipboard view, its selection kept
+  ok   reopened within 90 s: the search and its selection kept
+  ok   reopened after 90 s: a blank search
+  ```
+- **Not clean, pre-existing:** `check.py` still exits 1 because the harness prints `TypeError: Cannot read property 'r' of undefined` (`Color.foreground` in the `qs.Commons` stub). The same errors show with this session's UI changes stashed (94 lines), so they came before it. Not fixed. The harness `ready` step now also sends `config_set {onboarded:true}` to the mock, because the panel's `config_get` on close would otherwise reopen onboarding. `qmllint`: the new Settings block adds two `unqualified` warnings of the kind that file already has 27 of (no `ComponentBehavior: Bound`).
+- Not deployed; not tested live.
 
 ### 2026-10-16 — Clipboard view drew file rows; mid-word clipboard search
 

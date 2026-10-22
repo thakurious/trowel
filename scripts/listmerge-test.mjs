@@ -125,4 +125,37 @@ test("action filter: prefix, then word start, then subsequence", () => {
   assert.deepEqual(f("P+"), [], "regex characters are literal");
 });
 
+test("learned: an app opened with this query leads the commands", () => {
+  const chrome = { id: "google-chrome", name: "Google Chrome", learned: { frecency: 101, term: "exact" } };
+  // "c" is a Clipboard History keyword prefix and not Chrome's name, but "c" opened Chrome.
+  let rows = L.merge([], [chrome], "c");
+  assert.deepEqual(ids(rows), ["hdr:apps", "app:google-chrome", "hdr:commands", "cmd:clipboard"]);
+  assert.equal(L.defaultSelection(rows, false), "app:google-chrome");
+  // Nothing learned: commands keep leading.
+  rows = L.merge([], [chromium], "c");
+  assert.deepEqual(ids(rows), ["hdr:commands", "cmd:clipboard", "hdr:apps", "app:chromium"]);
+  // Both strong, only frecency: the more frecent section first; a learned command wins back.
+  const used = { id: "chromium", name: "Chromium", learned: { frecency: 150 } };
+  rows = L.merge([], [used], "c");
+  assert.equal(rows[0].rowId, "hdr:apps");
+  rows = L.merge([], [used], "c", { signals: { clipboard: { frecency: 101, term: "prefix" } } });
+  assert.equal(rows[0].rowId, "hdr:commands");
+});
+
+test("learned: commands order by learned term, then text, then frecency", () => {
+  const cmds = [
+    { id: "a", name: "Alpha Notes", keywords: [] },
+    { id: "b", name: "Notes", keywords: [] },
+    { id: "c", name: "Note Search", keywords: [] },
+  ];
+  let m = L.matchCommands("not", cmds);
+  assert.deepEqual(Array.from(m, (x) => x.command.id), ["b", "c", "a"]);
+  m = L.matchCommands("not", cmds, { a: { frecency: 101, term: "exact" }, c: { frecency: 300 } });
+  assert.deepEqual(Array.from(m, (x) => x.command.id), ["a", "c", "b"]);
+  assert.equal(m[0].strong, true, "a learned query makes a weak word match strong");
+  // A learned weak command lifts the section above the files.
+  const rows = L.merge(files, [], "not", { commands: cmds.slice(0, 1), signals: { a: { frecency: 101, term: "prefix" } } });
+  assert.equal(rows[0].rowId, "hdr:commands");
+});
+
 console.log(`listmerge: ${n} tests passed`);

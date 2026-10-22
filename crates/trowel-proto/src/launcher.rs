@@ -39,6 +39,27 @@ pub struct AppRow {
     /// Highlight ranges in `name`, `[start, end)` in chars.
     #[serde(default)]
     pub matched: Vec<[u32; 2]>,
+    /// What was learned about the app for this query; absent when it was never opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned: Option<LearnedSignal>,
+}
+
+/// Raycast-style learning for one item and query (`troweld/src/learn.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LearnedSignal {
+    /// ≥ 1; 1 is "not opened lately". A first open scores 101 and it halves every 10 days.
+    pub frecency: f64,
+    /// `exact` / `prefix` / `overbounds`: the query matches one typed when it was opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term: Option<String>,
+}
+
+/// A command's learned signal in `AppsResult::commands`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommandSignal {
+    pub id: String,
+    #[serde(flatten)]
+    pub signal: LearnedSignal,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,6 +68,9 @@ pub struct AppsResult {
     pub rows: Vec<AppRow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub took_us: Option<u64>,
+    /// The requested commands that have been run before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<CommandSignal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -246,12 +270,26 @@ mod tests {
             launches: 14,
             last_launched: Some(1_791_869_000),
             matched: vec![[0, 4]],
+            learned: None,
         };
         let v = serde_json::to_value(&row).unwrap();
         assert!(v.get("comment").is_none());
+        assert!(v.get("learned").is_none());
         assert!(v.get("icon").is_none());
         assert_eq!(v["matched"], json!([[0, 4]]));
         assert_eq!(serde_json::from_value::<AppRow>(v).unwrap(), row);
+        // A command signal is flat on the wire: {id, frecency, term?}.
+        let c = CommandSignal {
+            id: "clipboard".into(),
+            signal: LearnedSignal {
+                frecency: 101.0,
+                term: Some("exact".into()),
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(&c).unwrap(),
+            json!({"id": "clipboard", "frecency": 101.0, "term": "exact"})
+        );
     }
 
     #[test]

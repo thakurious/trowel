@@ -235,6 +235,17 @@ Omarchy's `launcher.hides` + `services/hidden-entries.sh`, and ranking ported fr
 `uwsm-app -- gtk-launch <id>.desktop`. *Rejected:* the `shell.appLibrary` facade (it needs
 `kind: "menu"`, does JS work in the shell process, and isn't available to `trowel-app` or the CLI).
 
+**Amended (human, 2026-10-22): Raycast-style learning.** "Frecency only as a tiebreak" is replaced
+by Raycast's model, ported from oma-cast (`typecraft-dev/oma-cast` `90efedd`,
+`plugin/core/Frecency.js` and `Ranker.js`): one frecency anchor per item (10-day half-life, +100 per
+open) and the last 20 queries the item was opened with (forgotten 17 days after its last open).
+A query the user opened an app or command with before (exact, or as a prefix) now ranks it above
+better text matches, and an exact name still wins over a remembered prefix. This covers apps and
+built-in commands only (human: not clipboard entries, not files; `Searcher` is untouched). With
+nothing learned the order is still exactly Omarchy's, and the parity gate runs that way. The panel
+also "pops to root" Raycast's way: it reopens where it was left for `ui.pop_to_root_seconds`
+(default 90) after closing, then opens blank.
+
 ## D20. Clipboard: **Trowel's own capture and store**
 
 `troweld` supervises `wl-paste --watch trowel clip-capture`, with metadata in

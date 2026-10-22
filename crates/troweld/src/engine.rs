@@ -97,6 +97,8 @@ struct Engine {
     apps: RwLock<AppIndex>,
     /// `state.sqlite` launches, loaded on the first `apps_query`.
     app_launches: Mutex<Option<std::collections::HashMap<String, Launches>>>,
+    /// `state.sqlite` `learned` (apps and commands), loaded on the first `apps_query`.
+    learned: Mutex<Option<std::collections::HashMap<String, crate::learn::Learned>>>,
     apps_watch: Mutex<Option<notify::RecommendedWatcher>>,
     clip_watch: Arc<Watcher>,
     clip_subscribers: Arc<Mutex<Vec<Arc<Outbox>>>>,
@@ -235,6 +237,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         apps: RwLock::new(AppIndex::scan(&apps_env).0),
         apps_env,
         app_launches: Mutex::new(None),
+        learned: Mutex::new(None),
         apps_watch: Mutex::new(None),
         calc: Calculator::default(),
         state_dir: opts.state_dir.unwrap_or_else(state::default_state_dir),
@@ -813,14 +816,22 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             }
             Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err.to_string()),
         },
-        Op::AppsQuery { text, limit, gen } => {
+        Op::AppsQuery {
+            text,
+            limit,
+            gen,
+            commands,
+        } => {
             let started = Instant::now();
             let launches = engine.app_launches();
+            let learned = engine.learned();
+            let now = unix_now();
             let rows = engine.apps.read().expect("apps").query(
                 &text,
                 limit.min(200) as usize,
                 &launches,
-                unix_now(),
+                &learned,
+                now,
             );
             reply_ok(
                 conn,
@@ -829,10 +840,19 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
                     gen,
                     rows,
                     took_us: Some(started.elapsed().as_micros() as u64),
+                    commands: crate::learn::command_signals(&commands, &learned, &text, now),
                 }),
             );
         }
-        Op::AppLaunch { app_id, action } => {
+        Op::CommandRun { command_id, query } => {
+            engine.learn(&format!("cmd:{command_id}"), query.as_deref().unwrap_or(""));
+            reply_ok(conn, id, json!({}));
+        }
+        Op::AppLaunch {
+            app_id,
+            action,
+            query,
+        } => {
             let argv = {
                 let apps = engine.apps.read().expect("apps");
                 let Some(entry) = apps.get(&app_id) else {
@@ -857,6 +877,7 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
                 reply_error(conn, Some(id), ErrorCode::Io, err.to_string());
                 return;
             }
+            engine.learn(&format!("app:{app_id}"), query.as_deref().unwrap_or(""));
             match engine.with_state(|s| s.record_launch(&app_id, unix_now())) {
                 Ok(row) => {
                     if let Some(cache) = engine.app_launches.lock().expect("launches").as_mut() {
@@ -1711,7 +1732,7 @@ fn writer_loop(mut stream: UnixStream, out: Arc<Outbox>) {
     }
 }
 
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
@@ -1764,6 +1785,33 @@ impl Engine {
             *cache = Some(loaded);
         }
         cache.clone().unwrap_or_default()
+    }
+
+    /// Learned frecency and search terms, read from `state.sqlite` once (like `app_launches`).
+    fn learned(&self) -> std::collections::HashMap<String, crate::learn::Learned> {
+        let mut cache = self.learned.lock().expect("learned");
+        if cache.is_none() {
+            let exists = self.state_dir.join(crate::state::STATE_FILE).is_file();
+            let loaded = if exists {
+                self.with_state(|s| s.learned()).unwrap_or_default()
+            } else {
+                Default::default()
+            };
+            *cache = Some(loaded);
+        }
+        cache.clone().unwrap_or_default()
+    }
+
+    /// Records one pick of `item` with `query` (`app_launch`, `command_run`).
+    fn learn(&self, item: &str, query: &str) {
+        match self.with_state(|s| s.record_learned(item, query, unix_now())) {
+            Ok(row) => {
+                if let Some(cache) = self.learned.lock().expect("learned").as_mut() {
+                    cache.insert(item.to_string(), row);
+                }
+            }
+            Err(err) => eprintln!("troweld: learning: {err}"),
+        }
     }
 
     fn state_exists(&self) -> bool {

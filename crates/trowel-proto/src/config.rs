@@ -26,6 +26,14 @@ pub struct Config {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UiConfig {
     pub reduce_motion: bool,
+    /// The panel reopens where it was left within this many seconds of closing, then blank
+    /// (Raycast's "pop to root"; 0 = always blank). Absent in older files, so it defaults.
+    #[serde(default = "default_pop_to_root_seconds")]
+    pub pop_to_root_seconds: u32,
+}
+
+fn default_pop_to_root_seconds() -> u32 {
+    90
 }
 
 /// Clipboard history (D20, `LAUNCHER-PLAN.md` L3).
@@ -85,6 +93,7 @@ impl Default for Config {
             code_quiet_seconds: 2,
             ui: UiConfig {
                 reduce_motion: false,
+                pop_to_root_seconds: default_pop_to_root_seconds(),
             },
             clipboard: ClipboardConfig::default(),
         }

@@ -340,7 +340,8 @@ depend on an index; the real daemon's protocol behavior is tested in `daemon.rs`
   `allTermsMatch`), citing `/usr/share/omarchy/shell/services/AppSearch.js:<line>`. Frecency is
   applied **only as a tiebreak inside the same score band** (for example, two prefix matches) and
   for empty-query order. A typed exact prefix always wins, which keeps Omarchy muscle memory.
-  Frecency score: `Σ launches · 0.5^(age_days/14)`.
+  Frecency score: `Σ launches · 0.5^(age_days/14)`. *(Superseded 2026-10-22 by "Learning and pop to
+  root" in L4: D19 amended.)*
 - `apps/icons.rs`: the same scan as `AppLibrary.iconIndexScanCommand` (apps/devices, SVG before
   PNG, pixmaps), done once in Rust and refreshed on icon-dir inotify with a 750 ms debounce.
   Resolve the current GTK icon theme first if `gsettings get org.gnome.desktop.interface icon-theme`
@@ -673,6 +674,26 @@ keywords, glyph); a command matches on a prefix of its name, a name word or a ke
 Enter runs it inside the panel. Clipboard History is the first; the L6 "Omarchy commands" extra
 adds entries here. Inside a command the field shows a crumb pill and `Esc` / `Backspace` on an empty
 field return to the search (query and selection restored).
+
+**Learning and pop to root (human, 2026-10-22; D19 amended).** Raycast-style, ported from oma-cast
+(`typecraft-dev/oma-cast` `90efedd`):
+- `troweld/src/learn.rs` ports `Frecency.js` (`score`, `visit`, `recordVisit`: λ = ln 2/10 per day,
+  +100 per open, 20 terms, 17-day term window) and `Ranker.js` `searchTermMatch` (exact, prefix,
+  overbounds 1–3). `state.sqlite` v4 adds `learned(item, anchor, opened_at, terms)`, keyed
+  `app:<id>` / `cmd:<id>`, seeded from `apps_launches` (score at `last` = 1 + 100·the old sum).
+- `apps/rank.rs` sorts with the parts of `compareMatched` that apply to apps: an exact name, then
+  remembered terms (exact, prefix, 3 extra characters), each tied by frecency, then Omarchy's order
+  with frecency in the name-prefix tier. No signals = Omarchy's order (`scripts/apps-parity.sh`).
+- Protocol: `app_launch.query`, `command_run`, `apps_query.commands` and `AppRow.learned` (PROTOCOL
+  §4). `ListMerge.js` orders the commands by their signals, treats a learned query as a strong match,
+  and when both launcher sections lead, puts the one learned for the query (then the more frecent)
+  first. So `c⏎` opens Chrome once the user keeps picking Chrome for `c`.
+- Pop to root: `ui.pop_to_root_seconds` (default 90; Raycast's choices 0/5/15/30/60/90/120/180 in
+  Settings → Launcher & Clipboard). Reopening within it keeps the view (search or clipboard), the
+  query and the selection, with fresh results; after it the panel opens blank on the All tab.
+- Tests: `learn.rs` (oma-cast's frecency cases), `rank.rs`, `state.rs` (v4 seed, round trip),
+  `tests/daemon.rs` (learned order end to end), `v2-apps.jsonl`, `listmerge-test.mjs`, and three
+  harness checks (`ui/harness/check.py`: kept within 90 s, blank after).
 
 ### L5. Omarchy integration and hardening (2–3 days)
 

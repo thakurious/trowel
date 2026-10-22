@@ -86,6 +86,8 @@ QtObject {
 
   // Launcher (v2). `apps` belong to `appsText`; the merged list shows them with the file groups.
   property var apps: []
+  // Learned signals for the built-in commands, from the same `apps_query` reply (id → {frecency, term}).
+  property var commandSignals: ({})
   property string appsText: ""
   // The query the launcher sources (commands, apps) answer; "" when they are off (a kind tab,
   // code search). Commands are local, so they show on the keystroke.
@@ -164,13 +166,17 @@ QtObject {
     return sendRouted("apps_query", {
       text: String(text),
       limit: 8,
-      gen: root.appsGen
+      gen: root.appsGen,
+      commands: ListMerge.COMMANDS.map(function (c) {
+        return c.id
+      })
     })
   }
 
   function clearApps() {
     root.appsGen += 1
     root.apps = []
+    root.commandSignals = ({})
     root.appsText = ""
     root.launcherQuery = ""
   }
@@ -199,13 +205,25 @@ QtObject {
     })
   }
 
-  function appLaunch(appId, action) {
+  // `query` is what was typed when the app was picked: the daemon learns it (D19 amended).
+  function appLaunch(appId, action, query) {
     var req = {
       app_id: appId
     }
     if (action)
       req.action = action
+    if (query)
+      req.query = String(query)
     return sendRouted("app_launch", req)
+  }
+
+  function commandRun(commandId, query) {
+    var req = {
+      command_id: commandId
+    }
+    if (query)
+      req.query = String(query)
+    return sendRouted("command_run", req)
   }
 
   function appHide(appId, hidden) {
@@ -303,6 +321,11 @@ QtObject {
       if (msg.gen < root.appsGen)
         return true
       root.apps = msg.rows || []
+      var sigs = {}
+      var cs = msg.commands || []
+      for (var i = 0; i < cs.length; i++)
+        sigs[cs[i].id] = cs[i]
+      root.commandSignals = sigs
       syncModel()
       root.appsArrived()
     } else if (op === "calc") {
@@ -515,7 +538,10 @@ QtObject {
   // File groups, then the launcher sources merged in (ListMerge.js).
   function flatten() {
     var q = root.launcherQuery
-    return ListMerge.merge(flattenFiles(), root.appsText === q ? root.apps : [], q)
+    var current = root.appsText === q
+    return ListMerge.merge(flattenFiles(), current ? root.apps : [], q, {
+      signals: current ? root.commandSignals : {}
+    })
   }
 
   function flattenFiles() {

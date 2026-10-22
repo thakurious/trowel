@@ -326,6 +326,40 @@ Item {
         spacing: 8
 
         Text {
+          text: "Remember the last search"
+          color: Theme.foreground
+          font.pixelSize: Theme.rowTitleSize
+          font.weight: Font.DemiBold
+        }
+        Text {
+          width: parent.width
+          wrapMode: Text.Wrap
+          text: "Reopening the panel this soon after closing it brings back the view, the search and the selection. After that it opens blank."
+          color: Theme.secondary
+          font.pixelSize: Theme.captionSize
+        }
+        Flow {
+          id: popFlow
+          readonly property int current: (root.client.config && root.client.config.ui && root.client.config.ui.pop_to_root_seconds !== undefined) ? root.client.config.ui.pop_to_root_seconds : 90
+          width: parent.width
+          spacing: 6
+          Repeater {
+            // Raycast's choices.
+            model: [0, 5, 15, 30, 60, 90, 120, 180]
+            delegate: Chip {
+              id: popChip
+              required property var modelData
+              label: (popChip.modelData === popFlow.current ? "● " : "") + (popChip.modelData === 0 ? "Never" : popChip.modelData + " s")
+              onActivated: root.client.configSet({
+                  "ui": {
+                    "pop_to_root_seconds": popChip.modelData
+                  }
+                })
+            }
+          }
+        }
+
+        Text {
           text: "Clipboard history"
           color: Theme.foreground
           font.pixelSize: Theme.rowTitleSize

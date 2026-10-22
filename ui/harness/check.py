@@ -27,6 +27,12 @@ steps = [
     {"do": "back", "wait": 600}, {"do": "log", "what": "cmd-back"},
     {"do": "type", "text": "notes", "wait": 700}, {"do": "log", "what": "drawn-files"},
     {"do": "command", "id": "clipboard", "wait": 800}, {"do": "log", "what": "drawn-clips"},
+    # Pop to root (90 s by default): reopening soon keeps the view, query and selection.
+    {"do": "down", "wait": 200}, {"do": "down", "wait": 300}, {"do": "log", "what": "pop-clip-before"},
+    {"do": "close", "wait": 300}, {"do": "open", "wait": 700}, {"do": "log", "what": "pop-clip-kept"},
+    {"do": "back", "wait": 600}, {"do": "type", "text": "fire", "wait": 700},
+    {"do": "close", "wait": 300}, {"do": "open", "wait": 700}, {"do": "log", "what": "pop-search-kept"},
+    {"do": "close", "wait": 300}, {"do": "age", "seconds": 91}, {"do": "open", "wait": 700}, {"do": "log", "what": "popped"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -54,6 +60,9 @@ checks = [
     ("Back returns to the search, query and selection restored", lambda s: s["cmd-back"]["view"] == "search" and s["cmd-back"]["query"] == "clip" and s["cmd-back"]["selection"] == "cmd:clipboard"),
     ("the search list draws file rows", lambda s: "notes\ufffd.txt" in s["drawn-files"]["drawn"]),
     ("after the switch the clipboard list draws clips, never files", lambda s: s["drawn-clips"]["drawn"][:2] == ["Screenshot 1920×1200", "Refund policy: items may be returned within 30 days"] and not any("notes" in d for d in s["drawn-clips"]["drawn"])),
+    ("reopened within 90 s: the clipboard view, its selection kept", lambda s: s["pop-clip-kept"]["view"] == "clipboard" and s["pop-clip-kept"]["selection"] == s["pop-clip-before"]["selection"] and s["pop-clip-before"]["selection"] != "clip:808"),
+    ("reopened within 90 s: the search and its selection kept", lambda s: s["pop-search-kept"]["view"] == "search" and s["pop-search-kept"]["query"] == "fire" and s["pop-search-kept"]["selection"] == "app:firefox"),
+    ("reopened after 90 s: a blank search", lambda s: s["popped"]["view"] == "search" and s["popped"]["query"] == "" and s["popped"]["rows"] == []),
     ("the summon payload opens the clipboard view", lambda s: s["bar-summon"]["view"] == "clipboard" and s["bar-summon"]["selection"] == "clip:808"),
 ]
 failed = 0

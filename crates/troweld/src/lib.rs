@@ -13,6 +13,7 @@ pub mod engine;
 pub mod fs_kind;
 pub mod helper;
 pub mod hotkey;
+pub mod learn;
 pub mod lock;
 pub mod logind;
 pub mod mock;

@@ -2,7 +2,7 @@
 //! the UI track builds against this before L2/L3 land. Ranking here is a stand-in, not the
 //! `AppSearch.js` port (that is `apps/rank.rs`, L2).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 
 use serde::Deserialize;
@@ -11,6 +11,8 @@ use trowel_proto::{
     AppRow, AppsResult, CalcHistoryRow, CalcReply, CalcResult, ClipContent, ClipImage,
     ClipQueryResult, ClipRow, ErrorCode, Op, PathValue,
 };
+
+use crate::learn;
 
 pub const DEFAULT_LAUNCHER_FIXTURE: &str = include_str!("fixture_launcher.json");
 
@@ -54,6 +56,8 @@ pub struct LauncherMock {
     calcs: Vec<CalcResult>,
     history: Mutex<Vec<CalcHistoryRow>>,
     paused_until: Mutex<i64>,
+    /// Learning is real (`crate::learn`) but in memory; the stand-in ranking ignores it.
+    learned: Mutex<HashMap<String, learn::Learned>>,
 }
 
 pub type OpResult = Result<Value, (ErrorCode, String)>;
@@ -68,20 +72,56 @@ impl LauncherMock {
             calcs: fixture.calcs,
             history: Mutex::new(fixture.calc_history),
             paused_until: Mutex::new(0),
+            learned: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn learn(&self, item: &str, query: Option<&str>) {
+        let mut learned = self.learned.lock().expect("learned");
+        let next = learn::record(
+            learned.get(item),
+            crate::engine::unix_now(),
+            query.unwrap_or(""),
+        );
+        learned.insert(item.to_string(), next);
     }
 
     /// Handles one v2 op. Callers route only `Op::is_v2()` here.
     pub fn handle(&self, op: Op) -> OpResult {
         match op {
-            Op::AppsQuery { text, limit, gen } => Ok(json!(self.apps_query(&text, limit, gen))),
-            Op::AppLaunch { app_id, action } => {
+            Op::AppsQuery {
+                text,
+                limit,
+                gen,
+                commands,
+            } => {
+                let mut out = self.apps_query(&text, limit, gen);
+                let learned = self.learned.lock().expect("learned");
+                let now = crate::engine::unix_now();
+                for row in &mut out.rows {
+                    row.learned =
+                        learn::Signal::of(learned.get(&format!("app:{}", row.id)), &text, now)
+                            .to_wire();
+                }
+                out.commands = learn::command_signals(&commands, &learned, &text, now);
+                Ok(json!(out))
+            }
+            Op::AppLaunch {
+                app_id,
+                action,
+                query,
+            } => {
                 let app = self.app(&app_id)?;
                 if let Some(action) = action {
                     if !app.actions.iter().any(|a| a.id == action) {
                         return Err((ErrorCode::NotFound, format!("no action {action}")));
                     }
                 }
+                self.learn(&format!("app:{app_id}"), query.as_deref());
+                Ok(json!({}))
+            }
+            Op::CommandRun { command_id, query } => {
+                self.learn(&format!("cmd:{command_id}"), query.as_deref());
                 Ok(json!({}))
             }
             Op::AppHide { app_id, hidden } => {
@@ -266,6 +306,7 @@ impl LauncherMock {
             gen,
             rows,
             took_us: None,
+            commands: Vec::new(),
         }
     }
 
@@ -355,6 +396,7 @@ mod tests {
                 text: "fire".into(),
                 limit: 8,
                 gen: 1,
+                commands: vec![],
             },
         );
         assert_eq!(v["rows"][0]["id"], "firefox");
@@ -365,11 +407,54 @@ mod tests {
                 text: String::new(),
                 limit: 3,
                 gen: 2,
+                commands: vec![],
             },
         );
         assert_eq!(v["gen"], 2);
         assert_eq!(v["rows"][0]["id"], "com.mitchellh.ghostty", "most launches");
         assert_eq!(v["rows"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn launches_and_commands_are_learned() {
+        let m = mock();
+        ok(
+            &m,
+            Op::AppLaunch {
+                app_id: "firefox".into(),
+                action: None,
+                query: Some("fi".into()),
+            },
+        );
+        ok(
+            &m,
+            Op::CommandRun {
+                command_id: "clipboard".into(),
+                query: Some("cl".into()),
+            },
+        );
+        let v = ok(
+            &m,
+            Op::AppsQuery {
+                text: "fi".into(),
+                limit: 8,
+                gen: 1,
+                commands: vec!["clipboard".into(), "never-run".into()],
+            },
+        );
+        let ff = v["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "firefox")
+            .unwrap();
+        assert_eq!(ff["learned"]["term"], "exact", "{v}");
+        assert_eq!(v["commands"].as_array().unwrap().len(), 1, "{v}");
+        assert_eq!(v["commands"][0]["id"], "clipboard");
+        assert!(
+            v["commands"][0].get("term").is_none(),
+            "\"fi\" isn't a clipboard term"
+        );
     }
 
     #[test]
@@ -388,6 +473,7 @@ mod tests {
                 text: "firefox".into(),
                 limit: 8,
                 gen: 1,
+                commands: vec![],
             },
         );
         assert!(v["rows"].as_array().unwrap().is_empty());

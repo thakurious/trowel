@@ -144,8 +144,9 @@ request `id` (the op's params are flattened into the envelope).
 
 | op | params | result |
 |---|---|---|
-| `apps_query` | `{text="", limit=8, gen}` | `{gen, rows:[AppRow], took_us?}`. An empty `text` returns frecency order. Supersedes the connection's older `apps_query`. |
-| `app_launch` | `{app_id, action?}` | `{}`. Runs `uwsm-app -- gtk-launch <id>.desktop` (actions: their `Exec`, split like Quickshell) and records a launch for frecency. `not_found` for an unknown app or action, `io` when the launcher can't start. |
+| `apps_query` | `{text="", limit=8, gen, commands?:[id]}` | `{gen, rows:[AppRow], took_us?, commands?:[{id, frecency, term?}]}`. An empty `text` returns frecency order. Rows are ranked with what was learned (D19 as amended): an app opened before with this query (`term` `exact`/`prefix`) comes first. `commands` echoes the requested built-in command ids that have been run, with the same signal for `text`, so the UI can rank its command section. Supersedes the connection's older `apps_query`. |
+| `app_launch` | `{app_id, action?, query?}` | `{}`. Runs `uwsm-app -- gtk-launch <id>.desktop` (actions: their `Exec`, split like Quickshell), records a launch, and learns `query` (what was typed when the app was picked) as a search term. `not_found` for an unknown app or action, `io` when the launcher can't start. |
+| `command_run` | `{command_id, query?}` | `{}`. A built-in command ran from the search: learned like an app launch (`cmd:<id>`). Any id is accepted. |
 | `app_hide` | `{app_id, hidden}` | `{}`. Writes `~/.config/trowel/launcher.hides`. |
 | `clip_query` | `{text="", kinds?:[ClipKind], limit=50, offset=0, gen}` | `{gen, rows:[ClipRow], total}`, pinned first, then most recently copied or pasted. `text`: every word must match, as a case-insensitive substring of the preview or the first 2 KiB of the content (`creation` finds `AccountCreation`, `#F2A`, `://`), or as a word prefix anywhere (FTS, the index's tokenizer). An unknown kind is `bad_request`. `limit` ≤ 500. |
 | `clip_get` | `{clip_id}` | `{row, text?, html?, files?:[path], image?:{file,w,h}, truncated?}`. Text and HTML are capped at 256 KiB. `not_found` for an unknown id. |
@@ -171,7 +172,9 @@ Optional fields are **absent** when empty, never `null`. `ClipKind` is the close
  "icon":"/usr/share/icons/hicolor/scalable/apps/firefox.svg", "icon_name":"firefox",
  "terminal":false, "actions":[{"id":"new-private-window","name":"New Private Window"}],
  "source":"/usr/share/applications/firefox.desktop",
- "launches":14, "last_launched":1791869000, "matched":[[0,4]]}   // char ranges in name, [start,end)
+ "launches":14, "last_launched":1791869000, "matched":[[0,4]],   // char ranges in name, [start,end)
+ "learned":{"frecency":101.0, "term":"exact"}}  // absent if never opened; frecency ≥ 1 (a first
+   // open scores 101, halving every 10 days, +100 per open); term: exact | prefix | overbounds
 
 // ClipRow
 {"id":812, "kind":"text", "preview":"firewall rules for…", "mimes":["text/html","text/plain"],
@@ -223,6 +226,7 @@ code_editor = ""          # "" = auto/xdg-open
 code_quiet_seconds = 2
 [ui]
 reduce_motion = false     # also follows the system preference
+pop_to_root_seconds = 90  # the panel reopens where it was left this long after closing; 0 = blank
 [clipboard]               # Phase 8 L3; absent in older files = these defaults
 capture = true            # run the wl-paste --watch capture
 max_entries = 1000        # pinned entries are never evicted

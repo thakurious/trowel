@@ -36,6 +36,10 @@ Item {
   // field) goes back to that search, as in Raycast.
   property bool clipFromSearch: false
   property string savedQuery: ""
+  // Pop to root (Raycast, oma-cast `LauncherWindow.qml`): reopening within this many seconds of
+  // closing keeps the view, query and selection; after it, the panel opens blank. 0 = always blank.
+  readonly property int popToRootSeconds: (client.config && client.config.ui && client.config.ui.pop_to_root_seconds !== undefined) ? client.config.ui.pop_to_root_seconds : 90
+  property real closedAt: 0
   property real now: Date.now() / 1000
   // Launcher sources join the All tab only; a kind tab or code search is files alone.
   readonly property bool launcherOn: root.view === "search" && tabs.current === "all" && !root.codeMode
@@ -219,7 +223,7 @@ Item {
       if (id === "open")
         openSelected()
       else if (id.indexOf("action:") === 0) {
-        client.appLaunch(r.appId, id.slice(7))
+        client.appLaunch(r.appId, id.slice(7), client.launcherQuery)
         dismiss()
       } else if (id === "hide") {
         client.appHide(r.appId, true)
@@ -261,18 +265,31 @@ Item {
       query.forceActiveFocus()
   }
 
+  // Whether the last session is still remembered (`popToRootSeconds`).
+  function remembered() {
+    return root.closedAt > 0 && root.popToRootSeconds > 0 && Date.now() / 1000 - root.closedAt < root.popToRootSeconds
+  }
+
   function open(payloadJson) {
+    var keep = root.remembered()
     // The bar's "Clipboard history" summons with {"view": "clipboard"}.
     try {
       if (JSON.parse(payloadJson || "{}").view === "clipboard") {
-        openClipboard()
+        if (keep && root.view === "clipboard")
+          reopen()
+        else
+          openClipboard()
         return
       }
     } catch (e) {}
+    if (keep) {
+      reopen()
+      return
+    }
     unmapTimer.stop()
     actions.visible = false
-    var wasClipboard = root.view === "clipboard"
     root.view = "search"
+    root.clipFromSearch = false
     root.mapped = true
     root.opened = true
     root.navigated = false
@@ -280,10 +297,27 @@ Item {
     if (root.needsOnboarding)
       return
     client.panelOpened()
-    if (wasClipboard) {
-      query.text = ""
-      root.onQueryEdited()
-    }
+    // Popped to root: a blank search on the All tab.
+    tabs.current = "all"
+    query.text = ""
+    root.onQueryEdited()
+    Qt.callLater(function () {
+      query.forceActiveFocus()
+    })
+  }
+
+  // Back where the user left it: same view, query and selection, with fresh results.
+  function reopen() {
+    unmapTimer.stop()
+    actions.visible = false
+    root.mapped = true
+    root.opened = true
+    root.now = Date.now() / 1000
+    if (root.needsOnboarding)
+      return
+    client.panelOpened()
+    if (root.view === "clipboard")
+      client.clipRefresh()
     Qt.callLater(function () {
       query.forceActiveFocus()
       query.selectAll()
@@ -320,13 +354,24 @@ Item {
     })
   }
 
+  // Stamps the close for pop to root and re-reads the config, so a timeout changed in Settings
+  // (another process) holds from the next open.
+  function stampClose() {
+    if (!root.opened)
+      return
+    root.closedAt = Date.now() / 1000
+    client.configGet()
+  }
+
   function close() {
+    root.stampClose()
     root.opened = false
     unmapTimer.restart()
   }
 
   function dismiss() {
     actions.visible = false
+    root.stampClose()
     root.opened = false
     unmapTimer.restart()
     if (root.shell && typeof root.shell.hide === "function")
@@ -530,11 +575,12 @@ Item {
       return
     }
     if (t === "app") {
-      client.appLaunch(root.selectedRow.appId)
+      client.appLaunch(root.selectedRow.appId, "", client.launcherQuery)
       dismiss()
       return
     }
     if (t === "command") {
+      client.commandRun(root.selectedRow.commandId, client.launcherQuery)
       runCommand(root.selectedRow.commandId)
       return
     }
@@ -644,7 +690,7 @@ Item {
       if (root.opened && root.view === "clipboard")
         root.dismiss()
       else
-        root.openClipboard()
+        root.open('{"view": "clipboard"}')
     }
     function apps(): void {
       root.open("{}")

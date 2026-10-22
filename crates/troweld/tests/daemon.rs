@@ -444,6 +444,39 @@ fn apps_query_launch_hide_and_install() {
     assert_eq!(c["rows"][1]["launches"], 2);
     assert_eq!(ids(&query(&mut stream, &mut reader, 8, ""))[0], "calc");
 
+    // Learning (D19 amended): Chromium picked once with "c" now leads "c", above Calculator's
+    // higher frecency, and the reply says why. Other queries keep the text order.
+    send(
+        &mut stream,
+        &json!({"id":80,"op":"app_launch","app_id":"chromium","query":"C "}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let c = query(&mut stream, &mut reader, 81, "c");
+    assert_eq!(ids(&c), ["chromium", "calc"], "{c}");
+    assert_eq!(c["rows"][0]["learned"]["term"], "exact", "{c}");
+    assert!(c["rows"][1]["learned"].get("term").is_none(), "{c}");
+    assert_eq!(ids(&query(&mut stream, &mut reader, 82, "ca")), ["calc"]);
+    // Commands learn through command_run and come back with apps_query.
+    send(
+        &mut stream,
+        &json!({"id":83,"op":"command_run","command_id":"clipboard","query":"cl"}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    send(
+        &mut stream,
+        &json!({"id":84,"op":"apps_query","text":"cl","gen":84,"commands":["clipboard","other"]}),
+    );
+    let r = recv(&mut reader);
+    assert_eq!(
+        r["commands"],
+        json!([{"id":"clipboard","frecency":r["commands"][0]["frecency"],"term":"exact"}]),
+        "{r}"
+    );
+    assert!(
+        r["commands"][0]["frecency"].as_f64().unwrap() > 100.0,
+        "{r}"
+    );
+
     send(
         &mut stream,
         &json!({"id":9,"op":"app_hide","app_id":"calc","hidden":true}),

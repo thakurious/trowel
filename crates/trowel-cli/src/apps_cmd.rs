@@ -39,10 +39,10 @@ pub fn apps(args: AppsArgs) -> i32 {
         index.set_icons(IconIndex::build());
         icons_ms = Some(started.elapsed().as_secs_f64() * 1000.0);
     }
-    // The CLI ranks without frecency: launch counts live in the daemon's state.sqlite.
+    // The CLI ranks without learning: launches and search terms live in the daemon's state.sqlite.
     let query = args.query.unwrap_or_default();
     let started = Instant::now();
-    let rows = index.query(&query, args.limit, &HashMap::new(), 0);
+    let rows = index.query(&query, args.limit, &HashMap::new(), &HashMap::new(), 0);
     let took_us = started.elapsed().as_micros() as u64;
     if args.json {
         println!(
@@ -107,7 +107,7 @@ fn rank_queries(entries: Option<&Path>, queries: &Path) -> i32 {
                 .unwrap_or_default(),
         })
         .collect();
-    let zero = vec![0.0; rankables.len()];
+    let zero = vec![troweld::learn::Signal::NONE; rankables.len()];
     let mut out = BTreeMap::new();
     for q in fs::read_to_string(queries).unwrap_or_default().lines() {
         let ids: Vec<&str> = rank::sorted(&rankables, q, &zero)
