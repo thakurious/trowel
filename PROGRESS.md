@@ -8,6 +8,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Live (deployed 2026-10-16 12:54, human's request):** `troweld` (L4 build, protocol v2, clipboard capture on) and the plugin panel (`~/.local/share/trowel/omarchy-plugin/{Panel.qml,manifest.json}` copied; `Trowel/` links to this repo's `ui/qml/Trowel`). The bar widget is removed (D25). Verified live: `hello` capabilities incl. apps/clipboard/calc; `apps_query chro` 2.7 ms → Chromium, Google Chrome; `calc 5 ft to cm` → 152.4 cm; clipboard doctor row OK (watcher running); panel opens on `omarchy-shell trowel open` and closes. Earlier, at 10:17 the old pre-L1 daemon was killed by the systemd watchdog (30 s, just after resume) and restarted on the L3 build, so clipboard capture has run since then.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
 - **Deployed 2026-10-22 12:47 (human's request):** `troweld`/`trowel` release builds of `9793bad` in `~/.local/bin`, plugin `Panel.qml` copied, troweld and omarchy-shell restarted. `state.sqlite` migrated to v4 (`learned`: 2 apps seeded). Live: `apps_query` accepts `commands`, `config_get` → `ui.pop_to_root_seconds: 90`, `omarchy-shell trowel debugState` answers. Backups: `~/.local/bin/{troweld,trowel}.bak.trowel-20261022-124733`, `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261022-124733`, `~/.local/share/trowel/state.sqlite.bak.trowel-20261022-124733` (revert: copy back, restart both). PR #10 is open with CI green; the merge to `main` was left to the human (the agent's merge was blocked by a permission rule).
+- **2026-10-23:** `Esc` leaves the Code tab (session log); plugin `Panel.qml` redeployed, backup `Panel.qml.bak.trowel-20261023-174350`.
 - **Next step:** merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
 
 ### Phase 8 map
@@ -172,6 +173,21 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-23 — Esc leaves the Code tab
+
+- **Bug (human's report):** after `code:` (which makes the Code tab sticky), `Esc` cleared the field but stayed on Code, and the next `Esc` closed the panel still on Code, so a reopen within the pop-to-root window (90 s) came back on Code. No key left it.
+- **Fix:** `Esc` now steps out one level at a time (`Panel.qml` `escapeStep`): field → All tab (from any kind tab or Code) → the search a command came from → close. `Backspace` on an empty field leaves Code as well. Clicking outside still keeps the tab for pop to root, which is the point of it. UI-DESIGN §3.4 updated. (`escape` is a reserved name in QML, hence `escapeStep`.)
+- Gates (2026-10-23):
+  ```
+  $ python3 -I ui/harness/check.py   # 25 ok, 0 FAIL (exit 1: the pre-existing stub TypeErrors), incl.
+  ok   'code:' picks the Code tab
+  ok   Esc clears the query first, staying on Code
+  ok   Esc again returns to All
+  ok   Esc closes; reopening soon is All, not Code
+  $ /usr/lib/qt6/bin/qmllint ui/omarchy-plugin/Panel.qml | wc -l   # 102, same as before the change
+  ```
+- **Deployed 2026-10-23 17:43:** plugin `Panel.qml` copied, `omarchy restart shell`, `debugState` answers. Backup `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261023-174350`. Not yet tried by keyboard live.
 
 ### 2026-10-22 — HTML paste fix; Raycast-style learning and pop to root
 

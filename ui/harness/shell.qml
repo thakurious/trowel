@@ -54,6 +54,8 @@ ShellRoot {
         panel.openSelected()
       else if (s.do === "back")
         panel.goBack()
+      else if (s.do === "esc")
+        panel.escapeStep()
       else if (s.do === "actions")
         panel.harnessActions()
       else if (s.do === "log")

@@ -25,7 +25,7 @@ hooks = """
   function harnessState() {
     return JSON.stringify({view: root.view, phase: root.phase, selection: root.selection, type: root.selectedType,
       rows: root.shownRows().map(function (r) { return r.rowId }), calc: client.calcResult ? client.calcResult.display : null,
-      caps: client.capabilities, err: client.lastError, grid: root.gridMode, fromSearch: root.clipFromSearch, query: query.text, pop: root.popToRootSeconds, closedAgo: root.closedAt ? Date.now() / 1000 - root.closedAt : -1,
+      caps: client.capabilities, err: client.lastError, grid: root.gridMode, fromSearch: root.clipFromSearch, query: query.text, tab: tabs.current, codeMode: root.codeMode, pop: root.popToRootSeconds, closedAgo: root.closedAt ? Date.now() / 1000 - root.closedAt : -1,
       drawn: JSON.parse(ipc.debugState()).delegates.map(function (d) { return d.replace(/^\d+:/, "") }),
       actions: actions.visible ? actions.shown.map(function (a) { return a.id }) : []})
   }

@@ -33,6 +33,11 @@ steps = [
     {"do": "back", "wait": 600}, {"do": "type", "text": "fire", "wait": 700},
     {"do": "close", "wait": 300}, {"do": "open", "wait": 700}, {"do": "log", "what": "pop-search-kept"},
     {"do": "close", "wait": 300}, {"do": "age", "seconds": 91}, {"do": "open", "wait": 700}, {"do": "log", "what": "popped"},
+    # Escape leaves a "code:" search: the query, then the Code tab, then the panel.
+    {"do": "type", "text": "code: parse", "wait": 600}, {"do": "log", "what": "code-on"},
+    {"do": "esc", "wait": 300}, {"do": "log", "what": "code-esc1"},
+    {"do": "esc", "wait": 300}, {"do": "log", "what": "code-esc2"},
+    {"do": "esc", "wait": 300}, {"do": "open", "wait": 600}, {"do": "log", "what": "code-reopen"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -62,6 +67,10 @@ checks = [
     ("after the switch the clipboard list draws clips, never files", lambda s: s["drawn-clips"]["drawn"][:2] == ["Screenshot 1920×1200", "Refund policy: items may be returned within 30 days"] and not any("notes" in d for d in s["drawn-clips"]["drawn"])),
     ("reopened within 90 s: the clipboard view, its selection kept", lambda s: s["pop-clip-kept"]["view"] == "clipboard" and s["pop-clip-kept"]["selection"] == s["pop-clip-before"]["selection"] and s["pop-clip-before"]["selection"] != "clip:808"),
     ("reopened within 90 s: the search and its selection kept", lambda s: s["pop-search-kept"]["view"] == "search" and s["pop-search-kept"]["query"] == "fire" and s["pop-search-kept"]["selection"] == "app:firefox"),
+    ("'code:' picks the Code tab", lambda s: s["code-on"]["tab"] == "code" and s["code-on"]["codeMode"] is True),
+    ("Esc clears the query first, staying on Code", lambda s: s["code-esc1"]["query"] == "" and s["code-esc1"]["tab"] == "code"),
+    ("Esc again returns to All", lambda s: s["code-esc2"]["tab"] == "all" and s["code-esc2"]["codeMode"] is False),
+    ("Esc closes; reopening soon is All, not Code", lambda s: s["code-reopen"]["tab"] == "all" and s["code-reopen"]["codeMode"] is False),
     ("reopened after 90 s: a blank search", lambda s: s["popped"]["view"] == "search" and s["popped"]["query"] == "" and s["popped"]["rows"] == []),
     ("the summon payload opens the clipboard view", lambda s: s["bar-summon"]["view"] == "clipboard" and s["bar-summon"]["selection"] == "clip:808"),
 ]

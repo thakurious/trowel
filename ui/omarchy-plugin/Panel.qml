@@ -449,6 +449,24 @@ Item {
     return true
   }
 
+  // Back to the All tab from a kind tab or code search (which "code:" makes sticky).
+  function leaveTab() {
+    if (root.view !== "search" || tabs.current === "all")
+      return false
+    tabs.current = "all"
+    root.onTabPicked("all")
+    return true
+  }
+
+  // Escape steps out one level at a time: the query, then the tab, then the clipboard view
+  // opened from search, then the panel. Closing never leaves a tab to come back to.
+  function escapeStep() {
+    if (query.text.length > 0)
+      query.text = ""
+    else if (!root.leaveTab() && !root.goBack())
+      root.dismiss()
+  }
+
   // Apps and the calculator for the same text, each with its own gen (Client.qml).
   function askLauncher(text) {
     if (!root.launcherOn || !text.length) {
@@ -1001,12 +1019,9 @@ Item {
               if (query.composing() && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Up || event.key === Qt.Key_Down || event.key === Qt.Key_Escape))
                 return
               if (event.key === Qt.Key_Escape) {
-                if (query.text.length > 0)
-                  query.text = ""
-                else if (!root.goBack())
-                  root.dismiss()
+                root.escapeStep()
                 event.accepted = true
-              } else if (event.key === Qt.Key_Backspace && query.text.length === 0 && root.goBack()) {
+              } else if (event.key === Qt.Key_Backspace && query.text.length === 0 && (root.goBack() || (root.codeMode && root.leaveTab()))) {
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_K) {
                 actions.actions = root.actionsFor()
