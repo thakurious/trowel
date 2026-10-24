@@ -340,7 +340,8 @@ depend on an index; the real daemon's protocol behavior is tested in `daemon.rs`
   `allTermsMatch`), citing `/usr/share/omarchy/shell/services/AppSearch.js:<line>`. Frecency is
   applied **only as a tiebreak inside the same score band** (for example, two prefix matches) and
   for empty-query order. A typed exact prefix always wins, which keeps Omarchy muscle memory.
-  Frecency score: `Σ launches · 0.5^(age_days/14)`.
+  Frecency score: `Σ launches · 0.5^(age_days/14)`. *(Superseded 2026-10-22 by "Learning and pop to
+  root" in L4: D19 amended.)*
 - `apps/icons.rs`: the same scan as `AppLibrary.iconIndexScanCommand` (apps/devices, SVG before
   PNG, pixmaps), done once in Rust and refreshed on icon-dir inotify with a 750 ms debounce.
   Resolve the current GTK icon theme first if `gsettings get org.gnome.desktop.interface icon-theme`
@@ -427,7 +428,7 @@ browser is Chrome. Demonstrated with installed apps: `ghost` → Ghostty, `chro`
   off-thread. The first paint shows the kind icon, as file rows do (UI-DESIGN §5).
 - **Restore** (`clip_paste`):
   - text: `wl-copy` (text/plain);
-  - html: `wl-copy --type text/html`, with plain text when `mode:"plain"`;
+  - html: its text, `wl-copy` (text/plain), in every mode (see the HTML restore note below);
   - image: `wl-copy --type <mime> < blob`;
   - files: `wl-copy --type text/uri-list` (L0.3: one offer pastes into Chromium, Nautilus and Strata with the real file name; no multi-type offer needed).
 
@@ -477,10 +478,11 @@ ingests in < 150 ms (thumbnail excluded); 24 h of normal use leaves zero orphan 
 - **`clip_import` op added.** The plan named `trowel clip import-omarchy` but no op, and the daemon
   is the only writer of `state.sqlite`, so the CLI asks the daemon. Existing entries are skipped,
   not bumped.
-- **HTML restore caveat (open question).** `wl-copy --type text/html` also offers the same bytes as
-  `text/plain`, `UTF8_STRING`, … (L0.6), so pasting an `html` entry in `paste` mode into a
-  plain-text target (a terminal, a plain field) pastes the **markup**. `plain` mode is correct.
-  Offering HTML and its text together needs a multi-type offer (`wl-clipboard-rs`, not approved).
+- **HTML restore (resolved 2026-10-22, human's bug report).** `wl-copy --type text/html` also offers
+  the same bytes as `text/plain`, `UTF8_STRING`, … (L0.6), so restoring an `html` entry as HTML
+  pasted the **markup** into terminals and plain fields. Every mode now restores the entry's text.
+  Rich (formatted) paste would need a multi-type offer of `text/html` plus real `text/plain`
+  (`wl-clipboard-rs`, not approved).
 - A bare `wl-copy` (no `--type`) spends ~150 ms sniffing the MIME type with `xdg-mime` before it
   owns the selection. The daemon always passes `--type`; the live script does too.
 
@@ -672,6 +674,26 @@ keywords, glyph); a command matches on a prefix of its name, a name word or a ke
 Enter runs it inside the panel. Clipboard History is the first; the L6 "Omarchy commands" extra
 adds entries here. Inside a command the field shows a crumb pill and `Esc` / `Backspace` on an empty
 field return to the search (query and selection restored).
+
+**Learning and pop to root (human, 2026-10-22; D19 amended).** Raycast-style, ported from oma-cast
+(`typecraft-dev/oma-cast` `90efedd`):
+- `troweld/src/learn.rs` ports `Frecency.js` (`score`, `visit`, `recordVisit`: λ = ln 2/10 per day,
+  +100 per open, 20 terms, 17-day term window) and `Ranker.js` `searchTermMatch` (exact, prefix,
+  overbounds 1–3). `state.sqlite` v4 adds `learned(item, anchor, opened_at, terms)`, keyed
+  `app:<id>` / `cmd:<id>`, seeded from `apps_launches` (score at `last` = 1 + 100·the old sum).
+- `apps/rank.rs` sorts with the parts of `compareMatched` that apply to apps: an exact name, then
+  remembered terms (exact, prefix, 3 extra characters), each tied by frecency, then Omarchy's order
+  with frecency in the name-prefix tier. No signals = Omarchy's order (`scripts/apps-parity.sh`).
+- Protocol: `app_launch.query`, `command_run`, `apps_query.commands` and `AppRow.learned` (PROTOCOL
+  §4). `ListMerge.js` orders the commands by their signals, treats a learned query as a strong match,
+  and when both launcher sections lead, puts the one learned for the query (then the more frecent)
+  first. So `c⏎` opens Chrome once the user keeps picking Chrome for `c`.
+- Pop to root: `ui.pop_to_root_seconds` (default 90; Raycast's choices 0/5/15/30/60/90/120/180 in
+  Settings → Launcher & Clipboard). Reopening within it keeps the view (search or clipboard), the
+  query and the selection, with fresh results; after it the panel opens blank on the All tab.
+- Tests: `learn.rs` (oma-cast's frecency cases), `rank.rs`, `state.rs` (v4 seed, round trip),
+  `tests/daemon.rs` (learned order end to end), `v2-apps.jsonl`, `listmerge-test.mjs`, and three
+  harness checks (`ui/harness/check.py`: kept within 90 s, blank after).
 
 ### L5. Omarchy integration and hardening (2–3 days)
 

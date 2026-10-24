@@ -69,7 +69,9 @@ pub enum RestoreError {
 }
 
 /// Puts an entry back on the clipboard with its stored MIME type (`LAUNCHER-PLAN.md` L3
-/// "Restore"). `plain` drops HTML and turns a file list into its paths.
+/// "Restore"). `plain` turns a file list into its paths. HTML entries restore as their text in
+/// every mode: `wl-copy --type text/html` serves the markup for `text/plain` too (L0.6), so a
+/// rich offer pastes tags into terminals and plain fields. Rich paste needs a multi-type offer.
 pub fn restore(stored: &Stored, mode: PasteMode) -> Result<(), RestoreError> {
     let io = |e: std::io::Error| RestoreError::Io(e.to_string());
     let plain = mode == PasteMode::Plain;
@@ -108,10 +110,6 @@ pub fn restore(stored: &Stored, mode: PasteMode) -> Result<(), RestoreError> {
                 .map(|p| format!("{}\r\n", actions::file_uri(p)))
                 .collect();
             actions::copy_as("text/uri-list", ClipSource::Bytes(list.into_bytes())).map_err(io)
-        }
-        ClipKind::Html if !plain => {
-            let html = stored.html.clone().unwrap_or_default();
-            actions::copy_as("text/html", ClipSource::Bytes(html.into_bytes())).map_err(io)
         }
         _ => {
             // Long text keeps its full copy in a `txt` blob; the row holds the first 256 KiB.

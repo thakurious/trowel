@@ -13,7 +13,8 @@ pub use config::{ClipboardConfig, Config, UiConfig};
 pub use error::{ErrorBody, ErrorCode};
 pub use launcher::{
     AppAction, AppRow, AppsResult, CalcAlt, CalcHistoryRow, CalcKind, CalcReply, CalcResult,
-    ClipContent, ClipImage, ClipKind, ClipOffer, ClipQueryResult, ClipRow, PasteMode,
+    ClipContent, ClipImage, ClipKind, ClipOffer, ClipQueryResult, ClipRow, CommandSignal,
+    LearnedSignal, PasteMode,
 };
 pub use ops::{HelloOk, Op, Request};
 pub use path::PathValue;
@@ -86,7 +87,8 @@ mod tests {
             Op::AppsQuery {
                 text: String::new(),
                 limit: 8,
-                gen: 1
+                gen: 1,
+                commands: vec![]
             }
         );
         let req: Request =

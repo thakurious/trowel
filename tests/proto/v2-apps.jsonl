@@ -12,3 +12,9 @@
 {"recv": {"id": 6, "ok": true}}
 {"send": {"id": 7, "op": "apps_query", "text": "firefox", "gen": 3}}
 {"recv": {"id": 7, "ok": true, "gen": 3, "rows": []}}
+{"send": {"id": 8, "op": "app_launch", "app_id": "com.mitchellh.ghostty", "query": "gh"}}
+{"recv": {"id": 8, "ok": true}}
+{"send": {"id": 9, "op": "command_run", "command_id": "clipboard", "query": "cl"}}
+{"recv": {"id": 9, "ok": true}}
+{"send": {"id": 10, "op": "apps_query", "text": "gh", "limit": 1, "gen": 4, "commands": ["clipboard", "unknown"]}}
+{"recv": {"id": 10, "ok": true, "gen": 4, "rows": [{"id": "com.mitchellh.ghostty", "name": "Ghostty", "generic": "Terminal Emulator", "comment": "A terminal emulator", "icon_name": "ghostty", "terminal": false, "actions": [{"id": "new-window", "name": "New Window"}], "source": "/usr/share/applications/com.mitchellh.ghostty.desktop", "launches": 57, "last_launched": 1791869300, "matched": [[0, 2]], "learned": {"frecency": "*", "term": "exact"}}], "commands": [{"id": "clipboard", "frecency": "*"}]}}

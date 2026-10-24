@@ -2,7 +2,9 @@
 
 // LAUNCHER-PLAN.md L4 "Merged list model": the panel's rows from the file groups and the
 // launcher sources. Pure (no QML types), so `scripts/listmerge-test.mjs` runs it under node.
-// It concatenates and never re-ranks: ranking stays in the daemon.
+// Apps come ranked by the daemon. Commands are matched here, and the daemon's learned signals
+// (`apps_query` `commands` / `AppRow.learned`, D19 as amended 2026-10-22) order them and decide
+// which launcher section leads.
 
 // Built-in commands (Raycast-style): searchable by name and keywords from the main list, and Enter
 // runs them inside the panel. Clipboard History is the first; more go here.
@@ -20,32 +22,51 @@ function words(text) {
   })
 }
 
+// Raycast's search-term classes (troweld/src/learn.rs): a query typed before to open the item.
+function termClass(signal) {
+  var t = signal ? signal.term : ""
+  return t === "exact" ? 3 : (t === "prefix" ? 2 : 0)
+}
+
+function frecency(signal) {
+  return signal && signal.frecency > 1 ? signal.frecency : 1
+}
+
 // A command matches when the query is a prefix of its name, of one of its name's words, or of a
-// keyword. `strong` is the name or a keyword starting with it, like an app's name prefix.
-function matchCommands(query, commands) {
+// keyword. `strong` is the name or a keyword starting with it, like an app's name prefix, or a
+// query the command was run with before (exact or as a prefix). `signals` maps id → learned
+// signal; learned commands come first, then strong ones, then by frecency.
+function matchCommands(query, commands, signals) {
   var q = String(query || "").replace(/^\s+|\s+$/g, "").toLowerCase()
   var out = []
   if (!q.length)
     return out
   var list = commands || COMMANDS
+  var sigs = signals || {}
   for (var i = 0; i < list.length; i++) {
     var c = list[i]
     var name = String(c.name).toLowerCase()
     var keys = (c.keywords || []).map(function (k) {
       return String(k).toLowerCase()
     })
-    var strong = name.indexOf(q) === 0 || keys.some(function (k) {
+    var text = name.indexOf(q) === 0 || keys.some(function (k) {
       return k.indexOf(q) === 0
     })
     var weak = words(c.name).some(function (w) {
       return w.indexOf(q) === 0
     })
-    if (strong || weak)
+    var signal = sigs[c.id] || null
+    if (text || weak)
       out.push({
         command: c,
-        strong: strong
+        strong: text || termClass(signal) > 0,
+        signal: signal,
+        order: i
       })
   }
+  out.sort(function (a, b) {
+    return termClass(b.signal) - termClass(a.signal) || (b.strong ? 1 : 0) - (a.strong ? 1 : 0) || frecency(b.signal) - frecency(a.signal) || a.order - b.order
+  })
   return out
 }
 
@@ -61,12 +82,13 @@ function commandItem(c) {
   }
 }
 
-// Omarchy's `AppSearch.js` name-prefix band: the query is a prefix of the app's name.
+// Omarchy's `AppSearch.js` name-prefix band: the query is a prefix of the app's name. A query
+// the app was opened with before counts too (the daemon put it first for that reason).
 function strongApp(app, query) {
   var q = String(query || "").replace(/^\s+|\s+$/g, "").toLowerCase()
   if (!q.length || !app)
     return false
-  return String(app.name || "").toLowerCase().indexOf(q) === 0
+  return String(app.name || "").toLowerCase().indexOf(q) === 0 || termClass(app.learned) > 0
 }
 
 function appItem(a) {
@@ -108,18 +130,20 @@ function clipItem(c) {
 
 // files: the file rows already flattened (headers, rows, the weaker fold), in daemon order.
 // apps: AppRow[] for the same query. opts.maxApps caps the section (default 5); opts.commands is the
-// command list (default COMMANDS, [] for none).
-// A section whose top match is strong (a command or app name starting with the query) goes first,
-// so `fire⏎` launches Firefox and `clip⏎` opens Clipboard History; otherwise it follows the file
-// groups (before the weaker fold), so row 0 stays the best file. Commands come before apps.
+// command list (default COMMANDS, [] for none); opts.signals maps command id → learned signal.
+// A section whose top match is strong (a command or app name starting with the query, or a query
+// it was opened with before) goes first, so `fire⏎` launches Firefox and `clip⏎` opens Clipboard
+// History; otherwise it follows the file groups (before the weaker fold), so row 0 stays the best
+// file. When both lead, the one learned for this query wins, then the more frecent, then commands.
 function merge(files, apps, query, opts) {
   opts = opts || {}
   var max = opts.maxApps === undefined ? 5 : opts.maxApps
   var top = []
   var bottom = []
-  var cmds = matchCommands(query, opts.commands)
+  var cmds = matchCommands(query, opts.commands, opts.signals)
+  var cs = []
   if (cmds.length) {
-    var cs = [{
+    cs = [{
       rowType: "header",
       rowId: "hdr:commands",
       title: "Commands",
@@ -128,14 +152,11 @@ function merge(files, apps, query, opts) {
     }]
     for (var c = 0; c < cmds.length; c++)
       cs.push(commandItem(cmds[c].command))
-    if (cmds[0].strong)
-      top = top.concat(cs)
-    else
-      bottom = bottom.concat(cs)
   }
   var list = (apps || []).slice(0, max)
+  var section = []
   if (list.length) {
-    var section = [{
+    section = [{
       rowType: "header",
       rowId: "hdr:apps",
       title: "Applications",
@@ -144,10 +165,22 @@ function merge(files, apps, query, opts) {
     }]
     for (var i = 0; i < list.length; i++)
       section.push(appItem(list[i]))
-    if (strongApp(list[0], query))
-      top = top.concat(section)
+  }
+  var cmdTop = cmds.length > 0 && cmds[0].strong
+  var appTop = list.length > 0 && strongApp(list[0], query)
+  var appsFirst = appTop && !cmdTop
+  if (appTop && cmdTop)
+    appsFirst = (termClass(list[0].learned) - termClass(cmds[0].signal) || frecency(list[0].learned) - frecency(cmds[0].signal)) > 0
+  var launch = appsFirst ? [section, cs] : [cs, section]
+  for (var s = 0; s < launch.length; s++) {
+    var part = launch[s]
+    if (!part.length)
+      continue
+    var lead = part === cs ? cmdTop : appTop
+    if (lead)
+      top = top.concat(part)
     else
-      bottom = bottom.concat(section)
+      bottom = bottom.concat(part)
   }
   var rest = files || []
   var fold = rest.length

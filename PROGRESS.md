@@ -7,7 +7,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Phase:** 8 (`phase-8-launcher`). D18–D24 approved. **L1, L2c, L2 and L3 done** (protocol v2, `state.sqlite`, mock; calculator, app index and clipboard history served by the real daemon). L0.1–L0.4, L0.6, L0.7 verified; L0.5 partly (no hint seen, but no real password-manager copy yet). Phase 7 leftovers (72 h soak, fresh-account `makepkg -si`) still open and independent.
 - **Live (deployed 2026-10-16 12:54, human's request):** `troweld` (L4 build, protocol v2, clipboard capture on) and the plugin panel (`~/.local/share/trowel/omarchy-plugin/{Panel.qml,manifest.json}` copied; `Trowel/` links to this repo's `ui/qml/Trowel`). The bar widget is removed (D25). Verified live: `hello` capabilities incl. apps/clipboard/calc; `apps_query chro` 2.7 ms → Chromium, Google Chrome; `calc 5 ft to cm` → 152.4 cm; clipboard doctor row OK (watcher running); panel opens on `omarchy-shell trowel open` and closes. Earlier, at 10:17 the old pre-L1 daemon was killed by the systemd watchdog (30 s, just after resume) and restarted on the L3 build, so clipboard capture has run since then.
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
-- **Next step:** the one-step live deploy, **with the human's go-ahead** (it restarts troweld and omarchy-shell and replaces the installed plugin's `Panel.qml`/`BarWidget.qml`): `cargo build --release && cp ui/omarchy-plugin/{Panel,BarWidget}.qml ~/.local/share/trowel/omarchy-plugin/ && systemctl --user restart troweld.service && omarchy restart shell`. Then the L4 live acceptance and the L3 24 h orphan check, then L5. Open: question 2 (HTML restore; `clip_paste` is wired as the plan says), the L0.5 password-manager copy.
+- **Deployed 2026-10-22 12:47 (human's request):** `troweld`/`trowel` release builds of `9793bad` in `~/.local/bin`, plugin `Panel.qml` copied, troweld and omarchy-shell restarted. `state.sqlite` migrated to v4 (`learned`: 2 apps seeded). Live: `apps_query` accepts `commands`, `config_get` → `ui.pop_to_root_seconds: 90`, `omarchy-shell trowel debugState` answers. Backups: `~/.local/bin/{troweld,trowel}.bak.trowel-20261022-124733`, `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261022-124733`, `~/.local/share/trowel/state.sqlite.bak.trowel-20261022-124733` (revert: copy back, restart both). PR #10 is open with CI green; the merge to `main` was left to the human (the agent's merge was blocked by a permission rule).
+- **2026-10-23:** `Esc` leaves the Code tab (session log); plugin `Panel.qml` redeployed, backup `Panel.qml.bak.trowel-20261023-174350`.
+- **Next step:** merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
 
 ### Phase 8 map
 
@@ -130,7 +132,7 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 1. **Watchdog kill after resume (2026-10-16 10:17, old v1 binary):** systemd's 30 s watchdog fired right after the laptop woke; core dump in `coredumpctl`. Check whether the current build's watchdog thread survives suspend/resume (ROBUSTNESS F7) before L5 closes.
 1. **L0.5 leftover:** copy one test password from Chrome's password manager (or whatever manager is used) with the metadata logger running, to see whether it marks itself sensitive.
-2. **HTML entries pasted into plain-text targets paste markup.** `wl-copy --type text/html` serves the same HTML bytes for `text/plain`/`UTF8_STRING` too (L0.6), so `clip_paste` mode `paste` of an `html` entry into a terminal or plain field inserts `<p><b>…`. Options: (a) approve `wl-clipboard-rs` to offer `text/html` + real `text/plain` in one selection (Raycast-like rich paste); (b) make `paste` restore HTML entries as plain text and keep rich HTML for an explicit "Paste formatted" action; (c) pick by the focused window's class (terminal → plain), a heuristic. Recommendation: (b) now, (a) later if rich paste is wanted. Currently implemented as the plan says (rich HTML in `paste`, text in `plain`).
+2. **HTML entries pasted into plain-text targets paste markup.** `wl-copy --type text/html` serves the same HTML bytes for `text/plain`/`UTF8_STRING` too (L0.6), so `clip_paste` mode `paste` of an `html` entry into a terminal or plain field inserts `<p><b>…`. Options: (a) approve `wl-clipboard-rs` to offer `text/html` + real `text/plain` in one selection (Raycast-like rich paste); (b) make `paste` restore HTML entries as plain text and keep rich HTML for an explicit "Paste formatted" action; (c) pick by the focused window's class (terminal → plain), a heuristic. **2026-10-22: the human hit this live (paste put the HTML on the clipboard), so `clip_paste` now restores `html` entries as their text in every mode (`clip/mod.rs` `restore`; `tests/clipboard.rs` checks paste/copy/plain). Not deployed yet. Still open: whether to approve (a) for formatted paste.**
 
 Resolved 2026-10-15: `wl-clipboard-rs` is **not needed** (L0.3: a single `text/uri-list` offer pastes files into Chromium, Nautilus and Strata).
 
@@ -171,6 +173,42 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-23 — Esc leaves the Code tab
+
+- **Bug (human's report):** after `code:` (which makes the Code tab sticky), `Esc` cleared the field but stayed on Code, and the next `Esc` closed the panel still on Code, so a reopen within the pop-to-root window (90 s) came back on Code. No key left it.
+- **Fix:** `Esc` now steps out one level at a time (`Panel.qml` `escapeStep`): field → All tab (from any kind tab or Code) → the search a command came from → close. `Backspace` on an empty field leaves Code as well. Clicking outside still keeps the tab for pop to root, which is the point of it. UI-DESIGN §3.4 updated. (`escape` is a reserved name in QML, hence `escapeStep`.)
+- Gates (2026-10-23):
+  ```
+  $ python3 -I ui/harness/check.py   # 25 ok, 0 FAIL (exit 1: the pre-existing stub TypeErrors), incl.
+  ok   'code:' picks the Code tab
+  ok   Esc clears the query first, staying on Code
+  ok   Esc again returns to All
+  ok   Esc closes; reopening soon is All, not Code
+  $ /usr/lib/qt6/bin/qmllint ui/omarchy-plugin/Panel.qml | wc -l   # 102, same as before the change
+  ```
+- **Deployed 2026-10-23 17:43:** plugin `Panel.qml` copied, `omarchy restart shell`, `debugState` answers. Backup `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261023-174350`. Not yet tried by keyboard live.
+
+### 2026-10-22 — HTML paste fix; Raycast-style learning and pop to root
+
+- **HTML paste (human's bug report):** pasting an `html` entry put the markup on the clipboard (`wl-copy --type text/html` serves it for `text/plain` too, L0.6). `clip_paste` now restores html entries as their text in every mode (`cccd53f`). Rich paste would need `wl-clipboard-rs` (not approved).
+- **Learning (human: D19 amended, apps + commands only):** `troweld/src/learn.rs` ports oma-cast's `Frecency.js` + `searchTermMatch` (`typecraft-dev/oma-cast` `90efedd`, which reproduces Raycast). `state.sqlite` v4 `learned` table seeded from `apps_launches`. `rank.rs` ranks remembered queries above text matches; `app_launch.query`, `command_run`, `apps_query.commands`, `AppRow.learned` (PROTOCOL §4). `ListMerge.js` ranks commands and orders the launcher sections by learned signals. The mock learns in memory but keeps its stand-in app order.
+- **Pop to root:** `ui.pop_to_root_seconds` (default 90, Settings → Launcher & Clipboard). Reopening within it keeps the view, query and selection; the Super+Ctrl+V summon goes through the same rule. After it: a blank search. The panel re-reads config on each close, so a changed setting holds from the next open.
+- Gates (2026-10-22):
+  ```
+  $ cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+  $ cargo test --workspace    # all ok (troweld lib 96, daemon 18, clipboard 2, proto_replay 3, …)
+  $ bash scripts/apps-parity.sh
+  95 entries, 553 queries, 3592 ranked rows, 0 diffs
+  $ node scripts/listmerge-test.mjs
+  listmerge: 13 tests passed
+  $ python3 -I ui/harness/check.py   # 21 ok, 0 FAIL, incl.
+  ok   reopened within 90 s: the clipboard view, its selection kept
+  ok   reopened within 90 s: the search and its selection kept
+  ok   reopened after 90 s: a blank search
+  ```
+- **Not clean, pre-existing:** `check.py` still exits 1 because the harness prints `TypeError: Cannot read property 'r' of undefined` (`Color.foreground` in the `qs.Commons` stub). The same errors show with this session's UI changes stashed (94 lines), so they came before it. Not fixed. The harness `ready` step now also sends `config_set {onboarded:true}` to the mock, because the panel's `config_get` on close would otherwise reopen onboarding. `qmllint`: the new Settings block adds two `unqualified` warnings of the kind that file already has 27 of (no `ComponentBehavior: Bound`).
+- Not deployed; not tested live.
 
 ### 2026-10-16 — Clipboard view drew file rows; mid-word clipboard search
 

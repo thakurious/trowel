@@ -153,7 +153,7 @@ hl.layer_rule({ match = { namespace = "^trowel-(panel|popup)$" }, no_anim = true
 
 | Key | Action | Note |
 |---|---|---|
-| `Esc` | Close (clear the field first if it's non-empty, as upstream does) | |
+| `Esc` | Steps out one level: clear the field if it's non-empty (as upstream does), then go back to the All tab from a kind tab or Code, then close. `Backspace` on an empty field leaves Code too | Added 2026-10-23: `code:` makes Code sticky, and with pop to root (D19) closing on Code reopened on Code, with no way out by keyboard. Raycast's Esc also pops a level at a time |
 | `↑` / `↓`, `Ctrl+P` / `Ctrl+N` | Move the selection; it wraps within groups and moves across them | |
 | `Enter` | Open at the place | |
 | `Ctrl+Enter` | Reveal in the file manager | ⌘ maps to Ctrl everywhere |

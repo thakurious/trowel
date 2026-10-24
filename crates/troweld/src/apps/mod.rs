@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use trowel_proto::{AppAction, AppRow, PathValue};
 
 use crate::actions;
+use crate::learn::{Learned, Signal};
 use desktop_entry::{DesktopEntry, Locale};
 use icons::IconIndex;
 use rank::Rankable;
@@ -160,32 +161,30 @@ impl AppIndex {
         self.entries.iter().find(|e| e.id == id)
     }
 
-    /// `apps_query`. `launches` maps id → `(count, last, decayed score at last)`.
+    /// `apps_query`. `launches` maps id → `(count, last, decayed score at last)`; `learned` maps
+    /// `app:<id>` → its Raycast frecency and search terms (`crate::learn`).
     pub fn query(
         &self,
         text: &str,
         limit: usize,
         launches: &HashMap<String, Launches>,
+        learned: &HashMap<String, Learned>,
         now: i64,
     ) -> Vec<AppRow> {
-        let frecency: Vec<f64> = self
+        let signals: Vec<Signal> = self
             .entries
             .iter()
-            .map(|e| {
-                launches
-                    .get(&e.id)
-                    .map_or(0.0, |l| rank::decayed(l.score, l.last, now))
-            })
+            .map(|e| Signal::of(learned.get(&format!("app:{}", e.id)), text, now))
             .collect();
-        rank::sorted(&self.rankables, text, &frecency)
+        rank::sorted(&self.rankables, text, &signals)
             .into_iter()
             .take(limit)
             .map(|r| {
-                self.row(
-                    &self.entries[r.index],
-                    text,
-                    launches.get(&self.entries[r.index].id),
-                )
+                let e = &self.entries[r.index];
+                AppRow {
+                    learned: r.signal.to_wire(),
+                    ..self.row(e, text, launches.get(&e.id))
+                }
             })
             .collect()
     }
@@ -215,6 +214,7 @@ impl AppIndex {
             launches: launches.map_or(0, |l| l.count),
             last_launched: launches.map(|l| l.last),
             matched: rank::name_matches(&e.name, text),
+            learned: None,
         }
     }
 }
@@ -500,17 +500,19 @@ mod tests {
         let (root, env) = fixture();
         let (index, _) = AppIndex::scan(&env);
         let none = HashMap::new();
-        let rows = index.query("fire", 5, &none, 0);
+        let unlearned = HashMap::new();
+        let rows = index.query("fire", 5, &none, &unlearned, 0);
         assert_eq!(rows[0].id, "firefox");
         assert_eq!(rows[0].matched, vec![[0, 4]]);
         assert_eq!(rows[0].actions[0].id, "new-private-window");
         assert_eq!(rows[0].generic.as_deref(), Some("Web Browser"));
-        let hey = &index.query("hey", 1, &none, 0)[0];
+        let hey = &index.query("hey", 1, &none, &unlearned, 0)[0];
         assert!(hey.icon.is_none(), "missing absolute icon is dropped");
         assert!(
             hey.icon_name.is_none(),
             "absolute Icon= is not a theme name"
         );
+        assert!(rows[0].learned.is_none(), "never opened");
         // Empty query: frecency first, then A–Z.
         let mut used = HashMap::new();
         used.insert(
@@ -521,10 +523,18 @@ mod tests {
                 score: 3.0,
             },
         );
-        let root_rows = index.query("", 10, &used, 100);
+        let mut learned = HashMap::new();
+        learned.insert("app:nvim".to_string(), crate::learn::record(None, 100, "e"));
+        let root_rows = index.query("", 10, &used, &learned, 100);
         assert_eq!(root_rows[0].id, "nvim");
         assert_eq!(root_rows[0].launches, 3);
         assert_eq!(root_rows[1].id, "firefox");
+        // "e" opened Neovim once, so Neovim leads "e" whatever the text order, and says why.
+        let e = index.query("e", 10, &used, &learned, 100);
+        assert_eq!(e[0].id, "nvim");
+        let l = e[0].learned.as_ref().unwrap();
+        assert_eq!(l.term.as_deref(), Some("exact"));
+        assert!((l.frecency - 101.0).abs() < 1e-6);
         let _ = fs::remove_dir_all(root);
     }
 

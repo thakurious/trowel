@@ -13,11 +13,13 @@ use trowel_proto::CalcHistoryRow;
 
 use crate::apps::rank::decayed;
 use crate::apps::Launches;
+use crate::learn::{self, Learned, Term};
 
 pub const STATE_FILE: &str = "state.sqlite";
 /// 1: L1. 2: `apps_launches.score` (decayed frecency sum, L2). 3: `clip_entries.seq`, the
 /// recency order (`last_used` is whole seconds, so copies within a second would tie; L3).
-const SCHEMA_VERSION: i64 = 3;
+/// 4: `learned`, Raycast-style frecency and search terms for apps and commands (D19 amended).
+const SCHEMA_VERSION: i64 = 4;
 
 pub struct StateDb {
     pub(crate) db: Database,
@@ -153,6 +155,11 @@ impl StateDb {
                     VALUES ('delete', old.id, old.preview, old.body);
                 INSERT INTO clip_fts(rowid, preview, body) VALUES (new.id, new.preview, new.body);
             END;
+            CREATE TABLE IF NOT EXISTS learned(
+                item TEXT PRIMARY KEY,
+                anchor REAL NOT NULL,
+                opened_at INTEGER NOT NULL,
+                terms TEXT NOT NULL DEFAULT '[]');
             CREATE TABLE IF NOT EXISTS calc_history(
                 id INTEGER PRIMARY KEY,
                 expr TEXT NOT NULL,
@@ -169,6 +176,9 @@ impl StateDb {
                 Ok(())
             },
         )?;
+        if version < 4 {
+            self.seed_learned()?;
+        }
         let add_seq = if has_seq {
             ""
         } else {
@@ -250,6 +260,70 @@ impl StateDb {
         Ok(out)
     }
 
+    /// v4: each app's 14-day launch sum becomes a Raycast anchor. n launches at once sum to n;
+    /// Raycast scores them 1 + 100·n, so that is the seeded score at `last`. No search terms.
+    fn seed_learned(&self) -> Result<(), DbError> {
+        let launches = self.launches()?;
+        self.db.transaction(|| {
+            for (id, l) in &launches {
+                self.db.run(
+                    "INSERT OR IGNORE INTO learned(item, anchor, opened_at) VALUES (?1, ?2, ?3)",
+                    &[
+                        SqlValue::Text(format!("app:{id}")),
+                        SqlValue::Double(learn::anchor_for(1.0 + 100.0 * l.score, l.last)),
+                        SqlValue::Int(l.last),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// One visit of `item` (`app:<id>` / `cmd:<id>`) picked with `query`. Returns the new row.
+    pub fn record_learned(&self, item: &str, query: &str, at: i64) -> Result<Learned, DbError> {
+        self.db.transaction(|| {
+            let mut prior = None;
+            self.db.query(
+                "SELECT anchor, opened_at, terms FROM learned WHERE item = ?1",
+                &[SqlValue::Text(item.into())],
+                |row| {
+                    prior = Some(learned_row(row.double(0), row.int(1), row.text(2)));
+                    Ok(())
+                },
+            )?;
+            let next = learn::record(prior.as_ref(), at, query);
+            self.db.run(
+                "INSERT INTO learned(item, anchor, opened_at, terms) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(item) DO UPDATE SET anchor = ?2, opened_at = ?3, terms = ?4",
+                &[
+                    SqlValue::Text(item.into()),
+                    SqlValue::Double(next.anchor),
+                    SqlValue::Int(next.opened_at),
+                    SqlValue::Text(
+                        serde_json::to_string(&next.terms).unwrap_or_else(|_| "[]".into()),
+                    ),
+                ],
+            )?;
+            Ok(next)
+        })
+    }
+
+    /// Every learned item, for `apps_query`.
+    pub fn learned(&self) -> Result<HashMap<String, Learned>, DbError> {
+        let mut out = HashMap::new();
+        self.db.query(
+            "SELECT item, anchor, opened_at, terms FROM learned",
+            &[],
+            |row| {
+                if let Some(item) = row.text(0) {
+                    out.insert(item, learned_row(row.double(1), row.int(2), row.text(3)));
+                }
+                Ok(())
+            },
+        )?;
+        Ok(out)
+    }
+
     /// Recorded when a result is copied or pasted, never per keystroke.
     pub fn record_calc(&self, expr: &str, result: &str, at: i64) -> Result<(), DbError> {
         self.db.run(
@@ -277,6 +351,17 @@ impl StateDb {
             },
         )?;
         Ok(rows)
+    }
+}
+
+/// A damaged `terms` value reads as no terms; the frecency still counts.
+fn learned_row(anchor: f64, opened_at: i64, terms: Option<String>) -> Learned {
+    Learned {
+        anchor,
+        opened_at,
+        terms: terms
+            .and_then(|t| serde_json::from_str::<Vec<Term>>(&t).ok())
+            .unwrap_or_default(),
     }
 }
 
@@ -410,6 +495,40 @@ mod tests {
         state.record_calc("1+1", "2", 1).unwrap();
         assert_eq!(all["nvim"].count, 3);
         assert!((all["nvim"].score - 3.0).abs() < 1e-9);
+        // v4 seeds the learned score: three launches at 50 → 301 at 50.
+        let learned = state.learned().unwrap();
+        let nvim = &learned["app:nvim"];
+        assert!(
+            (learn::score(nvim.anchor, 50) - 301.0).abs() < 1e-6,
+            "{nvim:?}"
+        );
+        assert!(nvim.terms.is_empty());
+    }
+
+    #[test]
+    fn learned_rows_round_trip() {
+        let state = StateDb::open(temp()).unwrap();
+        state.record_learned("app:chromium", "Ch", 1_000).unwrap();
+        let row = state.record_learned("app:chromium", "chr", 2_000).unwrap();
+        // 101 decayed over 1000 s, plus 100.
+        let want = 101.0 * 0.5f64.powf(1_000.0 / 864_000.0) + 100.0;
+        assert!((learn::score(row.anchor, 2_000) - want).abs() < 1e-6);
+        state.record_learned("cmd:clipboard", "", 2_000).unwrap();
+        let all = state.learned().unwrap();
+        let terms: Vec<&str> = all["app:chromium"]
+            .terms
+            .iter()
+            .map(|t| t.term.as_str())
+            .collect();
+        assert_eq!(terms, ["ch", "chr"]);
+        assert_eq!(all["app:chromium"].opened_at, 2_000);
+        assert!(all["cmd:clipboard"].terms.is_empty());
+        // A damaged terms column keeps the score.
+        state
+            .db
+            .execute("UPDATE learned SET terms = 'nope' WHERE item = 'app:chromium'")
+            .unwrap();
+        assert!(state.learned().unwrap()["app:chromium"].terms.is_empty());
     }
 
     #[test]

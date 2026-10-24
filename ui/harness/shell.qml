@@ -45,12 +45,17 @@ ShellRoot {
         panel.harnessTab(s.id)
       else if (s.do === "close")
         panel.dismiss()
+      else if (s.do === "age")
+        panel.closedAt -= s.seconds
+
       else if (s.do === "command")
         panel.runCommand(s.id)
       else if (s.do === "enter")
         panel.openSelected()
       else if (s.do === "back")
         panel.goBack()
+      else if (s.do === "esc")
+        panel.escapeStep()
       else if (s.do === "actions")
         panel.harnessActions()
       else if (s.do === "log")

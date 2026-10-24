@@ -3,12 +3,15 @@
 //! code units and `<` compares UTF-16, so this does too: scores must match to the unit for the
 //! parity gate (`scripts/apps-parity.sh`).
 //!
-//! Frecency is Trowel's addition. It reorders only (a) name-prefix matches among themselves,
-//! (b) exact score ties, and (c) the empty-query list. The sort key is lexicographic on a tier
-//! that is a monotonic function of the score, so with no launches recorded the order is exactly
-//! Omarchy's, and a typed name prefix always beats an id or substring match.
+//! Learning is Trowel's addition (D19 as amended 2026-10-22, `crate::learn`). Raycast-style, a
+//! query the user picked an app with before (a remembered search term, exact or as a prefix)
+//! lifts that app above better text matches; otherwise frecency reorders only name-prefix
+//! matches among themselves, exact score ties and the empty-query list. With nothing learned the
+//! order is exactly Omarchy's (the parity gate).
 
 use std::cmp::Ordering;
+
+use crate::learn::{Signal, TermMatch};
 
 /// The fields `AppSearch.js` reads from a Quickshell `DesktopEntry`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -195,54 +198,119 @@ pub struct Ranked {
     pub index: usize,
     pub score: i64,
     pub band: Band,
-    pub frecency: f64,
+    pub signal: Signal,
+}
+
+fn by_frecency(a: &Signal, b: &Signal) -> Ordering {
+    b.frecency
+        .partial_cmp(&a.frecency)
+        .unwrap_or(Ordering::Equal)
+}
+
+/// Omarchy's order with frecency inside the name-prefix tier and on exact score ties.
+fn omarchy_order(a: &Ranked, b: &Ranked) -> Ordering {
+    let (a_tier, b_tier) = (a.score > PREFIX_TIER, b.score > PREFIX_TIER);
+    b_tier.cmp(&a_tier).then_with(|| {
+        if a_tier {
+            by_frecency(&a.signal, &b.signal).then(b.score.cmp(&a.score))
+        } else {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| by_frecency(&a.signal, &b.signal))
+        }
+    })
+}
+
+/// oma-cast `Ranker.js` `compareMatched` (Raycast's order), keeping the parts that apply to apps:
+/// an exact name, then remembered search terms (exact, prefix, 3 extra characters), each tied
+/// by frecency, then the text order. Aliases, subtitles and contacts don't exist here.
+fn learned_order(a: &Ranked, b: &Ranked, exact_name: (bool, bool), ctx: (bool, bool)) -> Ordering {
+    let (has_exact_name, has_exact_term) = ctx;
+    let (a_term, b_term) = (a.signal.term, b.signal.term);
+    let (a_te, b_te) = (a_term == TermMatch::Exact, b_term == TermMatch::Exact);
+    let then_text = || omarchy_order(a, b);
+    if has_exact_name && has_exact_term {
+        if a_te != b_te {
+            return b_te.cmp(&a_te);
+        }
+        if a_te && b_te {
+            return by_frecency(&a.signal, &b.signal).then_with(then_text);
+        }
+    }
+    if has_exact_name {
+        let (a_en, b_en) = exact_name;
+        if a_en && b_en {
+            return b_term
+                .rank()
+                .cmp(&a_term.rank())
+                .then_with(|| by_frecency(&a.signal, &b.signal))
+                .then_with(then_text);
+        }
+        if a_en != b_en {
+            return b_en.cmp(&a_en);
+        }
+    }
+    if a_te != b_te {
+        return b_te.cmp(&a_te);
+    }
+    if a_te && b_te {
+        return by_frecency(&a.signal, &b.signal).then_with(then_text);
+    }
+    let (a_tp, b_tp) = (a_term == TermMatch::Prefix, b_term == TermMatch::Prefix);
+    if a_tp != b_tp {
+        return b_tp.cmp(&a_tp);
+    }
+    if a_tp && b_tp {
+        let f = by_frecency(&a.signal, &b.signal);
+        if f != Ordering::Equal {
+            return f;
+        }
+    }
+    let (ao, bo) = (a_term.overbounds(), b_term.overbounds());
+    if (ao >= 3 || bo >= 3) && ao != bo {
+        return bo.cmp(&ao);
+    }
+    then_text()
 }
 
 /// `sortedEntries` (:97) over already-visible entries (hidden and `NoDisplay` filtered by the
-/// caller). `frecency[i]` belongs to `entries[i]`; all zeros reproduces Omarchy's order exactly.
-/// Stable, like V8's `Array.prototype.sort`, so equal keys keep input order.
-pub fn sorted(entries: &[Rankable], query: &str, frecency: &[f64]) -> Vec<Ranked> {
+/// caller). `signals[i]` belongs to `entries[i]`; all `Signal::NONE` reproduces Omarchy's order
+/// exactly. Stable, like V8's `Array.prototype.sort`, so equal keys keep input order.
+pub fn sorted(entries: &[Rankable], query: &str, signals: &[Signal]) -> Vec<Ranked> {
     let q = query.trim();
-    let mut rows: Vec<(Ranked, String, String)> = entries
+    let ql = q.to_lowercase();
+    let mut rows: Vec<(Ranked, String, bool)> = entries
         .iter()
         .enumerate()
         .filter(|(_, e)| !entry_name(e).is_empty())
         .filter_map(|(i, e)| {
             let (score, band) = fuzzy_score(e, q)?;
             let name = entry_name(e).to_lowercase();
+            let exact = !ql.is_empty() && name == ql;
             Some((
                 Ranked {
                     index: i,
                     score,
                     band,
-                    frecency: frecency.get(i).copied().unwrap_or(0.0),
+                    signal: signals.get(i).copied().unwrap_or(Signal::NONE),
                 },
-                name.clone(),
                 name,
+                exact,
             ))
         })
         .collect();
-    rows.sort_by(|(a, a_key, a_name), (b, b_key, b_name)| {
-        let by_frecency = || {
-            b.frecency
-                .partial_cmp(&a.frecency)
-                .unwrap_or(Ordering::Equal)
-        };
+    let ctx = (
+        rows.iter().any(|(_, _, exact)| *exact),
+        rows.iter()
+            .any(|(r, _, _)| r.signal.term == TermMatch::Exact),
+    );
+    rows.sort_by(|(a, a_name, a_exact), (b, b_name, b_exact)| {
         let ranked = if q.is_empty() {
-            by_frecency()
+            by_frecency(&a.signal, &b.signal)
         } else {
-            let (a_tier, b_tier) = (a.score > PREFIX_TIER, b.score > PREFIX_TIER);
-            b_tier.cmp(&a_tier).then_with(|| {
-                if a_tier {
-                    by_frecency().then(b.score.cmp(&a.score))
-                } else {
-                    b.score.cmp(&a.score).then_with(by_frecency)
-                }
-            })
+            learned_order(a, b, (*a_exact, *b_exact), ctx)
         };
-        ranked
-            .then_with(|| cmp_utf16(a_key, b_key))
-            .then_with(|| cmp_utf16(a_name, b_name))
+        ranked.then_with(|| cmp_utf16(a_name, b_name))
     });
     rows.into_iter().map(|(r, _, _)| r).collect()
 }
@@ -332,6 +400,20 @@ mod tests {
         );
     }
 
+    fn used(frecency: f64) -> Signal {
+        Signal {
+            frecency,
+            term: TermMatch::None,
+        }
+    }
+
+    fn order(entries: &[Rankable], q: &str, signals: &[Signal]) -> Vec<usize> {
+        sorted(entries, q, signals)
+            .iter()
+            .map(|r| r.index)
+            .collect()
+    }
+
     #[test]
     fn frecency_stays_inside_the_prefix_tier() {
         let entries = vec![
@@ -339,15 +421,65 @@ mod tests {
             app("chromium", "Chromium", ""),
             app("x", "Xc", "c thing"),
         ];
-        // No frecency: shorter name prefix first.
-        let plain = sorted(&entries, "c", &[0.0, 0.0, 0.0]);
-        assert_eq!(plain.iter().map(|r| r.index).collect::<Vec<_>>(), [1, 0, 2]);
+        // Nothing learned: shorter name prefix first.
+        assert_eq!(order(&entries, "c", &[Signal::NONE; 3]), [1, 0, 2]);
         // Frecency lifts Calculator among the prefix matches, never "Xc" above them.
-        let used = sorted(&entries, "c", &[5.0, 0.0, 99.0]);
-        assert_eq!(used.iter().map(|r| r.index).collect::<Vec<_>>(), [0, 1, 2]);
+        assert_eq!(
+            order(&entries, "c", &[used(5.0), used(1.0), used(99.0)]),
+            [0, 1, 2]
+        );
         // Empty query: frecency, then A–Z.
-        let root = sorted(&entries, "", &[0.0, 1.0, 0.0]);
-        assert_eq!(root.iter().map(|r| r.index).collect::<Vec<_>>(), [1, 0, 2]);
+        assert_eq!(
+            order(&entries, "", &[used(1.0), used(2.0), used(1.0)]),
+            [1, 0, 2]
+        );
+    }
+
+    #[test]
+    fn remembered_terms_beat_text_matches() {
+        let entries = vec![
+            app("calc", "Calculator", ""),
+            app("chromium", "Chromium", ""),
+            app("x", "Xc", "c thing"),
+        ];
+        let term = |term, frecency| Signal { frecency, term };
+        // "c" was used to open Xc: it now leads, though its text match is the weakest.
+        let s = [Signal::NONE, Signal::NONE, term(TermMatch::Exact, 101.0)];
+        assert_eq!(order(&entries, "c", &s), [2, 1, 0]);
+        // A remembered prefix ("ca" typed, "calc" remembered) beats a better text match.
+        let s = [term(TermMatch::Prefix, 101.0), Signal::NONE, Signal::NONE];
+        assert_eq!(order(&entries, "c", &s), [0, 1, 2]);
+        // Two exact terms: the more frecent first.
+        let s = [
+            term(TermMatch::Exact, 50.0),
+            term(TermMatch::Exact, 150.0),
+            Signal::NONE,
+        ];
+        assert_eq!(order(&entries, "c", &s), [1, 0, 2]);
+        // Overbounds below 3 doesn't reorder text matches (frecency alone would, in the tier).
+        let s = [
+            term(TermMatch::Overbounds(1), 1.0),
+            Signal::NONE,
+            Signal::NONE,
+        ];
+        assert_eq!(order(&entries, "c", &s), [1, 0, 2]);
+    }
+
+    #[test]
+    fn an_exact_name_wins_unless_a_term_is_exact() {
+        let entries = vec![app("zed", "Zed", ""), app("zeditor", "Zed Editor", "")];
+        let pre = Signal {
+            frecency: 101.0,
+            term: TermMatch::Prefix,
+        };
+        // An exact name beats a remembered prefix.
+        assert_eq!(order(&entries, "zed", &[Signal::NONE, pre]), [0, 1]);
+        let exact = Signal {
+            frecency: 101.0,
+            term: TermMatch::Exact,
+        };
+        // But not a remembered exact query.
+        assert_eq!(order(&entries, "zed", &[Signal::NONE, exact]), [1, 0]);
     }
 
     #[test]

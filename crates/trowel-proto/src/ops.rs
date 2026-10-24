@@ -119,12 +119,24 @@ pub enum Op {
         #[serde(default = "default_apps_limit")]
         limit: u32,
         gen: u64,
+        /// Command ids whose learned signals to return with the rows (`AppsResult::commands`).
+        #[serde(default)]
+        commands: Vec<String>,
     },
     // Params are `app_id` / `clip_id`: a bare `id` would collide with the envelope's request id.
     AppLaunch {
         app_id: String,
         #[serde(default)]
         action: Option<String>,
+        /// What was typed when the app was picked; learned as a search term.
+        #[serde(default)]
+        query: Option<String>,
+    },
+    /// A built-in command ran from the search (learned like an app launch).
+    CommandRun {
+        command_id: String,
+        #[serde(default)]
+        query: Option<String>,
     },
     AppHide {
         app_id: String,
@@ -252,6 +264,7 @@ pub const KNOWN_OPS: &[&str] = &[
     "apps_query",
     "app_launch",
     "app_hide",
+    "command_run",
     "clip_query",
     "clip_get",
     "clip_paste",
@@ -274,6 +287,7 @@ impl Op {
             Self::AppsQuery { .. }
                 | Self::AppLaunch { .. }
                 | Self::AppHide { .. }
+                | Self::CommandRun { .. }
                 | Self::ClipQuery { .. }
                 | Self::ClipGet { .. }
                 | Self::ClipPaste { .. }
@@ -318,6 +332,7 @@ impl Op {
             Self::AppsQuery { .. } => "apps_query",
             Self::AppLaunch { .. } => "app_launch",
             Self::AppHide { .. } => "app_hide",
+            Self::CommandRun { .. } => "command_run",
             Self::ClipQuery { .. } => "clip_query",
             Self::ClipGet { .. } => "clip_get",
             Self::ClipPaste { .. } => "clip_paste",
