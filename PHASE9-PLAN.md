@@ -1,6 +1,6 @@
 # Phase 9 plan: the Island, Process Monitor, System Commands, Timers, Snippets
 
-**Status: draft, 2026-10-26.** Requested by the human on 2026-10-26 ("Process Monitor, System
+**Status: approved 2026-10-26** (human: "lets do phase 9", taken as accepting §2 as written; §8). Requested by the human on 2026-10-26 ("Process Monitor, System
 Commands, Timers, Snippets", and the keyboard-lock pill reworked into an iPhone-style Dynamic Island
 that becomes a shared surface for other things). Nothing here is built yet. §2 lists the decisions
 that need the human's sign-off **before** P1 starts; until then this file is the source of truth,
@@ -333,4 +333,6 @@ wants Snippets sooner.
 
 ## 8. Answers
 
-(Empty until the human signs off §2.)
+- 2026-10-26, human: "lets do phase 9 also" after reading the plan summary. Taken as accepting
+  P-D29…P-D34 as written; they become D29–D34 in `DECISIONS.md` as each part lands. Anything the
+  human later overrides is recorded here.

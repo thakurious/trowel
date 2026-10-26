@@ -177,6 +177,39 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
 
 ## Session log
 
+### 2026-10-26 — Phase 9 started (`phase-9-island`), P0 spikes
+
+Human: "lets do phase 9 also" → PHASE9-PLAN §2 taken as accepted (§8). P0 results:
+
+1. **Island surface** (standalone `quickshell -p` spike, not omarchy-shell): `PanelWindow` anchored
+   top, `margins.top: 32`, `mask: Region { item: pill }`, namespace `trowel-popup` → layer
+   `558,32 420×180`, below `omarchy-bar 0,0 1536×26`; the bar clock stays visible (screenshot).
+   `SpringAnimation` (spring 4, damping 0.32) morphing 200×30 ↔ 380×120 every 1.5 s for 12 s with
+   `QSG_RENDER_TIMING=1`: 335 frames, max frame interval 21 ms, 0 intervals > 25 ms (no drops at
+   60 Hz). Click-through not click-tested (no input tool); same `mask: Region` as omarchy's bar/OSD.
+2. **Bar**: `Style.bar.sizeHorizontal` token = 26 (matches the layer); `shell.json` `bar.position`
+   = `top`.
+3. **Process sampling scale**: 705 pids, 333 own, ~9,900 fds to readlink, 100 DRM fds, `/proc/pid/io`
+   readable for 331/333 own. A naive full pass is 56 ms in Python → P5 caches DRM fds per pid and
+   rescans fds only for new pids / every 5 s.
+4. **Notifications**: `omarchy-notification-send [-g glyph] [-u urgency] [-t ms] [-r id] [-p]
+   [--image] <headline> [description] [--exec prog args…]`: one click action, no buttons.
+5. **Toggle state, read-only**: night light `omarchy-toggle-nightlight --status` (JSON `.enabled`);
+   keep awake `omarchy-toggle-idle status` (JSON `.enabled` = staying awake), set with
+   `stay-awake|allow-idle`; DND `omarchy-shell notifications isDnd` (`on|off`), set with `setDnd`;
+   suspend-in-menu `omarchy-toggle-enabled suspend-off`; touchpad: the
+   `~/.local/state/omarchy/toggles/hypr/touchpad-disabled-name` file; bar `omarchy-toggle-bar
+   toggle|on|off`.
+6. **Protected processes**: Hyprland (1670), `quickshell` (omarchy-shell, which also runs the lock
+   screen), systemd (user manager), dbus-broker, pipewire/wireplumber/pipewire-pulse, uwsm, fcitx5,
+   troweld.
+
+**Incident:** `omarchy-toggle-nightlight status` (I assumed a `status` verb; it only knows
+`--status`) toggled the night light on: hyprsunset started 15:36:20. It exited again and
+`--status` reports `enabled: false`, the state before. Rule kept since: read each script's
+`omarchy:args` and argument parsing before calling it.
+
+
 ### 2026-10-26 — Indexing check, ffmpeg fix, Settings in the panel, Lock Keyboard
 
 - **Indexing check (human asked if new files and screenshots index):** yes. Two PDFs saved today were
