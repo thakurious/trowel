@@ -10,7 +10,8 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Deployed 2026-10-22 12:47 (human's request):** `troweld`/`trowel` release builds of `9793bad` in `~/.local/bin`, plugin `Panel.qml` copied, troweld and omarchy-shell restarted. `state.sqlite` migrated to v4 (`learned`: 2 apps seeded). Live: `apps_query` accepts `commands`, `config_get` → `ui.pop_to_root_seconds: 90`, `omarchy-shell trowel debugState` answers. Backups: `~/.local/bin/{troweld,trowel}.bak.trowel-20261022-124733`, `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261022-124733`, `~/.local/share/trowel/state.sqlite.bak.trowel-20261022-124733` (revert: copy back, restart both). PR #10 is open with CI green; the merge to `main` was left to the human (the agent's merge was blocked by a permission rule).
 - **2026-10-23:** `Esc` leaves the Code tab (session log); plugin `Panel.qml` redeployed, backup `Panel.qml.bak.trowel-20261023-174350`.
 - **Deployed 2026-10-26 14:29 (human's request):** release `troweld`/`trowel` of `cabfab3`+, plugin `Panel.qml` (`c5980ee`), `omarchy restart shell`. Settings live in the panel (D26), Lock Keyboard (D27), ffmpeg stderr fix. 9 failed video rows re-queued (ids 5213–5226, see session log). Backups `…bak.trowel-20261026-142922` of `~/.local/bin/{troweld,trowel}`, `omarchy-plugin/Panel.qml` and `index/index.sqlite`. Revert: stop `troweld.socket troweld.service`, copy the four back, start them, `omarchy restart shell`.
-- **Next step:** human: try Lock Keyboard by hand (keys ignored? Unlock click?) and Settings from the
+- **Next step:** human signs off PHASE9-PLAN §2 (P-D29…P-D34), then P0 spikes on `phase-9-island`.
+  Still open: human tries Lock Keyboard by hand (keys ignored? Unlock click?) and Settings from the
   keyboard; then push `phase-8-launcher` (4 new commits) to PR #10 and merge. Then: merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
 
 ### Phase 8 map
@@ -234,6 +235,28 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
   `~/Pictures/Screenshots` → `screenshot done`, `ocr_chars 791` in ~8 s, #1 for "skipped images";
   probe removed. **Open (human):** omasnap doesn't save by default — bind `omasnap --copy --save`,
   save by hand, or build clipboard-image OCR (L6 backlog).
+
+- **Index speed (D28, human: "slower is fine, must not impact the system", + a setting):** measured
+  first: CPU was polite already (~1.4 cores), the iGPU was not (54 % avg, 100 % p95, 21 s
+  saturated stretches). `index_speed` gentle (default) / balanced / full: `Paced` embedder (rest 2×/1×
+  per worker request, media in chunks of 2, vectors byte-identical on all 141 benchmark segments),
+  `CPUQuota` 100 %/200 % on the helper scope, affinity to the E-cores 4–7. Benchmark (same corpus,
+  GPU net of 18 % idle): full 295 s/~36 %/21 s; balanced 346 s/~26 %/6 s; gentle 471 s/~14 %/3 s,
+  ≤ 1.1 cores. Deployed 15:30 (backups `…bak.trowel-20261026-153055`); live helper scope:
+  `cpu.max 100000 100000`, `cpu.weight 20`, memory.high 3G / max 4G, `taskset` 4-7, nice 10,
+  `--pace 2`. Settings shows Indexing Speed (shell restarted).
+- **Flaky (pre-existing, not loosened):** `troweld --test daemon apps_query_launch_hide_and_install`
+  asserts `took_us < 2000` in a debug build; it failed once under a parallel `cargo test
+  --workspace`, passed 5/5 alone and in the next three full runs.
+- **Phase 9 plan** written (`PHASE9-PLAN.md`, draft): Island, Process Monitor, System Commands,
+  Timers, Snippets; P-D29…P-D34 need sign-off.
+- Gates (2026-10-26, after D28):
+  ```
+  $ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+  $ cargo test --workspace     # 20 suites ok, 0 failed (troweld lib 99, trowel-core 91, …)
+  $ node scripts/{settings-model,keylock-model,listmerge}-test.mjs   # 13, 4, 14 passed
+  $ python3 -I ui/harness/check.py   # 35 ok, exit 0
+  ```
 
 ### Verified facts (2026-10-26)
 
