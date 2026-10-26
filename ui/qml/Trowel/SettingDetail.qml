@@ -810,7 +810,7 @@ FocusScope {
       Text {
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
-        text: root.recording ? "Press the new shortcut…" : "Shortcut"
+        text: root.recording ? "Press a key (Super is added)…" : "Shortcut"
         color: root.recording ? Theme.accent : Theme.secondary
         font.family: Theme.fontFamily
         font.pixelSize: Theme.rowTitleSize

@@ -1861,7 +1861,7 @@ Item {
                     h = [["↵", "Edit"]]
                   if (e && e.type === "choice" && !query.text.length)
                     h = [["← →", "Change"]].concat(h)
-                  return h.concat([["tab", "Edit"], ["esc", root.settingsFromSearch ? "Back" : "Close"]])
+                  return h.concat([["esc", root.settingsFromSearch ? "Back" : "Close"]])
                 }
                 switch (root.selectedType) {
                 case "calc":

@@ -77,7 +77,8 @@ Item {
 
     Rectangle {
       id: pill
-      width: row.implicitWidth + 8
+      // 10 px before the lock glyph; the Unlock capsule sits 3 px from the edge, as from top and bottom.
+      width: row.implicitWidth + 13
       height: 22
       radius: 11
       color: Theme.alpha(Theme.background, 0.94)

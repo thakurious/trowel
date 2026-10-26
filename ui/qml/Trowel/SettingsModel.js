@@ -23,7 +23,7 @@ var CATALOG = [{
     key: "hotkey",
     title: "Search Shortcut",
     glyph: "",
-    detail: "Opens Trowel from any app. Press ↵ in the pane, then the new keys.",
+    detail: "Opens Trowel from any app. Press ↵, then a key: Super is added to it (Hyprland keeps Super combinations to itself while you record). Add Ctrl, Alt or Shift if you like.",
     keywords: ["hotkey", "keybinding", "keys", "bind", "open"]
   }, {
     id: "autostart",
@@ -48,7 +48,7 @@ var CATALOG = [{
     type: "toggle",
     key: "ui.reduce_motion",
     title: "Reduce Motion",
-    glyph: "",
+    glyph: "",
     detail: "Turns off the panel's animations.",
     keywords: ["animation", "motion", "accessibility"]
   }, {
