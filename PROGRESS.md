@@ -24,8 +24,13 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
   `omarchy-plugin/Panel.qml` and `state.sqlite{,-wal,-shm}`. Revert: stop `troweld.socket
   troweld.service`, copy them back, start, `omarchy restart shell` (the plugin's `Trowel/` links to
   this repo, so check out `main` first or `KeyLockPill.qml` will be missing).
-- **Next step:** the human reviews; then push `phase-9-island` and open the PR to `main` (P7's last
-  line), or first decide the sampler budget (open question 4).
+- **Merged 2026-10-26 (human: "merge to main and push"):** `phase-9-island` → `main` as `0da3a64`
+  (no-ff), pushed with the branch; CI on `main` green. Also: the Island no longer collapses when the
+  pointer is on its buttons (`ee1879a`, HoverHandler; verified live), and `FEATURES.md` documents
+  the whole feature set. Note: `tests/calc.rs` `expression_table` / `fuzz_random_strings` failed
+  once at load average ~14 (they time the 20 ms interrupt) and passed in the next 3 full runs.
+- **Next step:** decide the sampler budget (open question 4) and run the live checks in open
+  question 5; then L5 hardening / 8U parity.
 
 ### Phase 8 map
 
