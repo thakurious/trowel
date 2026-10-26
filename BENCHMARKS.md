@@ -32,7 +32,7 @@ irrelevant to us.
 | Query encode (cold worker start) | ≤ 1.5 s | masked by `prewarm` when the panel opens |
 | Search latency @ 10k vectors | ≤ 15 ms | blocked fp16 matmul, 768-d |
 | Search latency @ 100k vectors | ≤ 120 ms | ~150 MB fp16 resident |
-| First pass, `synthetic/` testbed | ≤ ~3 min | mirrors Mac's ~160 s on M4 Pro; extraction-bound |
+| First pass, `synthetic/` testbed | ≤ ~3 min | mirrors Mac's ~160 s on M4 Pro; extraction-bound. Measured at `index_speed = "full"` (D28); gentle/balanced trade time for desktop headroom |
 | Steady-state new file (screenshot) | ≤ 1.5 s | searchable ~1–2 s after it lands |
 | Daemon idle RSS | ≤ 120 MB | vectors released after encoder idle-exit (600 s) |
 | Worker RSS (text-only / full) | ~0.3 GB / ~1 GB | lives only in the worker, freed on exit |
@@ -44,6 +44,7 @@ irrelevant to us.
 | Thumbnail (cached) | ≤ 5 ms daemon, ≤ 100 ms on screen | |
 | Startup reconcile (warm cache) | ≤ 1 s per 100k files | ROBUSTNESS F1 |
 | Desktop impact while indexing | no frame drops in the panel or Hyprland animations | helper in the `trowel-index.slice` (Nice 10, idle IO) |
+| Index speed (D28), 80 screenshots + 2 videos | gentle: GPU net ≤ ~15 % avg, no saturated stretch > 3 s, index CPU ≤ 1.1 cores | measured 2026-10-26: full 295 s / GPU net ~36 % avg / 21 s longest at ≥ 90 % / 1.3 cores; balanced 346 s / ~26 % / 6 s / 0.9; gentle 471 s / ~14 % / 3 s / 0.8 (max 1.1). Vectors byte-identical across speeds |
 | `calc`, daemon side (Phase 8 L2c) | p95 < 1 ms, hard stop at 20 ms | measured 2026-10-15 release: p50 43–64 µs, p95 237–408 µs over `tests/calc/table.tsv`; one-shot `5 ft to cm` 238–565 µs after a 0.44–0.64 ms warm-up |
 | `apps_query`, 200 entries (Phase 8 L2) | p95 < 2 ms | measured 2026-10-15 release, 94 installed apps: 310–330 µs per query; entry scan 4–8 ms; icon index 100–180 ms (background) |
 | `clip_query`, 1000 entries (Phase 8 L3) | p95 < 5 ms | measured 2026-10-15 release (`trowel clip bench`, 300 queries: empty, words, literal `://`, kind filters): p50 0.38 ms, p95 0.66 ms |

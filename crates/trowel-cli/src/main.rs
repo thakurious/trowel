@@ -4,6 +4,7 @@ mod calc_cmd;
 mod clip_cmd;
 mod debug_ui;
 mod index_service;
+mod keyboard;
 mod parity;
 mod setup;
 mod worker;
@@ -79,6 +80,9 @@ enum Commands {
         exclude: Vec<PathBuf>,
         #[arg(long)]
         exclude_ext: Vec<String>,
+        /// D28 index speed: rest this many × each batch's embedding time before the next batch.
+        #[arg(long, default_value_t = 0.0)]
+        pace: f64,
     },
     /// Hybrid search (meaning + words).
     Search {
@@ -223,6 +227,9 @@ enum Commands {
         exclude: Vec<PathBuf>,
         #[arg(long)]
         exclude_ext: Vec<String>,
+        /// D28 index speed: rest this many × each batch's embedding time before the next batch.
+        #[arg(long, default_value_t = 0.0)]
+        pace: f64,
     },
     /// Print a folder path chosen via the desktop portal (UI-DESIGN §6.0).
     PortalPickFolder,
@@ -233,6 +240,13 @@ enum Commands {
     },
     /// Start troweld at login (`systemctl --user enable troweld.socket`).
     Autostart { action: AutostartAction },
+    /// Lock the keyboard for a while, to clean it (the panel's Lock Keyboard command). A systemd
+    /// user timer unlocks it even if Trowel stops.
+    Keyboard {
+        action: KeyboardAction,
+        /// How long to lock, in seconds (lock only; at most 1800).
+        seconds: Option<u64>,
+    },
     /// Install plugin, hotkey, and user systemd units (DECISIONS D12).
     Setup {
         /// Repo checkout to copy QML from (defaults to walking up from this binary).
@@ -325,6 +339,13 @@ enum DebugCmd {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum KeyboardAction {
+    Lock,
+    Unlock,
+    Status,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -440,6 +461,7 @@ fn main() {
             include_datasets,
             exclude,
             exclude_ext,
+            pace,
         } => {
             if let Err(err) = cmd_index(
                 &path,
@@ -449,6 +471,7 @@ fn main() {
                 fake,
                 json,
                 limit,
+                pace,
             ) {
                 eprintln!("{err}");
                 std::process::exit(1);
@@ -602,6 +625,7 @@ fn main() {
             include_datasets,
             exclude,
             exclude_ext,
+            pace,
         } => {
             if path.is_empty() && code_root.is_empty() {
                 eprintln!("trowel index-service: no folders to index (give a PATH or --code-root)");
@@ -624,6 +648,7 @@ fn main() {
                 code_exclude,
                 new_limit,
                 linger,
+                pace,
             );
             std::process::exit(code);
         }
@@ -653,6 +678,17 @@ fn main() {
                 ),
             };
             if let Err(e) = err {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Keyboard { action, seconds } => {
+            let name = match action {
+                KeyboardAction::Lock => "lock",
+                KeyboardAction::Unlock => "unlock",
+                KeyboardAction::Status => "status",
+            };
+            if let Err(e) = keyboard::run_cli(name, seconds) {
                 eprintln!("{e}");
                 std::process::exit(1);
             }
@@ -769,6 +805,7 @@ mod estimate {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_index(
     paths: &[PathBuf],
     index: PathBuf,
@@ -777,6 +814,7 @@ fn cmd_index(
     fake: bool,
     json: bool,
     limit: Option<i64>,
+    pace: f64,
 ) -> Result<(), String> {
     let file = if options.code {
         IndexStore::CODE_FILE
@@ -789,6 +827,7 @@ fn cmd_index(
     }
     let mut indexer = Indexer::new(store, options, Box::new(move || make_embedder(fake)))
         .map_err(|e| e.to_string())?;
+    indexer.set_pace(pace);
     // Fingerprint is written from the live worker in Indexer::full_worker.
     // `worker_source()` now matches that line (`cpp/embedder.h`); index-service
     // uses it for `check_model`. `trowel index` still waits for the live worker
@@ -1478,6 +1517,7 @@ fn cmd_index_service(
     code_exclude: Vec<PathBuf>,
     new_limit: usize,
     linger: f64,
+    pace: f64,
 ) -> i32 {
     let model = SharedEmbedder::new(move || make_embedder(fake));
     let ready = if fake {
@@ -1495,6 +1535,7 @@ fn cmd_index_service(
                 Box::new(move || Ok(Box::new(shared.clone()) as Box<dyn Embedder>)),
             )
             .map_err(|e| e.to_string())?;
+            indexer.set_pace(pace);
             if !fake {
                 indexer.embedder_source = crate::worker::worker_source(default_backend());
             }

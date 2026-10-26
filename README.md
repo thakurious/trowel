@@ -132,6 +132,7 @@ code.
 | [DECISIONS.md](DECISIONS.md) | The load-bearing decisions (D1–D25) with rationale and rejected alternatives. |
 | [EXECUTION-PLAN.md](EXECUTION-PLAN.md) | Phases, tasks, deliverables and acceptance gates. |
 | [LAUNCHER-PLAN.md](LAUNCHER-PLAN.md) | Phase 8: launcher, calculator and clipboard design, and what building it found. |
+| [PHASE9-PLAN.md](PHASE9-PLAN.md) | Phase 9 (draft): the Island, Process Monitor, System Commands, Timers, Snippets. |
 | [PROTOCOL.md](PROTOCOL.md) | The `troweld` socket protocol v2 (search, previews, status, config, apps, clipboard, calculator). |
 | [UI-DESIGN.md](UI-DESIGN.md) | Theme mapping, panel geometry, keyboard map, motion, smoothness budgets, visual QA. |
 | [ROBUSTNESS.md](ROBUSTNESS.md) | Failure modes (inotify limits, poison files, GPU loss, suspend, disk full, corruption) and their handling. |

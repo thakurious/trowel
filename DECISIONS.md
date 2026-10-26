@@ -284,7 +284,56 @@ keystroke, network for currency) and a hand-written evaluator (no units or bases
 The `trowel` plugin is a `panel` only. The bar icon (upstream `StatusMenu`: index progress ring,
 paused state, a popup with search/pause/folders/settings/quit) is removed because the human doesn't
 need it. Its jobs live elsewhere: the panel's footer shows indexing progress, `Ctrl+K` pauses the
-clipboard, and `trowel-app` holds settings. `status.clip_paused_until` stays in the protocol.
+clipboard, and Settings (D26) live in the panel. `status.clip_paused_until` stays in the protocol.
+
+## D26. **Settings live in the panel** (human, 2026-10-26)
+
+Supersedes UI-DESIGN §1/§7's `trowel-app` Settings window. The human asked for Raycast's model:
+**Trowel Settings** is a panel command (also `Ctrl+,` and `omarchy-shell trowel settings`). The
+result list holds every setting, grouped by section and filtered by the query, with its value as the
+row's accessory; the right pane edits the selected one live. Keyboard: ↵ flips a switch or runs a
+single action from the list, ←/→ change a choice in place, Tab/↵ hand the keys to the pane
+(↑/↓, ↵, ⌫ twice removes, Esc returns). The catalog is `ui/qml/Trowel/SettingsModel.js`; every
+write goes through the existing `config_set`/`set_hotkey`/`pause`/`app_hide` ops (no protocol
+change). Settings that need the desktop (start at login, editors installed, apps open now) run
+small processes from the panel. *Trade-off accepted:* settings now run inside omarchy-shell, which
+UI-DESIGN §1 avoided for heavy surfaces; this one is a list and small controls. `trowel-app` keeps
+search, Quick Look and onboarding.
+
+## D27. **Lock Keyboard** command (human, 2026-10-26)
+
+Raycast-style: pick a duration (presets 15 s to 10 min, or type one up to 30 min) and every
+physical keyboard is ignored until it ends. `trowel keyboard lock <s>` disables the devices with
+`hyprctl eval 'hl.device({ name, enabled = false })'`, the runtime call Omarchy's
+`omarchy-toggle-input-device` uses, so nothing is written to the Hyprland config. Safety: the unlock
+is a transient systemd user timer scheduled **before** any key is disabled (no timer, no lock);
+virtual keyboards, power/sleep/lid, the video bus and headset buttons stay on; a failed disable
+re-enables the rest. The countdown is a pill at the top center over the bar with an Unlock button
+for the mouse, drawn by the panel plugin as a layer surface (human's choice, 2026-10-26), so D25
+holds and `shell.json` is untouched.
+
+## D28. **Index speed: gentle by default** (human, 2026-10-26)
+
+The human: "index being slower is fine, but it should not impact the system", plus a setting.
+Measured first (80 screenshots + 2 videos, live limits of the time: nice 10, idle I/O,
+`CPUWeight=20`): the CPU side was already polite (~1.4 cores), but **embedding kept the shared iGPU
+busy 54 % on average, 100 % at p95, in stretches up to 21 s**: the compositor and every app share
+that GPU. `config.index_speed` (Settings → Index & Storage → Indexing Speed):
+
+| | GPU pacing | CPU | Cores |
+|---|---|---|---|
+| gentle (default) | rest 2× each embedding request | `CPUQuota=100%` | efficiency cores |
+| balanced | rest 1× | `CPUQuota=200%` | efficiency cores |
+| full | none | no quota | any (the pre-D28 behavior) |
+
+Pacing is per worker request (`trowel_core::embedder::Paced`): images and sound windows go 2 at a
+time (the worker encodes each on its own, so vectors are **byte-identical**, checked on all 141
+segments of the benchmark), texts unsplit; a rest is capped at 4 s. The quota is on the helper's
+systemd scope; the affinity is set before exec (the user manager has no `cpuset`). Nice 10, idle
+I/O and `CPUWeight=20` stay at every speed; the query encoder is never paced. A change restarts
+only the helper. Results (same corpus, GPU net of an 18 % idle desktop): full 295 s / ~36 % GPU /
+longest saturated stretch 21 s; balanced 346 s / ~26 % / 6 s; gentle 471 s / ~14 % / 3 s, CPU
+≤ 1.1 cores. Throughput budgets in BENCHMARKS are measured at `full`.
 
 ## Related approvals (2026-10-13)
 

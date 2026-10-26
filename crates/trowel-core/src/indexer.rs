@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::crawler::Crawler;
 use crate::database::DbError;
-use crate::embedder::Embedder;
+use crate::embedder::{Embedder, Paced};
 use crate::extract::{
     excerpt, AudioExtractor, CodeExtractor, CodeFile, DocExtractor, ExtractError, ImageExtractor,
     MediaPiece, Ocr, PdfExtractor, PdfPage, PreparedImage, VideoExtractor,
@@ -81,6 +81,9 @@ pub struct Indexer {
     /// Files whose attempt row is live in this run (so overlapping later steps
     /// of the same long file do not trip the F5c poison journal).
     in_flight: HashSet<i64>,
+    /// D28 index speed: the worker is wrapped in a [`Paced`] embedder that rests `pace` × each
+    /// request's GPU time (0 = unwrapped). Not part of the fingerprint.
+    pace: f64,
 }
 
 #[derive(Clone)]
@@ -159,6 +162,7 @@ impl Indexer {
             embedder_source: None,
             jobs_prepared: 0,
             in_flight: HashSet::new(),
+            pace: 0.0,
         })
     }
 
@@ -407,6 +411,15 @@ impl Indexer {
         Ok(())
     }
 
+    /// D28: the worker started from now on rests `pace` × each request's time (clamped to 0…4).
+    pub fn set_pace(&mut self, pace: f64) {
+        self.pace = if pace.is_finite() {
+            pace.clamp(0.0, 4.0)
+        } else {
+            0.0
+        };
+    }
+
     fn full_worker(&mut self) -> Result<&mut dyn Embedder, IndexerError> {
         if self.worker.is_none() {
             let mut started = (self.make_embedder)().map_err(IndexerError::Worker)?;
@@ -422,7 +435,11 @@ impl Indexer {
             self.store.set_meta("fingerprint", Some(&fingerprint))?;
             self.store
                 .set_meta("vector_source", Some(&started.info().vector_source()))?;
-            self.worker = Some(started);
+            self.worker = Some(if self.pace > 0.0 {
+                Box::new(Paced::new(started, self.pace))
+            } else {
+                started
+            });
         }
         Ok(self.worker.as_mut().unwrap().as_mut())
     }

@@ -323,6 +323,16 @@ impl Rules {
         {
             return true;
         }
+        // Any image saved into a Screenshots folder: omasnap's and GNOME's default is
+        // ~/Pictures/Screenshots, whatever the file is called. A region capture is smaller than the
+        // monitor, so the size check below misses it.
+        if path
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|d| d.to_string_lossy().eq_ignore_ascii_case("screenshots"))
+        {
+            return true;
+        }
         // Weak signal: a PNG whose pixel size equals a connected monitor's mode.
         if let Some((w, h)) = png_ihdr_size(path) {
             if connected_monitor_modes()
@@ -543,7 +553,9 @@ fn connected_monitor_modes() -> &'static [(u32, u32)] {
 }
 
 fn looks_like_omarchy_screenshot(lower: &str) -> bool {
-    // screenshot-YYYY-MM-DD_HH-MM-SS.png  (`omarchy-capture-screenshot`)
+    // screenshot-YYYY-MM-DD_HH-MM-SS.png  (`omarchy-capture-screenshot`), optionally followed by
+    // omasnap's `-{app}` slug and/or a `-2` collision suffix:
+    // screenshot-2026-10-26_14-35-58-ghostty.png, screenshot-2026-10-26_14-35-58-2.png.
     let rest = match lower.strip_prefix("screenshot-") {
         Some(r) => r,
         None => return false,
@@ -557,7 +569,13 @@ fn looks_like_omarchy_screenshot(lower: &str) -> bool {
             _ => return false,
         }
     }
-    chars.next().is_none()
+    let tail: String = chars.collect();
+    tail.is_empty()
+        || tail.strip_prefix('-').is_some_and(|t| {
+            !t.is_empty()
+                && t.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        })
 }
 
 fn is_hex_uuidish(name: &str) -> bool {
@@ -790,6 +808,29 @@ mod tests {
         )));
         assert!(Rules::is_screenshot(Path::new("/tmp/grim-2026.png")));
         assert!(!Rules::is_screenshot(Path::new("/tmp/holiday.png")));
+    }
+
+    #[test]
+    fn omasnap_names_and_screenshots_folders() {
+        // omasnap's default `screenshot-{date}_{time}-{app}`, and a name collision.
+        assert!(Rules::is_screenshot(Path::new(
+            "/p/screenshot-2026-10-26_14-35-58-ghostty.png"
+        )));
+        assert!(Rules::is_screenshot(Path::new(
+            "/p/screenshot-2026-10-26_14-35-58-google-chrome-2.png"
+        )));
+        assert!(!Rules::is_screenshot(Path::new(
+            "/p/screenshot-2026-10-26_14-35-58-.png"
+        )));
+        assert!(!Rules::is_screenshot(Path::new("/p/screenshot-ideas.png")));
+        // A region capture of any size in a Screenshots folder.
+        assert!(Rules::is_screenshot(Path::new(
+            "/home/u/Pictures/Screenshots/receipt.png"
+        )));
+        assert!(Rules::is_screenshot(Path::new("/home/u/screenshots/a.jpg")));
+        assert!(!Rules::is_screenshot(Path::new(
+            "/home/u/Pictures/Screenshots/old/a.png"
+        )));
     }
 
     #[test]

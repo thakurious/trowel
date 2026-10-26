@@ -9,7 +9,10 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Branches:** hubness experiment parked on local `experiment/hubness` (`a855b2d`, not adopted, not pushed).
 - **Deployed 2026-10-22 12:47 (human's request):** `troweld`/`trowel` release builds of `9793bad` in `~/.local/bin`, plugin `Panel.qml` copied, troweld and omarchy-shell restarted. `state.sqlite` migrated to v4 (`learned`: 2 apps seeded). Live: `apps_query` accepts `commands`, `config_get` → `ui.pop_to_root_seconds: 90`, `omarchy-shell trowel debugState` answers. Backups: `~/.local/bin/{troweld,trowel}.bak.trowel-20261022-124733`, `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261022-124733`, `~/.local/share/trowel/state.sqlite.bak.trowel-20261022-124733` (revert: copy back, restart both). PR #10 is open with CI green; the merge to `main` was left to the human (the agent's merge was blocked by a permission rule).
 - **2026-10-23:** `Esc` leaves the Code tab (session log); plugin `Panel.qml` redeployed, backup `Panel.qml.bak.trowel-20261023-174350`.
-- **Next step:** merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
+- **Deployed 2026-10-26 14:29 (human's request):** release `troweld`/`trowel` of `cabfab3`+, plugin `Panel.qml` (`c5980ee`), `omarchy restart shell`. Settings live in the panel (D26), Lock Keyboard (D27), ffmpeg stderr fix. 9 failed video rows re-queued (ids 5213–5226, see session log). Backups `…bak.trowel-20261026-142922` of `~/.local/bin/{troweld,trowel}`, `omarchy-plugin/Panel.qml` and `index/index.sqlite`. Revert: stop `troweld.socket troweld.service`, copy the four back, start them, `omarchy restart shell`.
+- **Next step:** human signs off PHASE9-PLAN §2 (P-D29…P-D34), then P0 spikes on `phase-9-island`.
+  Still open: human tries Lock Keyboard by hand (keys ignored? Unlock click?) and Settings from the
+  keyboard; then push `phase-8-launcher` (4 new commits) to PR #10 and merge. Then: merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
 
 ### Phase 8 map
 
@@ -173,6 +176,102 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-26 — Indexing check, ffmpeg fix, Settings in the panel, Lock Keyboard
+
+- **Indexing check (human asked if new files and screenshots index):** yes. Two PDFs saved today were
+  `done` 13 s and 28 s after their mtime. Live probe: `grim` into `~/Pictures` → `screenshot` with an
+  image vector + 2,021 OCR chars in ~16 s, ranked #1 for its OCR text; `rm` removed the row in ~6 s.
+  4,915 skipped images are upstream's small-image rule (icons, 90×30 etc.).
+- **ffmpeg stderr (`8ab77d6`):** 8 tutorial MP4s failed `ffmpeg timed out` after 300 s although
+  their audio decodes in 0.9 s by hand: damaged AAC makes ffmpeg log 2.5 MB to stderr, which
+  `AudioExtractor` piped and never read (pipe full at 64 KiB). Drained on a thread now; test
+  `noisy_stderr_does_not_block_decode` fails without the drain. One file: 73 s, 19 frames +
+  15 sound windows. Live: the 9 failed video rows were reset with troweld stopped
+  (`UPDATE files SET state='pending' … WHERE id IN (5213,5214,5216,5218,5219,5220,5224,5225,5226)`,
+  their `linux_attempts` deleted, DB backed up first); 4 were `done` within minutes.
+- **Settings in the panel (D26, human):** first a redesigned `trowel-app` window was built; the
+  human asked for Raycast's model instead, so it was dropped. Now `Trowel Settings` (command,
+  `Ctrl+,`, `omarchy-shell trowel settings`): `SettingsModel.js` (catalog, 24 settings, pure),
+  `SettingsState.qml` (data + writes), `SettingDetail.qml` (the pane), `SettingRow.qml`.
+  `SettingsWindow.qml` removed. Daemon: `config_set` now restarts/syncs on `excluded_folders`,
+  `excluded_types`, `code_excluded` too; `set_hotkey` and `trowel setup` share
+  `hotkey::lua_body`, so a new shortcut keeps the window rules and setup keeps the configured chord.
+  The mock's config merge was shallow (dropped nested `ui` patches); it uses `apply_patch` now.
+- **Lock Keyboard (D27, human):** `trowel keyboard lock|unlock|status`, `KeyLockModel.js`,
+  `KeyLockPane.qml`, `KeyLockPill.qml` (layer `trowel-popup`, human chose the pill over a bar widget).
+- **Harness:** `ui/harness` now swaps `Color`/`Style` for `Theme` (qs.Commons never resolved
+  offscreen; that was the old `'r' of undefined` noise), a `call` step, and drops the pill (no
+  layer-shell offscreen). `check.py` exits 0 now.
+- Gates (2026-10-26):
+  ```
+  $ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+  $ cargo test --workspace          # all ok, 0 failed (troweld lib 97, trowel-core 88, keyboard 6, …)
+  $ node scripts/settings-model-test.mjs   # settings-model: 12 tests passed
+  $ node scripts/keylock-model-test.mjs    # keylock-model: 4 tests passed
+  $ node scripts/listmerge-test.mjs        # listmerge: 14 tests passed
+  $ python3 -I ui/harness/check.py         # 35 ok, 0 FAIL, exit 0 (10 new: Settings, Lock Keyboard)
+  ```
+- Live acceptance, Lock Keyboard (2026-10-26 14:30):
+  ```
+  $ trowel keyboard lock 6
+  {"devices":["at-translated-set-2-keyboard","ideapad-extra-buttons","intel-hid-5-button-array","intel-hid-events","zeb-sheer-a-keyboard"],"seconds":6,"until":1793005247}
+  $ systemctl --user list-timers --all | grep trowel-keyboard
+  … 4s … trowel-keyboard-unlock.timer trowel-keyboard-unlock.service
+  # 7 s later:
+  $ trowel keyboard status          # {"locked":false}; timer gone; state file gone
+  journal: trowel[418630]: {"unlocked":[…the same 5…]}
+  ```
+  Pill seen live (layer 663,2 211×22, centered over the bar). **Not verified:** that keys were
+  physically ignored (needs a human pressing keys); the Unlock button clicked live.
+
+- **Screenshot not found (human, same day):** the human's screenshot was never a file. Their Print /
+  F12 / Alt+Shift+4 run **omasnap** (`~/.config/hypr/bindings.lua`), which copies + previews and saves
+  only on Save/Enter (to `~/Pictures/Screenshots`, name `screenshot-{date}_{time}-{app}.png`). It was
+  only clipboard entry 163. Also, a saved omasnap region capture classified as `image` (no OCR): the
+  name check rejected `-{app}` and 1045×202 isn't a monitor size. Fixed (`7fa2342`): `-{app}`/`-2`
+  suffixes and any image directly in a `Screenshots` folder are screenshots. Deployed binaries
+  (backups `…bak.trowel-20261026-144112`, daemon restart only). Live: their capture copied into
+  `~/Pictures/Screenshots` → `screenshot done`, `ocr_chars 791` in ~8 s, #1 for "skipped images";
+  probe removed. **Open (human):** omasnap doesn't save by default — bind `omasnap --copy --save`,
+  save by hand, or build clipboard-image OCR (L6 backlog).
+
+- **Index speed (D28, human: "slower is fine, must not impact the system", + a setting):** measured
+  first: CPU was polite already (~1.4 cores), the iGPU was not (54 % avg, 100 % p95, 21 s
+  saturated stretches). `index_speed` gentle (default) / balanced / full: `Paced` embedder (rest 2×/1×
+  per worker request, media in chunks of 2, vectors byte-identical on all 141 benchmark segments),
+  `CPUQuota` 100 %/200 % on the helper scope, affinity to the E-cores 4–7. Benchmark (same corpus,
+  GPU net of 18 % idle): full 295 s/~36 %/21 s; balanced 346 s/~26 %/6 s; gentle 471 s/~14 %/3 s,
+  ≤ 1.1 cores. Deployed 15:30 (backups `…bak.trowel-20261026-153055`); live helper scope:
+  `cpu.max 100000 100000`, `cpu.weight 20`, memory.high 3G / max 4G, `taskset` 4-7, nice 10,
+  `--pace 2`. Settings shows Indexing Speed (shell restarted).
+- **Flaky (pre-existing, not loosened):** `troweld --test daemon apps_query_launch_hide_and_install`
+  asserts `took_us < 2000` in a debug build; it failed once under a parallel `cargo test
+  --workspace`, passed 5/5 alone and in the next three full runs.
+- **Phase 9 plan** written (`PHASE9-PLAN.md`, draft): Island, Process Monitor, System Commands,
+  Timers, Snippets; P-D29…P-D34 need sign-off.
+- Gates (2026-10-26, after D28):
+  ```
+  $ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+  $ cargo test --workspace     # 20 suites ok, 0 failed (troweld lib 99, trowel-core 91, …)
+  $ node scripts/{settings-model,keylock-model,listmerge}-test.mjs   # 13, 4, 14 passed
+  $ python3 -I ui/harness/check.py   # 35 ok, exit 0
+  ```
+
+### Verified facts (2026-10-26)
+
+- omasnap (`~/.local/bin/omasnap`, source `~/omasnap`): quick capture = copy + 10 s preview, no file;
+  `--save`/`--copy` quick outputs; save dir `[output] directory` in `~/.config/omasnap/omasnap.conf`
+  or `OMASNAP_SCREENSHOT_DIR` (default `~/Pictures/Screenshots`); last 5 captures (full frame + crop
+  op JSON) in `~/.local/state/Omarchy/omasnap/recent`. No "always save" setting.
+
+- `hyprctl eval 'hl.device({ name = "<n>", enabled = false|true })'` prints `ok` (also for a name
+  that doesn't exist), exit 0. `omarchy-toggle-input-device` uses the same call. Runtime only.
+- `systemd-run --user --unit=X --on-active=Ns --timer-property=AccuracySec=100ms --collect` works
+  here; the timer and service are gone after firing.
+- `omarchy-bar` layer: 0,0 1536×26 (logical). `grim -g` takes logical coordinates.
+- Hyprland grabs Super binds before a layer with exclusive keyboard focus sees them, so a Super
+  chord can't be recorded in the panel; the recorder adds Super to a bare key.
 
 ### 2026-10-23 — Esc leaves the Code tab
 

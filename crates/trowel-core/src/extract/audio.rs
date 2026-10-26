@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
+use std::time::Duration;
 
 use super::error::ExtractError;
 use super::run::{abs_path, ffmpeg_timeout};
@@ -33,45 +34,7 @@ impl AudioExtractor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         super::run::limit_child_memory(&mut cmd);
-        let mut child = cmd
-            .spawn()
-            .map_err(|err| ExtractError::Unreadable(format!("ffmpeg: {err}")))?;
-        let timeout = ffmpeg_timeout(duration);
-        let mut stdout = child.stdout.take().expect("stdout");
-        let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<i16>, ExtractError>>();
-        thread::spawn(move || {
-            let mut raw = Vec::new();
-            let mut buf = [0u8; 8192];
-            loop {
-                match stdout.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => raw.extend_from_slice(&buf[..n]),
-                    Err(err) => {
-                        let _ = tx.send(Err(ExtractError::Unreadable(err.to_string())));
-                        return;
-                    }
-                }
-            }
-            let mut samples = Vec::with_capacity(raw.len() / 2);
-            for chunk in raw.as_chunks::<2>().0 {
-                samples.push(i16::from_le_bytes(*chunk));
-            }
-            let _ = tx.send(Ok(samples));
-        });
-        let samples = match rx.recv_timeout(timeout) {
-            Ok(Ok(s)) => {
-                let _ = child.wait();
-                s
-            }
-            Ok(Err(err)) => {
-                let _ = child.kill();
-                return Err(err);
-            }
-            Err(_) => {
-                let _ = child.kill();
-                return Err(ExtractError::Unreadable("ffmpeg timed out".into()));
-            }
-        };
+        let samples = decode_pcm(cmd, ffmpeg_timeout(duration))?;
         let window_samples = (window * Self::SAMPLE_RATE) as usize;
         let hop_samples = (hop * Self::SAMPLE_RATE) as usize;
         let min_samples = (minimum * Self::SAMPLE_RATE) as usize;
@@ -107,6 +70,50 @@ impl AudioExtractor {
             samples.len() as f64 / Self::SAMPLE_RATE
         };
         Ok((pieces, dur))
+    }
+}
+
+/// Runs the ffmpeg `cmd` (stdout = s16le PCM) and collects its samples within `timeout`.
+/// stderr is drained on its own thread: a damaged AAC stream makes ffmpeg log megabytes of
+/// decode errors, and an unread pipe fills at 64 KiB and blocks ffmpeg until the timeout.
+fn decode_pcm(mut cmd: Command, timeout: Duration) -> Result<Vec<i16>, ExtractError> {
+    let mut child = cmd
+        .spawn()
+        .map_err(|err| ExtractError::Unreadable(format!("ffmpeg: {err}")))?;
+    let mut stdout = child.stdout.take().expect("stdout");
+    if let Some(mut stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+        });
+    }
+    let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<i16>, ExtractError>>();
+    thread::spawn(move || {
+        let mut raw = Vec::new();
+        if let Err(err) = stdout.read_to_end(&mut raw) {
+            let _ = tx.send(Err(ExtractError::Unreadable(err.to_string())));
+            return;
+        }
+        let mut samples = Vec::with_capacity(raw.len() / 2);
+        for chunk in raw.as_chunks::<2>().0 {
+            samples.push(i16::from_le_bytes(*chunk));
+        }
+        let _ = tx.send(Ok(samples));
+    });
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(samples)) => {
+            let _ = child.wait();
+            Ok(samples)
+        }
+        Ok(Err(err)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(err)
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(ExtractError::Unreadable("ffmpeg timed out".into()))
+        }
     }
 }
 
@@ -184,5 +191,22 @@ mod tests {
         let (pieces, dur) = AudioExtractor::windows(&wav, 30.0, 25.0, 2.0, &dir).unwrap();
         assert!(pieces.is_empty());
         assert!((dur - 4.0).abs() < 0.2);
+    }
+
+    /// 2 MiB of stderr (a damaged AAC stream's decode errors) must not stall the decode.
+    #[test]
+    fn noisy_stderr_does_not_block_decode() {
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "head -c 2097152 /dev/zero | tr '\\0' x >&2; head -c 64000 /dev/zero",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+        let start = std::time::Instant::now();
+        let samples = decode_pcm(cmd, Duration::from_secs(20)).unwrap();
+        assert_eq!(samples.len(), 32_000);
+        assert!(start.elapsed() < Duration::from_secs(10));
     }
 }

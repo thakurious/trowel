@@ -17,6 +17,10 @@ pub struct Config {
     pub code_excluded: Vec<String>,
     pub code_editor: String,
     pub code_quiet_seconds: u64,
+    /// How hard indexing may work (D28): "gentle", "balanced" or "full". Absent in older files,
+    /// so it defaults; an unknown value reads as gentle.
+    #[serde(default = "default_index_speed")]
+    pub index_speed: String,
     pub ui: UiConfig,
     /// `[clipboard]` (Phase 8 L3). Absent in older files, so it defaults.
     #[serde(default)]
@@ -34,6 +38,10 @@ pub struct UiConfig {
 
 fn default_pop_to_root_seconds() -> u32 {
     90
+}
+
+fn default_index_speed() -> String {
+    "gentle".into()
 }
 
 /// Clipboard history (D20, `LAUNCHER-PLAN.md` L3).
@@ -91,6 +99,7 @@ impl Default for Config {
             code_excluded: Vec::new(),
             code_editor: String::new(),
             code_quiet_seconds: 2,
+            index_speed: default_index_speed(),
             ui: UiConfig {
                 reduce_motion: false,
                 pop_to_root_seconds: default_pop_to_root_seconds(),

@@ -680,8 +680,14 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
             if let Some((prev, next)) = applied {
                 reply_ok(conn, id, serde_json::to_value(&next).unwrap_or(json!({})));
                 engine.clip_watch.set_env(clip_env(&next));
+                // What the helper reads changed: restart it and sync, so a new skip drops its
+                // files and a removed one brings them back.
                 let folders_changed = next.roots != prev.roots
                     || next.code_roots != prev.code_roots
+                    || next.excluded_folders != prev.excluded_folders
+                    || next.excluded_types != prev.excluded_types
+                    || next.code_excluded != prev.code_excluded
+                    || next.index_speed != prev.index_speed
                     || next.onboarded != prev.onboarded;
                 if next.onboarded && folders_changed {
                     if let Some(helper) = engine.helper.lock().expect("helper").clone() {

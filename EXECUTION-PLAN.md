@@ -275,7 +275,7 @@ To do (in this order; each its own small PR):
 | U4 | 809f185 (rest) | Watchdog: per-file time limit (15 min) and memory limit; a file that runs away is marked "couldn't be read" and the helper restarts (≤3 times / 10 min) | memory is already capped by the `trowel-index.slice` scope (MemoryMax=4G, OOM → F5c poison); add the per-file time limit + `stopped` event + restart throttle | Port `IndexStoreTests.markStopped`; a `sleep`-forever fake extractor is stopped and skipped |
 | U5 | ae99c1c | Index only at set hours (Settings) | `IndexHours` in core; config key + Settings row; engine gates backfill like the power policy | Port `IndexHoursTests`; outside the hours the helper only syncs new files |
 | U6 | ce6c765 | Time estimates calibrated from measured per-kind costs on this machine | port `MeasuredCosts` (the Apple speed probe has no Linux equivalent: measure from `indexer` events) | Port `MeasuredCostsTests`; onboarding estimate within 2× of the real first pass |
-| U7 | 6155d80 | Settings scrolls with long folder lists | `SettingsWindow.qml` folders list in a Flickable/ListView | 30 folders: every row reachable, no clipped buttons |
+| U7 | 6155d80 | Settings scrolls with long folder lists | the panel's `SettingDetail.qml` (D26) folders list in a Flickable | 30 folders: every row reachable, no clipped buttons |
 | U8 | 1cf003d | Don't overwrite the field while an IME composes | check `QueryField.qml` never writes `text` back while `inputMethodComposing`; re-run the fcitx5/Mozc test from P0 | Typing 사업 / にほんご in the panel commits whole |
 | U9 | 2d0c83c, 47d0196 | Model download from the helper, and "Use Files…" for downloaded model files | Settings/onboarding: pick existing `.gguf` files, verify SHA-256 (`ModelFiles`) and copy into `models_dir` | Wrong file is refused with a reason; right files make `model_status` complete |
 | U10 | a5c3e24 | llama.cpp uses up to 8 threads on Linux | set `n_threads`/`n_threads_batch` (and mtmd) in `cpp/` worker to min(8, logical CPUs); CPU backend only matters | CPU parity still ≥ 0.999; CPU-backend encode time recorded in BENCHMARKS |
@@ -288,6 +288,16 @@ To do (in this order; each its own small PR):
 (they add files to the testbed only if the eval JSON gains entries, which needs the human).
 
 ---
+
+## Phase 9: Island, Process Monitor, System Commands, Timers, Snippets (`phase-9-island`)
+
+Requested 2026-10-26, **draft awaiting sign-off** of P-D29…P-D34. The full plan is in
+**`PHASE9-PLAN.md`**: P0 spikes → P1 protocol v3 + `state.sqlite` v5 + mock → P2 the Island
+(replaces the keyboard-lock pill) → P3 System Commands ∥ P4 Timers → P5 Process Monitor →
+P6 Snippets → P7 hardening. File search and every fidelity invariant stay untouched.
+
+**Acceptance:** each P-phase acceptance line in `PHASE9-PLAN.md` is demonstrated with output in
+`PROGRESS.md`, and the P4 evals re-run with identical numbers at the end.
 
 ## Cross-cutting workstreams
 

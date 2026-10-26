@@ -614,12 +614,10 @@ fn merge_objects(base: &mut Value, patch: &Value) {
     }
 }
 
+/// The real daemon's merge (`config_file::apply_patch`), so a nested `ui`/`clipboard` patch keeps
+/// the keys it doesn't name. A shallow merge dropped such a patch whole.
 fn merge_config(cfg: &mut Config, patch: &Value) {
-    let Ok(mut base) = serde_json::to_value(&*cfg) else {
-        return;
-    };
-    merge_objects(&mut base, patch);
-    if let Ok(next) = serde_json::from_value(base) {
+    if let Ok(next) = crate::config_file::apply_patch(cfg, patch) {
         *cfg = next;
     }
 }
@@ -656,5 +654,22 @@ fn writer_loop(mut stream: UnixStream, out: Arc<Outbox>) {
         if writeln!(stream, "{line}").is_err() {
             break;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_patch_keeps_sibling_keys() {
+        let mut cfg = Config::default();
+        let motion = cfg.ui.reduce_motion;
+        merge_config(&mut cfg, &json!({"ui": {"pop_to_root_seconds": 120}}));
+        assert_eq!(cfg.ui.pop_to_root_seconds, 120);
+        assert_eq!(cfg.ui.reduce_motion, motion);
+        merge_config(&mut cfg, &json!({"clipboard": {"max_entries": 500}}));
+        assert_eq!(cfg.clipboard.max_entries, 500);
+        assert_eq!(cfg.ui.pop_to_root_seconds, 120);
     }
 }

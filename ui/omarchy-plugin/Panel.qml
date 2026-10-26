@@ -7,6 +7,8 @@ import qs.Commons
 import qs.Ui
 import "Trowel"
 import "Trowel/ListMerge.js" as ListMerge
+import "Trowel/SettingsModel.js" as SettingsModel
+import "Trowel/KeyLockModel.js" as KeyLockModel
 
 // UI-DESIGN §3 quick panel. Production plugin id (DECISIONS D12/D17).
 Item {
@@ -29,12 +31,15 @@ Item {
   // Stays true until Done even after folders Continue sets onboarded
   // (indexing starts then; the wizard must not flip to search).
   property bool wizardOpen: false
-  // "search" (files + apps + calculator) or "clipboard" (history; LAUNCHER-PLAN.md L4).
+  // "search" (files + apps + calculator), "clipboard" (history; LAUNCHER-PLAN.md L4),
+  // "settings" (the Trowel Settings command, DECISIONS D26) or "keylock" (Lock Keyboard).
   property string view: "search"
   property var clipContent: ({})
   // Clipboard History opened as a command from the search list: Esc (or Backspace on an empty
   // field) goes back to that search, as in Raycast.
   property bool clipFromSearch: false
+  property bool settingsFromSearch: false
+  property bool lockFromSearch: false
   property string savedQuery: ""
   // Pop to root (Raycast, oma-cast `LauncherWindow.qml`): reopening within this many seconds of
   // closing keeps the view, query and selection; after it, the panel opens blank. 0 = always blank.
@@ -50,9 +55,19 @@ Item {
     var r = root.selectedRow
     return (r && r.rowType) ? r.rowType : ""
   }
+  readonly property var selectedSetting: root.selectedType === "setting" ? root.selectedRow.entry : null
 
   // Footer, left: `upstream/Sources/DigUpApp/SearchPanelView.swift:131` statusText.
   readonly property string statusText: {
+    if (root.view === "keylock")
+      return "Locks every keyboard; the mouse keeps working"
+    if (root.view === "settings") {
+      var n = 0
+      for (var k = 0; k < settingsRows.count; k++)
+        if (settingsRows.get(k).rowType === "setting")
+          n++
+      return n === 1 ? "1 setting" : n + " settings"
+    }
     if (root.view === "clipboard") {
       var n = client.clipTotal
       return (n === 1 ? "1 item" : n + " items") + (root.clipPaused ? " · capture paused" : "")
@@ -274,6 +289,13 @@ Item {
     var keep = root.remembered()
     // The bar's "Clipboard history" summons with {"view": "clipboard"}.
     try {
+      if (JSON.parse(payloadJson || "{}").view === "settings") {
+        if (keep && root.view === "settings")
+          reopen()
+        else
+          openSettings(false)
+        return
+      }
       if (JSON.parse(payloadJson || "{}").view === "clipboard") {
         if (keep && root.view === "clipboard")
           reopen()
@@ -290,6 +312,8 @@ Item {
     actions.visible = false
     root.view = "search"
     root.clipFromSearch = false
+    root.settingsFromSearch = false
+    root.lockFromSearch = false
     root.mapped = true
     root.opened = true
     root.navigated = false
@@ -318,6 +342,8 @@ Item {
     client.panelOpened()
     if (root.view === "clipboard")
       client.clipRefresh()
+    if (root.view === "settings")
+      settingsStore.refresh()
     Qt.callLater(function () {
       query.forceActiveFocus()
       query.selectAll()
@@ -354,6 +380,138 @@ Item {
     })
   }
 
+  // Settings (DECISIONS D26): the "Trowel Settings" command (fromSearch) or straight in from
+  // `omarchy-shell trowel settings`. The list holds the settings; the right pane edits one.
+  function openSettings(fromSearch) {
+    root.settingsFromSearch = fromSearch === true
+    root.savedQuery = root.settingsFromSearch ? query.text : ""
+    hybridTimer.stop()
+    unmapTimer.stop()
+    actions.visible = false
+    root.view = "settings"
+    root.mapped = true
+    root.opened = true
+    root.navigated = false
+    root.now = Date.now() / 1000
+    root.selection = ""
+    root.selectedRow = null
+    if (root.needsOnboarding)
+      return
+    query.text = ""
+    root.phase = "settings"
+    client.clearApps()
+    client.clearCalc()
+    settingsStore.refresh()
+    root.syncSettings()
+    Qt.callLater(function () {
+      query.forceActiveFocus()
+    })
+  }
+
+  // The list for the query; the selection stays on its setting while it still matches.
+  function syncSettings() {
+    var rows = SettingsModel.rows(query.text)
+    settingsRows.clear()
+    for (var i = 0; i < rows.length; i++)
+      settingsRows.append(rows[i])
+    root.settleSelection()
+  }
+
+  // Lock Keyboard: pick how long in the list (or type it), ↵ locks and the panel closes.
+  function openKeyLock(fromSearch) {
+    root.lockFromSearch = fromSearch === true
+    root.savedQuery = root.lockFromSearch ? query.text : ""
+    hybridTimer.stop()
+    actions.visible = false
+    root.view = "keylock"
+    root.navigated = false
+    root.selection = ""
+    root.selectedRow = null
+    query.text = ""
+    root.phase = "keylock"
+    client.clearApps()
+    client.clearCalc()
+    root.syncKeyLock()
+    Qt.callLater(function () {
+      query.forceActiveFocus()
+    })
+  }
+
+  function syncKeyLock() {
+    var rows = KeyLockModel.rows(query.text)
+    keylockRows.clear()
+    for (var i = 0; i < rows.length; i++)
+      keylockRows.append(rows[i])
+    // A typed duration is what the user meant: select it even after moving.
+    if (rows.length && rows[0].custom)
+      root.navigated = false
+    root.settleSelection()
+  }
+
+  function lockKeyboard(seconds) {
+    root.dismiss()
+    lockProc.command = ["trowel", "keyboard", "lock", String(seconds)]
+    lockProc.running = true
+  }
+
+  // ↵ on a setting row: flip a switch, run a single action, or hand the keys to the pane.
+  function settingPrimary() {
+    var e = root.selectedSetting
+    if (!e)
+      return
+    var what = SettingsModel.primary(e, settingsStore.ctx)
+    if (what === "toggle")
+      settingsStore.toggle(e)
+    else if (what === "action") {
+      var act = SettingsModel.actionsFor(e, settingsStore.ctx)[0]
+      if (act.danger && settingDetail.armed !== act.id) {
+        settingDetail.armed = act.id
+        toast.show("Press ↵ again to " + act.label.toLowerCase())
+        return
+      }
+      settingDetail.armed = ""
+      settingsStore.run(act.id)
+      if (act.id === "doctor")
+        toast.show("Checking…")
+    } else
+      settingDetail.enter()
+  }
+
+  // Keys the query field passes on in the Settings view. Tab hands the keys to the pane; ←/→ change
+  // a choice or switch in place while the field is empty (the cursor has nowhere to go then).
+  function settingsKey(event) {
+    if (query.composing())
+      return false
+    var mods = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)
+    if (event.key === Qt.Key_Tab && !mods) {
+      if (root.selectedSetting)
+        settingDetail.enter()
+      return true
+    }
+    if ((event.key === Qt.Key_Left || event.key === Qt.Key_Right) && !mods && !query.text.length)
+      return root.settingStep(event.key === Qt.Key_Left ? -1 : 1)
+    return false
+  }
+
+  // ←/→ on a choice or switch row, from the list, while the field is empty.
+  function settingStep(step) {
+    var e = root.selectedSetting
+    if (!e)
+      return false
+    if (e.type === "choice") {
+      var v = SettingsModel.stepChoice(e, settingsStore.ctx, step)
+      if (v !== settingsStore.value(e))
+        settingsStore.set(e, v)
+      return true
+    }
+    if (e.type === "toggle") {
+      if (settingsStore.value(e) !== (step > 0))
+        settingsStore.set(e, step > 0)
+      return true
+    }
+    return false
+  }
+
   // Stamps the close for pop to root and re-reads the config, so a timeout changed in Settings
   // (another process) holds from the next open.
   function stampClose() {
@@ -387,6 +545,14 @@ Item {
 
   function onQueryEdited() {
     root.navigated = false
+    if (root.view === "keylock") {
+      root.syncKeyLock()
+      return
+    }
+    if (root.view === "settings") {
+      root.syncSettings()
+      return
+    }
     if (root.view === "clipboard") {
       root.phase = "clipboard"
       client.clipQuery(query.text.replace(/^\s+|\s+$/g, ""), chips.kindsFor(chips.current))
@@ -431,15 +597,22 @@ Item {
   function runCommand(id) {
     if (id === "clipboard")
       openClipboard(true)
+    else if (id === "settings")
+      openSettings(true)
+    else if (id === "lock-keyboard")
+      openKeyLock(true)
   }
 
   // Esc / Backspace on an empty field inside a command: back to the search it came from.
   function goBack() {
-    if (root.view !== "clipboard" || !root.clipFromSearch)
+    var fromSearch = (root.view === "clipboard" && root.clipFromSearch) || (root.view === "settings" && root.settingsFromSearch) || (root.view === "keylock" && root.lockFromSearch)
+    if (!fromSearch)
       return false
     actions.visible = false
     root.view = "search"
     root.clipFromSearch = false
+    root.settingsFromSearch = false
+    root.lockFromSearch = false
     root.selection = ""
     root.selectedRow = null
     root.navigated = false
@@ -517,7 +690,10 @@ Item {
     client.search(text, "hybrid", root.codeMode, false)
   }
 
-  readonly property var listModel: root.view === "clipboard" ? client.clipModel : client.rows
+  readonly property var listModel: root.view === "clipboard" ? client.clipModel : (root.view === "settings" ? settingsRows : (root.view === "keylock" ? keylockRows : client.rows))
+
+  property ListModel settingsRows: ListModel {}
+  property ListModel keylockRows: ListModel {}
 
   // {rowType, rowId} of the list on screen, for ListMerge's selection rules.
   function shownRows() {
@@ -555,6 +731,26 @@ Item {
   }
 
   function pickSelected() {
+    if (root.view === "keylock") {
+      root.selectedRow = null
+      for (var k = 0; k < keylockRows.count; k++)
+        if (keylockRows.get(k).rowId === root.selection)
+          root.selectedRow = {
+            "rowType": "duration",
+            "rowId": root.selection,
+            "seconds": keylockRows.get(k).seconds
+          }
+      return
+    }
+    if (root.view === "settings") {
+      var e = root.selection.indexOf("set:") === 0 ? SettingsModel.byId(root.selection.slice(4)) : null
+      root.selectedRow = e ? {
+        "rowType": "setting",
+        "rowId": root.selection,
+        "entry": e
+      } : null
+      return
+    }
     if (root.selection === "calc:") {
       root.selectedRow = null
       return
@@ -600,6 +796,14 @@ Item {
     if (t === "command") {
       client.commandRun(root.selectedRow.commandId, client.launcherQuery)
       runCommand(root.selectedRow.commandId)
+      return
+    }
+    if (t === "setting") {
+      root.settingPrimary()
+      return
+    }
+    if (t === "duration") {
+      root.lockKeyboard(root.selectedRow.seconds)
       return
     }
     if (t === "clip") {
@@ -713,9 +917,15 @@ Item {
     function apps(): void {
       root.open("{}")
     }
+    function settings(): void {
+      if (root.opened && root.view === "settings")
+        root.dismiss()
+      else
+        root.open('{"view": "settings"}')
+    }
     // Debugging without keystrokes: `omarchy-shell trowel debugState` etc.
     function debugState(): string {
-      var lv = root.view === "clipboard" ? clipList : list
+      var lv = root.view === "clipboard" ? clipList : (root.view === "settings" ? settingsList : (root.view === "keylock" ? lockList : list))
       var m = lv.model
       var shown = []
       for (var i = 0; i < Math.min(m ? m.count : 0, 12); i++)
@@ -735,7 +945,7 @@ Item {
         phase: root.phase,
         selection: root.selection,
         type: root.selectedType,
-        list: root.view === "clipboard" ? "clipList" : "list",
+        list: root.view === "clipboard" ? "clipList" : (root.view === "settings" ? "settingsList" : "list"),
         modelRows: shown,
         clipCount: client.clipModel.count,
         rowsCount: client.rows.count,
@@ -749,6 +959,27 @@ Item {
     }
     function debugCommand(id: string): void {
       root.runCommand(id)
+    }
+  }
+
+  KeyLockPill {}
+
+  Process {
+    id: lockProc
+    stderr: StdioCollector {
+      id: lockErr
+    }
+    onExited: function (code) {
+      if (code !== 0)
+        Quickshell.execDetached(["notify-send", "-a", "Trowel", "Couldn't lock the keyboard", String(lockErr.text || "").trim()])
+    }
+  }
+
+  SettingsState {
+    id: settingsStore
+    client: client
+    onToast: function (text) {
+      toast.show(text)
     }
   }
 
@@ -1008,20 +1239,27 @@ Item {
             id: query
             width: parent.width
             codeMode: root.codeMode
-            crumb: root.view === "clipboard" ? "Clipboard History" : ""
+            crumb: root.view === "clipboard" ? "Clipboard History" : (root.view === "settings" ? "Settings" : (root.view === "keylock" ? "Lock Keyboard" : ""))
             hybridPending: root.phase === "words"
             countText: root.activityBadge
-            placeholder: root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
+            placeholder: root.view === "keylock" ? "How long? Pick one, or type 45 or 3m" : root.view === "settings" ? "Search settings" : root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
             onTextEdited: root.onQueryEdited()
             onKeyPressed: function (event) {
               var ctrl = event.modifiers & Qt.ControlModifier
               var shift = event.modifiers & Qt.ShiftModifier
               if (query.composing() && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Up || event.key === Qt.Key_Down || event.key === Qt.Key_Escape))
                 return
-              if (event.key === Qt.Key_Escape) {
+              if (root.view === "settings" && root.settingsKey(event)) {
+                event.accepted = true
+              } else if (event.key === Qt.Key_Escape) {
                 root.escapeStep()
                 event.accepted = true
               } else if (event.key === Qt.Key_Backspace && query.text.length === 0 && (root.goBack() || (root.codeMode && root.leaveTab()))) {
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_Comma) {
+                // Ctrl+, opens Settings from anywhere in the panel, as in Raycast.
+                if (root.view !== "settings")
+                  root.openSettings(root.view === "search")
                 event.accepted = true
               } else if (ctrl && event.key === Qt.Key_K) {
                 actions.actions = root.actionsFor()
@@ -1090,7 +1328,7 @@ Item {
           Item {
             width: parent.width
             height: visible ? 34 : 0
-            visible: root.phase !== "empty"
+            visible: root.phase !== "empty" && root.view !== "settings" && root.view !== "keylock"
             KindChips {
               id: chips
               visible: root.view === "clipboard"
@@ -1180,6 +1418,10 @@ Item {
             anchors.centerIn: parent
             width: parent.width - 48
             title: {
+              if (root.view === "keylock")
+                return "Type a duration, like 45 or 3m"
+              if (root.view === "settings")
+                return "No settings match"
               if (root.view === "clipboard")
                 return query.text.length ? "No matches in your clipboard history" : "Nothing copied yet"
               if (root.phase === "codeHint")
@@ -1193,6 +1435,10 @@ Item {
               return "No good matches"
             }
             detail: {
+              if (root.view === "keylock")
+                return "Up to 30 minutes."
+              if (root.view === "settings")
+                return "Try a word like folders, clipboard or shortcut."
               if (root.view === "clipboard")
                 return query.text.length ? "" : "Text, images, links and files you copy show up here."
               if (root.phase === "words")
@@ -1430,6 +1676,92 @@ Item {
               }
             }
 
+            ListView {
+              id: lockList
+              visible: root.view === "keylock"
+              width: visible ? root.listWidth : 0
+              height: parent.height
+              model: keylockRows
+              clip: true
+              delegate: SettingRow {
+                id: lockCell
+                required property string rowId
+                required property string title
+                required property bool custom
+                width: lockList.width
+                entry: ({
+                    "glyph": "\uf017",
+                    "title": lockCell.title
+                  })
+                accessory: lockCell.custom ? "Typed" : ""
+                selected: root.selection === lockCell.rowId
+                onClicked: {
+                  root.selection = lockCell.rowId
+                  root.navigated = true
+                  root.pickSelected()
+                  query.forceActiveFocus()
+                }
+                onOpened: root.openSelected()
+              }
+            }
+
+            ListView {
+              id: settingsList
+              visible: root.view === "settings"
+              width: visible ? root.listWidth : 0
+              height: parent.height
+              model: settingsRows
+              clip: true
+              cacheBuffer: 240
+
+              Connections {
+                target: root
+                function onSelectionChanged() {
+                  if (!settingsList.visible)
+                    return
+                  var id = root.selection
+                  Qt.callLater(function () {
+                    for (var i = 0; i < settingsRows.count; i++)
+                      if (settingsRows.get(i).rowId === id) {
+                        if (i > 0 && settingsRows.get(i - 1).rowType === "header")
+                          settingsList.positionViewAtIndex(i - 1, ListView.Contain)
+                        settingsList.positionViewAtIndex(i, ListView.Contain)
+                        return
+                      }
+                  })
+                }
+              }
+
+              delegate: Item {
+                id: setCell
+                required property string rowType
+                required property string rowId
+                required property string title
+                width: settingsList.width
+                height: rowType === "header" ? 28 : 46
+                GroupHeader {
+                  visible: setCell.rowType === "header"
+                  title: setCell.title
+                  width: parent.width
+                }
+                SettingRow {
+                  readonly property var setting: setCell.rowType === "setting" ? SettingsModel.byId(setCell.rowId.slice(4)) : null
+                  visible: setCell.rowType === "setting"
+                  width: parent.width
+                  entry: setting
+                  accessory: setting ? SettingsModel.accessory(setting, settingsStore.ctx) : ""
+                  selected: root.selection === setCell.rowId
+                  onClicked: {
+                    root.selection = setCell.rowId
+                    root.navigated = true
+                    root.pickSelected()
+                    query.forceActiveFocus()
+                  }
+                  onOpened: root.settingPrimary()
+                }
+              }
+            }
+
             Rectangle {
               width: 1
               height: parent.height
@@ -1440,9 +1772,25 @@ Item {
               width: parent.width - root.listWidth - 1
               height: parent.height
 
+              KeyLockPane {
+                anchors.fill: parent
+                visible: root.view === "keylock"
+                row: root.selectedType === "duration" ? root.selectedRow : null
+              }
+              SettingDetail {
+                id: settingDetail
+                anchors.fill: parent
+                visible: root.view === "settings"
+                entry: root.selectedSetting
+                store: settingsStore
+                onDone: query.forceActiveFocus()
+                onToast: function (text) {
+                  toast.show(text)
+                }
+              }
               PreviewPane {
                 anchors.fill: parent
-                visible: root.selectedType === "row" || root.selectedType === ""
+                visible: root.view !== "settings" && root.view !== "keylock" && (root.selectedType === "row" || root.selectedType === "")
                 preview: root.preview
                 row: root.selectedType === "row" ? root.selectedRow : ({})
                 query: query.text
@@ -1495,6 +1843,26 @@ Item {
             // `SearchPanelView.swift` keysText, with Ctrl for ⌘.
             Repeater {
               model: {
+                if (root.view === "keylock")
+                  return [["↵", "Lock"], ["esc", root.lockFromSearch ? "Back" : "Close"]]
+                if (root.view === "settings") {
+                  if (settingDetail.activeFocus)
+                    return settingDetail.hints
+                  var e = root.selectedSetting
+                  var what = e ? SettingsModel.primary(e, settingsStore.ctx) : ""
+                  var h = []
+                  if (what === "toggle")
+                    h = [["↵", "Toggle"]]
+                  else if (what === "action") {
+                    var act = SettingsModel.actionsFor(e, settingsStore.ctx)[0]
+                    h = [["↵", settingDetail.armed === act.id ? "Confirm" : act.label]]
+                  }
+                  else if (e)
+                    h = [["↵", "Edit"]]
+                  if (e && e.type === "choice" && !query.text.length)
+                    h = [["← →", "Change"]].concat(h)
+                  return h.concat([["esc", root.settingsFromSearch ? "Back" : "Close"]])
+                }
                 switch (root.selectedType) {
                 case "calc":
                   return [["↵", "Copy"], ["ctrl ↵", "Paste"], ["ctrl K", "Actions"]]
