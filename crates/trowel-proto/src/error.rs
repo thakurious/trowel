@@ -14,6 +14,8 @@ pub enum ErrorCode {
     Io,
     Busy,
     Internal,
+    /// v3: a process the kill policy protects (P-D30).
+    NotAllowed,
 }
 
 impl ErrorCode {
@@ -28,6 +30,7 @@ impl ErrorCode {
             Self::Io => "io",
             Self::Busy => "busy",
             Self::Internal => "internal",
+            Self::NotAllowed => "not_allowed",
         }
     }
 }

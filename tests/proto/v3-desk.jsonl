@@ -1,0 +1,26 @@
+{"send": {"id": 1, "op": "hello", "protocol": 3, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 3, "daemon": "0.1.0", "capabilities": "*", "state": "ready"}}
+{"send": {"id": 2, "op": "island_post", "activity": {"id": "backup", "title": "Backing up", "progress": 0.4, "priority": 10}}}
+{"recv": {"id": 2, "ok": true}}
+{"send": {"id": 3, "op": "island_post", "activity": {"id": "bad", "title": "x", "progress": 4}}}
+{"recv": {"id": 3, "ok": false, "error": {"code": "bad_request", "message": "progress is 0 to 1"}}}
+{"send": {"id": 4, "op": "island_dismiss", "activity_id": "backup"}}
+{"recv": {"id": 4, "ok": true, "dismissed": true}}
+{"send": {"id": 5, "op": "timer_parse", "text": "timer 5 min pizza"}}
+{"recv": {"id": 5, "ok": true, "spec": {"seconds": 300, "label": "pizza"}}}
+{"send": {"id": 6, "op": "timer_parse", "text": "pizza"}}
+{"recv": {"id": 6, "ok": true, "spec": null}}
+{"send": {"id": 7, "op": "timer_list"}}
+{"recv": {"id": 7, "ok": true, "timers": [{"id": 1, "label": "Tea", "total": 1500, "state": "running", "ends_at": "*", "left": "*", "created": "*"}, {"id": 2, "label": "Stretch", "total": 600, "state": "paused", "left": "*", "created": "*"}]}}
+{"send": {"id": 8, "op": "timer_cancel", "timer_id": 2}}
+{"recv": {"id": 8, "ok": true, "cancelled": true}}
+{"send": {"id": 9, "op": "snippet_query", "text": ";sig", "limit": 1}}
+{"recv": {"id": 9, "ok": true, "rows": [{"id": 1, "name": "Email signature", "keyword": ";sig", "body": "Best,\nSaurabh", "tags": [], "created": "*", "last_used": 0, "uses": 0}]}}
+{"send": {"id": 10, "op": "snippet_paste", "snippet_id": 3, "mode": "copy"}}
+{"recv": {"id": 10, "ok": false, "error": {"code": "bad_request", "message": "needs name"}}}
+{"send": {"id": 11, "op": "snippet_paste", "snippet_id": 3, "mode": "copy", "args": {"name": "Ana"}}}
+{"recv": {"id": 11, "ok": true, "text": "Hi Ana, thanks for reaching out!"}}
+{"send": {"id": 12, "op": "system_run", "command_id": "rm -rf ~"}}
+{"recv": {"id": 12, "ok": false, "error": {"code": "not_found", "message": "no system command rm -rf ~"}}}
+{"send": {"id": 13, "op": "proc_kill", "pids": [1300], "signal": "term"}}
+{"recv": {"id": 13, "ok": false, "error": {"code": "not_allowed", "message": "Ending Hyprland would end your session, so Trowel won't"}}}

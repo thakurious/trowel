@@ -133,6 +133,64 @@ impl crate::desk::Host for EngineHost {
     fn spawn(&self, argv: &[String]) -> Result<(), String> {
         apps::spawn(argv).map_err(|e| e.to_string())
     }
+
+    fn capture(&self, argv: &[String], timeout: Duration) -> Result<String, String> {
+        crate::desk::capture_command(argv, timeout)
+    }
+
+    fn home(&self) -> PathBuf {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/"))
+    }
+
+    fn script_dirs(&self) -> Vec<PathBuf> {
+        crate::desk::system::script_dirs(&self.home())
+    }
+
+    fn keylock_state(&self) -> Option<Value> {
+        let path = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join("trowel/keyboard-lock.json");
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    }
+
+    fn proc_source(&self) -> Box<dyn crate::desk::procs::Source> {
+        Box::new(crate::desk::procs::ProcFs::new(
+            crate::desk::procs::proc_root(),
+        ))
+    }
+
+    fn clipboard_text(&self) -> String {
+        crate::desk::capture_command(
+            &[
+                "wl-paste".into(),
+                "--no-newline".into(),
+                "--type".into(),
+                "text".into(),
+            ],
+            Duration::from_secs(1),
+        )
+        .unwrap_or_default()
+    }
+
+    fn trowel_exe(&self) -> String {
+        crate::helper::locate_trowel().display().to_string()
+    }
+
+    fn timer_sound(&self) -> bool {
+        self.0
+            .upgrade()
+            .and_then(|e| e.config.lock().ok().map(|c| c.timer_sound))
+            .unwrap_or(true)
+    }
+
+    fn state_exists(&self) -> bool {
+        self.0
+            .upgrade()
+            .is_some_and(|e| e.state_dir.join("state.sqlite").exists())
+    }
 }
 
 enum Queued {
@@ -687,6 +745,9 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
                     .lock()
                     .expect("clip subscribers")
                     .push(Arc::clone(&conn.out));
+            }
+            if topics.iter().any(|t| t == "island") {
+                engine.desk().island.subscribe(conn.sink.clone());
             }
             if topics.iter().any(|t| t == "status") {
                 engine

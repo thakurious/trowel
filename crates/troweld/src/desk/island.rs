@@ -127,6 +127,16 @@ impl Island {
             .min()
     }
 
+    /// Sends one event line (e.g. `island_action`) to every subscriber.
+    pub fn notify(&self, event: serde_json::Value) {
+        let line = event.to_string();
+        let mut subs = self.subscribers.lock().expect("subs");
+        subs.retain(|s| s.alive());
+        for s in subs.iter() {
+            s.send(line.clone());
+        }
+    }
+
     fn broadcast(&self) {
         let state = {
             let entries = self.entries.lock().expect("island");
