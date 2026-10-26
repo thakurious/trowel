@@ -70,6 +70,17 @@ Item {
     return -1
   }
 
+  // The pill and the bubble report hover here; moving from one to the other doesn't collapse.
+  function hoverChanged(on) {
+    if (on) {
+      leaveTimer.stop()
+      hoverTimer.restart()
+    } else {
+      hoverTimer.stop()
+      leaveTimer.restart()
+    }
+  }
+
   function iconKind(a) {
     return a && a.icon && a.icon.length > 1 ? a.icon : "bell"
   }
@@ -193,18 +204,14 @@ Item {
       }
     }
 
+    // A HoverHandler stays hovered while the pointer is over the buttons inside; a MouseArea
+    // here lost its hover to the buttons' own MouseAreas and the island collapsed under them.
+    HoverHandler {
+      onHoveredChanged: root.hoverChanged(hovered)
+    }
+
     MouseArea {
-      id: hover
       anchors.fill: parent
-      hoverEnabled: true
-      onEntered: {
-        leaveTimer.stop()
-        hoverTimer.restart()
-      }
-      onExited: {
-        hoverTimer.stop()
-        leaveTimer.restart()
-      }
       onClicked: {
         if (root.alertId.length) {
           root.alertId = ""
@@ -475,16 +482,10 @@ Item {
     }
     MouseArea {
       anchors.fill: parent
-      hoverEnabled: true
-      onEntered: {
-        leaveTimer.stop()
-        hoverTimer.restart()
-      }
-      onExited: {
-        hoverTimer.stop()
-        leaveTimer.restart()
-      }
       onClicked: root.expandedByUser = true
+    }
+    HoverHandler {
+      onHoveredChanged: root.hoverChanged(hovered)
     }
   }
 
