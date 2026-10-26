@@ -10,9 +10,9 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Deployed 2026-10-22 12:47 (human's request):** `troweld`/`trowel` release builds of `9793bad` in `~/.local/bin`, plugin `Panel.qml` copied, troweld and omarchy-shell restarted. `state.sqlite` migrated to v4 (`learned`: 2 apps seeded). Live: `apps_query` accepts `commands`, `config_get` → `ui.pop_to_root_seconds: 90`, `omarchy-shell trowel debugState` answers. Backups: `~/.local/bin/{troweld,trowel}.bak.trowel-20261022-124733`, `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261022-124733`, `~/.local/share/trowel/state.sqlite.bak.trowel-20261022-124733` (revert: copy back, restart both). PR #10 is open with CI green; the merge to `main` was left to the human (the agent's merge was blocked by a permission rule).
 - **2026-10-23:** `Esc` leaves the Code tab (session log); plugin `Panel.qml` redeployed, backup `Panel.qml.bak.trowel-20261023-174350`.
 - **Deployed 2026-10-26 14:29 (human's request):** release `troweld`/`trowel` of `cabfab3`+, plugin `Panel.qml` (`c5980ee`), `omarchy restart shell`. Settings live in the panel (D26), Lock Keyboard (D27), ffmpeg stderr fix. 9 failed video rows re-queued (ids 5213–5226, see session log). Backups `…bak.trowel-20261026-142922` of `~/.local/bin/{troweld,trowel}`, `omarchy-plugin/Panel.qml` and `index/index.sqlite`. Revert: stop `troweld.socket troweld.service`, copy the four back, start them, `omarchy restart shell`.
-- **Next step:** human signs off PHASE9-PLAN §2 (P-D29…P-D34), then P0 spikes on `phase-9-island`.
-  Still open: human tries Lock Keyboard by hand (keys ignored? Unlock click?) and Settings from the
-  keyboard; then push `phase-8-launcher` (4 new commits) to PR #10 and merge. Then: merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
+- **Phase 9 (`phase-9-island`, not pushed): P0 ✅, P1 ✅, P2 started.** Plan: `PHASE9-PLAN.md`
+  (approved 2026-10-26, §8). See the session log entry "Phase 9 P1 + P2 start" for the exact next step.
+- **Next step:** continue **P2 (the Island)** from the checklist in the session log below.
 
 ### Phase 8 map
 
@@ -176,6 +176,59 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-26 — Phase 9 P1 + P2 start (handoff)
+
+Branch `phase-9-island` (from `main` d17171c), commits: `520a49f` P0 spikes, `5423c25` P1, plus the
+P2 island registry (this entry's commit). Nothing deployed from Phase 9; the live daemon/panel are the
+`main` build (D28 deploy, backups `…bak.trowel-20261026-153055`).
+
+**P1 done** (`5423c25`): `trowel_proto::desk` types; 24 v3 ops (fields `activity_id` / `timer_id` /
+`snippet_id` / `command_id`, since a bare `id` collides with the envelope); `PROTOCOL_VERSION` 3,
+`OLDEST_PROTOCOL` 2 — the daemon answers `hello` with the client's version, so the running v2 panel
+keeps working; `state.sqlite` v5 (`timers`, `snippets`, `snippets_fts`); `troweld::desk` behind a
+`Host` trait (`with_state`, `paste_text`, `spawn`) used by both `troweld` (`EngineHost`, weak ref to
+the engine) and `--mock` (`MockHost`: state in `<socket>.state/`, paste/spawn only logged). Unbuilt
+v3 ops answer `not_ready`. PROTOCOL.md §4 "Desk (v3)" table. Tests: proto 15, state v4→v5 migration,
+`tests/proto/v3-hello.jsonl`, `cargo clippy -D warnings` clean.
+
+**P2 so far:** `crates/troweld/src/desk/island.rs` — the activity registry (post/replace keeps place,
+dismiss, priority-then-age order, TTL prune, `subscribe` snapshot + broadcast, dead sinks dropped),
+3 tests passing. **Not yet wired** into `Desk::handle`.
+
+**P2 remaining checklist (in order):**
+1. `desk/mod.rs`: `Desk { island }`; handle `island_post|dismiss|list|action`; a ticker thread that
+   sleeps until `island.next_expiry()` (≤ 5 s) and prunes; `capabilities()` → `["island"]`.
+   `island_action`: `keylock`+`unlock` → `host.spawn([<trowel>, "keyboard", "unlock"])`
+   (`crate::helper::locate_trowel()`); any `dismiss` → dismiss. On `Desk::new`, read
+   `$XDG_RUNTIME_DIR/trowel/keyboard-lock.json` and re-post the lock if still running.
+2. `Subscribe { topics }` in `engine.rs` and `mock.rs`: topic `island` → `desk.island.subscribe(sink)`;
+   `Desk::forget` → `island.forget`.
+3. `trowel keyboard lock|unlock` (`crates/trowel-cli/src/keyboard.rs`): after locking, `island_post`
+   `{id:"keylock", icon:"lock", title:"Keyboard locked", ends_at, total, priority:100,
+   actions:[{id:"unlock",label:"Unlock"}]}`; unlock → `island_dismiss`. Reuse the request helper
+   pattern of `clip_cmd.rs::request_at` (hello with `PROTOCOL_VERSION`); a missing daemon is not an
+   error for the lock itself. Add `trowel island post|dismiss|list` (JSON from args).
+4. Plugin: `ui/qml/Trowel/IslandView.qml` (pure Item: states hidden/compact/split/expanded/alert,
+   `SpringAnimation` spring 4 damping 0.32 as in the P0 spike, near-black pill, countdown from
+   `ends_at` via a 1 Hz Timer only while one exists, buttons → signal `action(id, action)`, hover
+   300 ms expands, leave collapses, `alert` bounces + auto-collapse 4 s, `Motion.reduceMotion`
+   instant) and `Island.qml` (`PanelWindow` anchored top, `margins.top: Style.bar.sizeHorizontal + 6`
+   (pass in from Panel; 26 fallback), namespace `trowel-popup`, `WlrLayer.Overlay`, keyboardFocus
+   None, `mask: Region { item: <shape> }`). `Client.qml`: hello `protocol: 3`, subscribe `island`,
+   `property var island: []` from `event == "island"`, `islandAction(id, action)` sends
+   `island_action`. `Panel.qml`: replace `KeyLockPill {}` with `Island { … }`; delete
+   `KeyLockPill.qml` (+ qmldir, harness `prep.py` strip line → strip `Island {`).
+5. Harness: an offscreen `IslandView` entry (`ui/harness/island.sh` or a step in `shell.qml`) that
+   renders each state and checks sizes/positions; `check.py` stays green.
+6. Live acceptance (deploy needs: daemon first, then plugin + `omarchy restart shell`, backups):
+   10 s `trowel keyboard lock 10` → island below the bar (clock visible, screenshot), hover expands,
+   Unlock click works, it shrinks away at the end; `QSG_RENDER_TIMING` shows no frame > 25 ms.
+7. Docs: D29 into DECISIONS, UI-DESIGN island section, BENCHMARKS island rows; commit; then P3.
+
+Process notes for the next session: `grim -g` takes **logical** coordinates; never `pkill -f` a
+pattern that appears in your own shell command (it killed the tool shell twice); never call an
+Omarchy script without reading its `omarchy:args`/arg parsing (the night-light incident).
 
 ### 2026-10-26 — Phase 9 started (`phase-9-island`), P0 spikes
 

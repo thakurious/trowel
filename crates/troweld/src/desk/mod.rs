@@ -9,6 +9,8 @@ use trowel_proto::{ErrorCode, Op};
 
 use crate::state::StateDb;
 
+pub mod island;
+
 /// A connection's outgoing lines, for events pushed to a subscriber. `id` is unique per
 /// connection; `alive` turns false once it closed.
 #[derive(Clone)]
