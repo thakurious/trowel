@@ -56,6 +56,11 @@ Item {
   property string snippetBack: "search"
   readonly property var deskViews: ["timers", "procs", "snippets", "snippet-edit", "omarchy", "themes"]
   readonly property bool inDesk: root.deskViews.indexOf(root.view) >= 0
+  // The process sampler runs only while its view is on screen (PHASE9-PLAN §1.2).
+  onViewChanged: {
+    if (root.view !== "procs")
+      client.procUnsubscribe()
+  }
   property string savedQuery: ""
   // Pop to root (Raycast, oma-cast `LauncherWindow.qml`): reopening within this many seconds of
   // closing keeps the view, query and selection; after it, the panel opens blank. 0 = always blank.

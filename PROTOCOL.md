@@ -1,4 +1,4 @@
-# `troweld` socket protocol (v2)
+# `troweld` socket protocol (v3)
 
 The contract between the daemon and every UI surface (Omarchy panel plugin, `trowel-app`, bar widget,
 `trowel` CLI, test clients). **Freeze it at the end of Phase 1** so UI work can proceed against a mock
@@ -188,37 +188,41 @@ Optional fields are **absent** when empty, never `null`. `ClipKind` is the close
  "kind":"number", "unit":"cm", "approx":false, "alts":[{"label":"Hex","copy":"0xac8"}]}
 ```
 
-### Desk (v3, Phase 9, `PHASE9-PLAN.md`)
+### Desk (v3, Phase 9, `PHASE9-PLAN.md`, D29–D34)
 
 Island, process monitor, system commands, timers and snippets. Types are `trowel_proto::desk`.
 Fields named after their object (`activity_id`, `timer_id`, `snippet_id`, `command_id`): a bare `id`
-would collide with the envelope. An op whose part isn't built yet answers `not_ready`.
-`capabilities` gains `island`, `proc`, `system`, `timers`, `snippets` as each lands.
+would collide with the envelope, and for the same reason a reply that carries a timer or a snippet
+wraps it (`{"timer": …}`, `{"snippet": …}`). `capabilities` gains `island`, `procs`, `system`,
+`timers`, `snippets`. Error code `not_allowed` (v3) is the kill policy's refusal (D30).
 
 | Op | Params | Reply / events |
 |---|---|---|
-| `island_post` | `{activity}` | `{}`; `island` event `{activities}` to subscribers |
-| `island_dismiss` | `{activity_id}` | `{}` |
-| `island_action` | `{activity_id, action}` | `{}`; handled by the producer |
+| `island_post` | `{activity}` (id ≤ 64, title ≤ 120, ≤ 3 buttons, progress 0…1) | `{}`; `island` event `{activities}` to subscribers |
+| `island_dismiss` | `{activity_id}` | `{dismissed}` (a finished timer's row goes too) |
+| `island_action` | `{activity_id, action}` | `{}`; built-in producers act (keylock `unlock`; timer `pause`/`resume`/`add60`/`add300`/`cancel`/`dismiss`); every subscriber gets `{"event":"island_action", activity_id, action}` |
 | `island_list` | — | `{activities}` |
-| `proc_subscribe` | `{interval_ms=1000, sort, group, all_users}` | `{}`; `proc` events `{totals, rows}` |
+| `proc_subscribe` | `{interval_ms=1000 (250…10000), sort: cpu\|gpu\|ram\|disk, group: app\|pid, all_users}` | `{}`; `proc` events `{sort, group, totals, rows (≤ 200), cost_ms, cpu_ms, profile}` on this connection until `proc_unsubscribe` or close |
 | `proc_unsubscribe` | — | `{}` |
-| `proc_detail` | `{pid}` | cmdline, user, start, PSS, 60-sample history |
-| `proc_kill` | `{pids, signal: term|kill, confirm?}` | `{}` / `not_allowed` (P-D30) |
-| `system_commands` | — | `{commands:[SystemCommand]}` |
-| `system_run` | `{command_id}` | `{}` |
-| `timer_start` | `{text}` or `{seconds, label}` | `Timer` |
-| `timer_parse` | `{text}` | `TimerSpec` or `null` |
-| `timer_list` | — | `{timers}` |
-| `timer_pause` / `timer_resume` / `timer_cancel` | `{timer_id}` | `Timer` / `{}` |
-| `timer_add` | `{timer_id, seconds}` | `Timer` |
-| `snippet_query` | `{text, limit=50}` | `{rows:[Snippet]}` |
-| `snippet_get` / `snippet_delete` | `{snippet_id}` | `Snippet` / `{}` |
-| `snippet_save` | `{snippet}` (`id` 0 creates) | `Snippet` |
-| `snippet_paste` | `{snippet_id, mode, args}` | `{}` (D21 paste path) |
-| `snippet_import` / `snippet_export` | `{path}` | `{imported, skipped}` / `{exported}` |
+| `proc_detail` | `{pid}` | `{pid, ppid, name, cmdline, exe, threads, state, pss, started, user, engines:[{engine, busy}], history, app_key, app_history, protected}` |
+| `proc_kill` | `{pids, signal: term\|kill, confirm?}` | `{sent, alive}` (`alive`: still there after 500 ms) / `not_allowed` |
+| `system_commands` | — | `{commands:[SystemCommand], omarchy:[{id, name, script, subtitle, group, terminal}], themes, current_theme}` |
+| `system_run` | `{command_id}`: a curated id, `omarchy:<script>`, `theme:<name>` | `{}`; a toggle waits (≤ 4 s) and answers `{state}` / `not_found` |
+| `timer_start` | `{text}` (a bare number is minutes) or `{seconds, label}` | `{timer}` |
+| `timer_parse` | `{text}` (a bare number needs the word "timer") | `{spec: {seconds, label, at?} \| null}` |
+| `timer_list` | — | `{timers}` (finished ones kept 10 min) |
+| `timer_pause` / `timer_resume` | `{timer_id}` | `{timer}` |
+| `timer_add` | `{timer_id, seconds}` (on a finished one: starts it again, snooze) | `{timer}` |
+| `timer_cancel` | `{timer_id}` | `{cancelled}` |
+| `snippet_query` | `{text, limit=50}` | `{rows:[Snippet]}`: exact keyword, then name prefix, then FTS (bm25); empty text = recently used |
+| `snippet_get` | `{snippet_id}` | `{snippet}` / `not_found` |
+| `snippet_save` | `{snippet}` (`id` 0 creates; a keyword in use is refused) | `{snippet}` |
+| `snippet_delete` | `{snippet_id}` | `{deleted}` |
+| `snippet_paste` | `{snippet_id, mode: paste\|copy, args}` | `{text}` (D21 path; a missing `{argument}` → `bad_request` "needs <name>") |
+| `snippet_import` / `snippet_export` | `{path}` (Raycast JSON `[{name, text, keyword}]`) | `{imported, skipped}` / `{exported}` |
 
-Topics for `subscribe`: `island`, `timers`.
+Topic for `subscribe`: `island` (snapshot on subscribe, then the whole list on every change).
+Golden transcript: `tests/proto/v3-desk.jsonl`.
 
 ### `status` event
 

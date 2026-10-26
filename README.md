@@ -23,8 +23,26 @@ on **Clipboard History** to open your clipboard inside the panel: text, links, c
 formatted text, images and copied files, searchable, with a preview and pins. Enter pastes into the
 app you were in; `Ctrl+Enter` only copies; `Ctrl+Delete` removes it; `Shift+Enter` pastes as plain
 text; Tab cycles All · Text · Images · Files · Links · Colors (Images is a thumbnail grid); `Esc`
-goes back to your search. More commands will join it. (`omarchy-shell trowel clipboard` opens the
-history directly, for a key binding.)
+goes back to your search. (`omarchy-shell trowel clipboard` opens the history directly, for a key
+binding.)
+
+More commands, each a view inside the panel:
+
+- **Timer**: `25m tea`, `1h 30m`, `at 15:30` (typed in the main search too). It counts down on
+  **the Island**, a small pill that grows out of the bar's bottom edge (hover it for Pause,
+  +1 min, Cancel) and rings, notifies and expands when it's done. Timers survive a restart.
+- **Process Monitor**: what's using the CPU, graphics, memory and disk, per app or per process,
+  sorted with Tab; ↵ twice ends one (processes your session needs are protected).
+- **Snippets** and **Create Snippet**: text you type often, with `{date}`, `{clipboard}` and
+  `{argument:name}` blanks; type a snippet's keyword (`;sig`) in the main search to paste it.
+- **System commands**: Lock Screen, Sleep, Log Out / Restart / Shut Down (↵ twice), toggles with
+  their state (Night Light, Keep Awake, Do Not Disturb, Hide Bar, Touchpad), Restart Wi-Fi /
+  Bluetooth / Audio / Shell, Next Background, **Pick Theme**, and **Omarchy Commands** (every
+  `omarchy-*` script, searchable).
+- **Lock Keyboard** (to clean it; the Island shows the countdown and an Unlock button) and
+  **Trowel Settings** (`Ctrl+,`).
+
+`omarchy-shell trowel desk timers|procs|snippets` opens a view directly.
 
 Everywhere: **`Ctrl+K`** opens the actions for the selected item (an app's desktop actions, hide an
 app, pin/delete a clip, the calculator's hex/binary forms, reveal a file, …). `↑`/`↓` move, `Esc`
@@ -73,6 +91,10 @@ trowel clip get 812 | paste 812 --mode paste | pin 812 | delete 812 | clear [--a
 trowel clip pause [minutes] | resume | import-omarchy
 trowel search "payment error screenshot"
 trowel status | doctor
+trowel timer start 25m tea | list | cancel 3
+trowel island post backup "Backing up" --progress 0.4 --button stop:Stop   # any script can
+trowel island watch backup --once                                           # prints the button pressed
+trowel keyboard lock 30 | unlock | status
 ```
 
 ## Privacy
@@ -92,7 +114,8 @@ Settings. Pausing (Ctrl+K → "Pause capturing", or `trowel clip pause`) stops t
   supervised `wl-paste --watch`, a content-addressed blob store with refcounted GC).
 - **UI**: an omarchy-shell plugin panel on the Overlay layer and a separate `trowel-app` Quickshell
   window, both following the live Omarchy theme. They speak JSON lines to `troweld` over
-  `$XDG_RUNTIME_DIR/trowel/troweld.sock` ([PROTOCOL.md](PROTOCOL.md), v2).
+  `$XDG_RUNTIME_DIR/trowel/troweld.sock` ([PROTOCOL.md](PROTOCOL.md), v3). Timers, snippets and
+  the process sampler live in the daemon too; the panel and the Island only draw.
 - **Fidelity:** file search matches upstream DigUp's vectors (cosine ≥ 0.999 against reference
   vectors), prompts, tokenizer and search math, and its recall evals, so results are the same as on a
   Mac.

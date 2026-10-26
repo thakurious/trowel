@@ -1000,9 +1000,13 @@ impl Sampler {
                             .fold(None, |a: Option<f64>, v| Some(a.unwrap_or(0.0) + v))
                     };
                     let user = self.source.user_name(root.raw.uid);
+                    let name = (members.len() > 1)
+                        .then(|| unit_label(&root.raw.unit))
+                        .flatten()
+                        .unwrap_or_else(|| root.raw.comm.clone());
                     rows.push(ProcRow {
                         key,
-                        name: root.raw.comm.clone(),
+                        name,
                         app_id: (!root.raw.unit.is_empty()).then(|| root.raw.unit.clone()),
                         pids: members.iter().map(|r| r.raw.pid).collect(),
                         user,
@@ -1050,6 +1054,24 @@ fn thread_cpu() -> Duration {
         ts.tv_sec.max(0) as u64,
         ts.tv_nsec.clamp(0, 999_999_999) as u32,
     )
+}
+
+/// The app an `app-*.scope` unit names: `app-ghostty-surface-transient-224869.scope` → ghostty,
+/// `app-com.t3tools.T3Code-5776.scope` → T3Code, `app-slack-4729.scope` → slack. None for
+/// launcher scopes that carry no app name (`app-Hyprland-gtk\x2dlaunch-bf50c6ec.scope`): the
+/// group's oldest process names those.
+pub fn unit_label(unit: &str) -> Option<String> {
+    let s = unit.strip_prefix("app-")?.strip_suffix(".scope")?;
+    if s.starts_with("Hyprland-") || s.starts_with("graphical") || s.starts_with("flatpak-") {
+        return None;
+    }
+    let base = match s.rsplit_once('-') {
+        Some((b, id)) if !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit()) => b,
+        _ => s,
+    };
+    let first = base.split('-').next().unwrap_or("");
+    let name = first.rsplit('.').next().unwrap_or("");
+    (!name.is_empty() && !name.contains('\\')).then(|| name.to_string())
 }
 
 /// A process's app: its cgroup unit, or itself when it has none.
@@ -1155,6 +1177,27 @@ mod tests {
             parse_io("rchar: 1\nread_bytes: 10\nwrite_bytes: 20\n"),
             Some((10, 20))
         );
+    }
+
+    #[test]
+    fn app_names_from_units() {
+        let l = |u: &str| unit_label(u);
+        assert_eq!(
+            l("app-ghostty-surface-transient-224869.scope").as_deref(),
+            Some("ghostty")
+        );
+        assert_eq!(
+            l("app-com.t3tools.T3Code-5776.scope").as_deref(),
+            Some("T3Code")
+        );
+        assert_eq!(
+            l("app-com.google.Chrome-5402.scope").as_deref(),
+            Some("Chrome")
+        );
+        assert_eq!(l("app-slack-4729.scope").as_deref(), Some("slack"));
+        assert_eq!(l("app-Hyprland-gtk\\x2dlaunch-bf50c6ec.scope"), None);
+        assert_eq!(l("app-graphical.slice"), None);
+        assert_eq!(l("troweld.service"), None);
     }
 
     #[test]

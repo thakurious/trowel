@@ -335,6 +335,64 @@ only the helper. Results (same corpus, GPU net of an 18 % idle desktop): full 29
 longest saturated stretch 21 s; balanced 346 s / ~26 % / 6 s; gentle 471 s / ~14 % / 3 s, CPU
 ≤ 1.1 cores. Throughput budgets in BENCHMARKS are measured at `full`.
 
+## D29. **The Island** (human, 2026-10-26; was P-D29)
+
+The human asked for the keyboard-lock pill to move off the bar ("animates below the top bar in
+center position like an iphone dynamic island") and for that surface to serve other things. The
+daemon owns a list of **activities** (`island_post|dismiss|list|action`, topic `island`, memory
+only, ordered by priority then age, optional TTL); the panel plugin draws them on its own layer
+surface (`trowel-popup`, `WlrLayer.Overlay`) at bar height + 6 px on the focused monitor, with an
+input mask on the pill and its bubble and no keyboard focus. States: compact, split (a bubble for
+the second), expanded (hover 300 ms or a click: subtitle, bar, up to 3 buttons), alert (expands
+and bounces once, back to compact after 4 s). Producers: the keyboard lock (D27, priority 100),
+timers (D32), and any script (`trowel island post …`; buttons come back as `island_action` events,
+`trowel island watch`). *Rejected:* each feature drawing its own popup (the old pill), an
+omarchy-shell bar widget (D25).
+
+## D30. **Process kill policy** (human, 2026-10-26; was P-D30)
+
+Only the user's own processes are signalled; never pid 1 or the daemon itself. SIGTERM first (↵,
+then ↵ again to confirm); Force quit (SIGKILL) from Ctrl+K. **Refused:** Hyprland, quickshell
+(omarchy-shell, which also draws the lock screen), systemd (the user manager), troweld, uwsm.
+**Protected** (the name must be typed): dbus-broker/-daemon, pipewire, pipewire-pulse,
+wireplumber, fcitx5, xdg-desktop-portal(-hyprland), hyprsunset, Xwayland. No privilege escalation.
+The check is in the daemon (`desk::procs::kill_check`), not the panel.
+
+## D31. **System commands are an allow-list** (human, 2026-10-26; was P-D31)
+
+16 curated ids → fixed argv (Session: Lock Screen, Sleep, Log Out, Restart, Shut Down; Toggles:
+Night Light, Keep Awake, Do Not Disturb, Hide Bar, Touchpad, Suspend in Menu; Restart: Wi-Fi,
+Bluetooth, Audio, Shell; Next Background). Log Out, Restart and Shut Down want ↵ twice. Toggle
+states are read without side effects (flag files, `omarchy-toggle-nightlight --status`,
+`omarchy-shell notifications isDnd`; every script was read before it went on the list).
+"Omarchy Commands" runs only `omarchy-*` scripts found in `$OMARCHY_PATH/bin` and
+`~/.local/share/omarchy/bin` that have `omarchy:summary`, not `omarchy:hidden`, and no required
+`<arg>`; those that ask questions (gum, `read`, fzf, sudo) open in Omarchy's floating terminal.
+Pick Theme runs `omarchy-theme-set` with a name from `omarchy-theme-list` only.
+
+## D32. **Timers persist with wall-clock ends** (human, 2026-10-26; was P-D32)
+
+`state.sqlite` `timers`; the daemon's ticker fires them (≤ 2 s polls while one runs, so a suspend
+is caught up within 2 s of waking; one that ended while asleep fires marked late). On fire: an
+island alert (+5 min, Dismiss; it stays 10 min), `omarchy-notification-send` (no buttons: it has
+one click action, P0), and `pw-play alarm-clock-elapsed.oga` unless `timer_sound = false`. The
+ticker never creates `state.sqlite` just to look for timers.
+
+## D33. **Snippets are panel-driven** (human, 2026-10-26; was P-D33)
+
+Stored in `state.sqlite` with FTS on name/keyword/body; placeholders expand in the daemon at paste
+time (`{clipboard}`, `{date}`, `{time}`, `{datetime}`, `{date:<strftime>}`, `{uuid}`,
+`{argument:name}` and Raycast's `{argument name="…"}`); no `{cursor}`. Paste goes through D21 and
+is not recorded in clipboard history. No system-wide expansion while typing: that needs an fcitx5
+addon (a new dependency), not approved.
+
+## D34. **Protocol v3** (human, 2026-10-26; was P-D34)
+
+24 additive ops (`PROTOCOL.md` §4 "Desk"), topics `island` (+ `island_action` events) and per-
+connection `proc` events, error code `not_allowed`, capabilities `island procs system timers
+snippets`. The daemon answers `hello` with the client's version (2 or 3); the panel asks for 3
+and falls back to 2 against an older daemon.
+
 ## Related approvals (2026-10-13)
 
 - `wl-clipboard-rs` is **not** approved yet. Decide after spike L0.3 shows whether file paste needs
