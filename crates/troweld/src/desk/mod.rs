@@ -704,14 +704,23 @@ fn proc_loop(mon: Arc<Mutex<ProcMon>>, _daemon_pid: i32) {
                         "totals": sampler.totals,
                         "rows": rows,
                         "cost_ms": sampler.last_cost.as_secs_f64() * 1000.0,
+                        "cpu_ms": sampler.last_cpu.as_secs_f64() * 1000.0,
+                        "profile": sampler.source.profile(),
                     })
                     .to_string(),
                 );
             }
-            subs.iter()
+            let every = subs
+                .iter()
                 .map(|s| s.interval)
                 .min()
-                .unwrap_or(Duration::from_secs(1))
+                .unwrap_or(Duration::from_secs(1));
+            // The first pass has no rates (all 0 %): the second follows quickly.
+            if sampler.samples < 2 {
+                every.min(Duration::from_millis(300))
+            } else {
+                every
+            }
         };
         std::thread::sleep(interval);
     }

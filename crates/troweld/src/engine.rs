@@ -123,6 +123,11 @@ impl crate::desk::Host for EngineHost {
     }
 
     fn paste_text(&self, text: &str, copy_only: bool) -> Result<(), String> {
+        // Our own `wl-copy` is not a copy the user made (as for `clip_paste`).
+        if let Some(engine) = self.0.upgrade() {
+            *engine.clip_suppress.lock().expect("clip suppress") =
+                Some(Instant::now() + Duration::from_secs(1));
+        }
         actions::copy_text(text).map_err(|e| e.to_string())?;
         if !copy_only {
             actions::paste_keystroke();

@@ -3,8 +3,10 @@
 //! `None`, never 0), GPU from DRM fdinfo (`xe`: Δ`drm-cycles-<engine>` / Δ`drm-total-cycles-…`, P0
 //! item 3), grouped by app through the cgroup unit. It runs only while someone subscribes.
 //!
-//! Cost (P0): ~700 pids, ~10k fds. The fd scan for render nodes is the expensive part, so each
-//! process's DRM fds are cached and rescanned only for new processes and every 5 s.
+//! Cost (P0): ~700 pids, ~10k fds. The fd scan for render nodes is the expensive part (18 ms for
+//! all of them), so each process's DRM fds are cached and rescanned only when its open-fd count
+//! changes (`stat(/proc/<pid>/fd).st_size` is that count since Linux 6.2, checked 2026-10-26),
+//! only for fd numbers not seen before, and in full after 10–20 min (spread by pid).
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -54,6 +56,10 @@ pub trait Source: Send {
     fn alive(&mut self, pid: i32) -> bool;
     fn own_uid(&self) -> u32;
     fn user_name(&mut self, uid: u32) -> String;
+    /// What the last pass cost, for the `proc` event's `profile` (diagnostics).
+    fn profile(&self) -> Value {
+        Value::Null
+    }
 }
 
 /// Ending these would end the session or the lock screen: refused outright.
@@ -83,16 +89,72 @@ pub fn protected(comm: &str) -> bool {
 
 // ---------------------------------------------------------------- the real /proc source
 
+/// A render-node fd (its fdinfo kept open) and what its last fdinfo said. `xe` fdinfo costs ~85 µs a read (it samples
+/// GPU timestamps), so an fd that dups an earlier one's client is not read, and a client that has
+/// never run anything is read every 5th tick, its zero counters reused in between.
+#[derive(Debug, Clone, Default)]
+struct DrmFd {
+    fd: String,
+    info: Option<std::sync::Arc<std::fs::File>>,
+    client: Option<u64>,
+    busy_ever: bool,
+    engines: EngineCycles,
+    resident: u64,
+}
+
 pub struct ProcFs {
     root: PathBuf,
     own_uid: u32,
     tick: f64,
     cpus: f64,
     users: HashMap<u32, String>,
-    /// (pid, start) → render-node fds, and when they were found.
-    drm_fds: HashMap<(i32, u64), (Vec<String>, Instant)>,
-    units: HashMap<(i32, u64), String>,
+    /// Every process seen, by pid, with its files kept open between passes.
+    tracked: HashMap<i32, Tracked>,
+    pass: u64,
     boot_time: f64,
+    /// Last pass, for profiling: fd rescans, time in them, DRM fdinfo reads and their time.
+    pub last_rescans: (u32, Duration, u32, Duration),
+}
+
+/// One process across passes. Its `stat` and `io` stay open and are re-read from offset 0
+/// (procfs regenerates them on each read): one `pread` each per pass instead of a path lookup,
+/// open, read and close — most of a pass is kernel time (2026-10-26: 12 of 14.5 ms).
+struct Tracked {
+    start: u64,
+    uid: u32,
+    stat: std::fs::File,
+    io: Option<std::fs::File>,
+    unit: String,
+    /// Render-node fds, the open-fd count when they were found, and when the fd table was last
+    /// read in full.
+    drm: Option<(Vec<DrmFd>, u64, Instant)>,
+    /// Every fd number seen and whether it is a render node: a count change only `readlink`s the
+    /// new numbers (a browser churns fds; reading all 3,000 of its links cost 20 ms a pass).
+    known: HashMap<String, bool>,
+    /// The last `stat`/`io` read: (comm, ppid, cpu ticks, rss pages, io), and for how many passes
+    /// in a row the CPU ticks stood still. An idle process is re-read every other pass and its
+    /// last values reused in between (its deltas are 0 either way): most of the ~400 are idle,
+    /// and their reads were most of a pass.
+    last: Option<LastRead>,
+    still: u32,
+}
+
+/// (comm, ppid, cpu ticks, rss pages, io) of a process's last `stat`/`io` read.
+type LastRead = (String, i32, u64, u64, Option<(u64, u64)>);
+
+/// The whole of a small procfs file, read from offset 0 of an open handle. procfs hands over
+/// the whole file when the buffer holds it, so one `pread` is enough (no second one for EOF).
+fn pread_all(f: &std::fs::File, buf: &mut Vec<u8>) -> Option<()> {
+    use std::os::unix::fs::FileExt;
+    buf.clear();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let n = f.read_at(&mut chunk, buf.len() as u64).ok()?;
+        buf.extend_from_slice(&chunk[..n]);
+        if n < chunk.len() || buf.len() > 64 * 1024 {
+            return Some(());
+        }
+    }
 }
 
 impl ProcFs {
@@ -106,6 +168,16 @@ impl ProcFs {
                 libc::sysconf(libc::_SC_NPROCESSORS_ONLN),
             )
         };
+        // Two files stay open per process (`Tracked`): ~800 at 400 processes. A soft limit of
+        // 1024 (a daemon started outside systemd) is raised toward the hard one.
+        // SAFETY: getrlimit/setrlimit on a struct we own.
+        unsafe {
+            let mut lim: libc::rlimit = std::mem::zeroed();
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 && lim.rlim_cur < 8192 {
+                lim.rlim_cur = lim.rlim_max.min(8192);
+                libc::setrlimit(libc::RLIMIT_NOFILE, &lim);
+            }
+        }
         let boot_time = std::fs::read_to_string(root.join("stat"))
             .ok()
             .and_then(|s| {
@@ -120,9 +192,10 @@ impl ProcFs {
             tick: if tick > 0 { tick as f64 } else { 100.0 },
             cpus: if cpus > 0 { cpus as f64 } else { 1.0 },
             users: HashMap::new(),
-            drm_fds: HashMap::new(),
-            units: HashMap::new(),
+            tracked: HashMap::new(),
+            pass: 0,
             boot_time,
+            last_rescans: (0, Duration::ZERO, 0, Duration::ZERO),
         }
     }
 
@@ -136,16 +209,22 @@ pub fn parse_stat(text: &str) -> Option<(String, i32, u64, u64, u64)> {
     let open = text.find('(')?;
     let close = text.rfind(')')?;
     let comm = text[open + 1..close].to_string();
-    let f: Vec<&str> = text[close + 1..].split_whitespace().collect();
-    // f[0] = state (field 3), so field n is f[n - 3].
-    let num = |n: usize| f.get(n - 3).and_then(|v| v.parse::<u64>().ok());
-    Some((
-        comm,
-        f.get(1)?.parse().ok()?,
-        num(14)? + num(15)?,
-        num(22)?,
-        num(24)?,
-    ))
+    // After ") ": field 3 (state) first; ppid is field 4, utime/stime 14/15, start 22, rss 24.
+    let (mut ppid, mut utime, mut stime, mut start, mut rss) = (None, None, None, None, None);
+    for (i, v) in text[close + 1..].split_whitespace().enumerate() {
+        match i + 3 {
+            4 => ppid = v.parse::<i32>().ok(),
+            14 => utime = v.parse::<u64>().ok(),
+            15 => stime = v.parse::<u64>().ok(),
+            22 => start = v.parse::<u64>().ok(),
+            24 => {
+                rss = v.parse::<u64>().ok();
+                break;
+            }
+            _ => {}
+        }
+    }
+    Some((comm, ppid?, utime? + stime?, start?, rss?))
 }
 
 pub fn parse_io(text: &str) -> Option<(u64, u64)> {
@@ -175,7 +254,7 @@ fn kib(v: &str) -> Option<u64> {
     let mut it = v.split_whitespace();
     let n: u64 = it.next()?.parse().ok()?;
     Some(match it.next() {
-        Some("KiB") => n * 1024,
+        Some("KiB") | Some("kB") => n * 1024,
         Some("MiB") => n * 1024 * 1024,
         Some("GiB") => n * 1024 * 1024 * 1024,
         _ => n,
@@ -219,91 +298,186 @@ pub fn parse_fdinfo(text: &str) -> Option<(u64, EngineCycles, u64)> {
 
 impl Source for ProcFs {
     fn read(&mut self, all_users: bool) -> Vec<Raw> {
+        use std::os::unix::fs::MetadataExt;
         let Ok(rd) = std::fs::read_dir(&self.root) else {
             return Vec::new();
         };
         let mut out = Vec::new();
         let mut seen = HashSet::new();
         let now = Instant::now();
+        let mut prof = (0u32, Duration::ZERO, 0u32, Duration::ZERO);
+        let mut buf = Vec::with_capacity(4096);
         for e in rd.flatten() {
             let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<i32>().ok()) else {
                 continue;
             };
             let dir = e.path();
-            use std::os::unix::fs::MetadataExt;
-            let Ok(meta) = std::fs::metadata(&dir) else {
-                continue;
-            };
-            let uid = meta.uid();
-            if !all_users && uid != self.own_uid {
+            if let std::collections::hash_map::Entry::Vacant(slot) = self.tracked.entry(pid) {
+                let Ok(stat) = std::fs::File::open(dir.join("stat")) else {
+                    continue;
+                };
+                // The stat file belongs to the process's user.
+                let Ok(uid) = stat.metadata().map(|m| m.uid()) else {
+                    continue;
+                };
+                let unit = std::fs::read_to_string(dir.join("cgroup"))
+                    .map(|c| parse_unit(&c))
+                    .unwrap_or_default();
+                slot.insert(Tracked {
+                    start: 0,
+                    uid,
+                    stat,
+                    io: std::fs::File::open(dir.join("io")).ok(),
+                    unit,
+                    drm: None,
+                    known: HashMap::new(),
+                    last: None,
+                    still: 0,
+                });
+            }
+            let t = self.tracked.get_mut(&pid).expect("tracked");
+            if !all_users && t.uid != self.own_uid {
+                seen.insert(pid);
                 continue;
             }
-            let Some((comm, ppid, cpu_ticks, start, rss_pages)) =
-                std::fs::read_to_string(dir.join("stat"))
-                    .ok()
-                    .as_deref()
-                    .and_then(parse_stat)
-            else {
-                continue;
+            let reuse = t.still >= 3 && !(self.pass + pid as u64).is_multiple_of(2);
+            let (comm, ppid, cpu_ticks, start, rss_pages, io) = match (&t.last, reuse) {
+                (Some((comm, ppid, ticks, rss, io)), true) => {
+                    (comm.clone(), *ppid, *ticks, t.start, *rss, *io)
+                }
+                _ => {
+                    if pread_all(&t.stat, &mut buf).is_none() {
+                        continue;
+                    }
+                    let Some((comm, ppid, cpu_ticks, start, rss_pages)) =
+                        std::str::from_utf8(&buf).ok().and_then(parse_stat)
+                    else {
+                        continue;
+                    };
+                    // A pid used again by a new process: track it afresh next pass.
+                    if t.start != 0 && t.start != start {
+                        continue;
+                    }
+                    let io = t.io.as_ref().and_then(|f| {
+                        pread_all(f, &mut buf)?;
+                        parse_io(std::str::from_utf8(&buf).ok()?)
+                    });
+                    let moved = t.last.as_ref().is_none_or(|l| l.2 != cpu_ticks);
+                    t.still = if moved { 0 } else { t.still + 1 };
+                    t.last = Some((comm.clone(), ppid, cpu_ticks, rss_pages, io));
+                    (comm, ppid, cpu_ticks, start, rss_pages, io)
+                }
             };
+            t.start = start;
+            seen.insert(pid);
             // Kernel threads have no memory and no cgroup unit worth a row.
             if ppid == 2 || pid == 2 {
                 continue;
             }
-            let key = (pid, start);
-            seen.insert(key);
-            let io = std::fs::read_to_string(dir.join("io"))
-                .ok()
-                .as_deref()
-                .and_then(parse_io);
-            let unit = match self.units.get(&key) {
-                Some(u) => u.clone(),
-                None => {
-                    let u = std::fs::read_to_string(dir.join("cgroup"))
-                        .map(|c| parse_unit(&c))
-                        .unwrap_or_default();
-                    self.units.insert(key, u.clone());
-                    u
-                }
-            };
             let mut gpu = Vec::new();
             let mut vram = None;
-            if uid == self.own_uid {
-                let stale = self
-                    .drm_fds
-                    .get(&key)
-                    .is_none_or(|(_, at)| now.duration_since(*at) > Duration::from_secs(5));
-                if stale {
-                    let fds: Vec<String> = std::fs::read_dir(dir.join("fd"))
+            if t.uid == self.own_uid {
+                // The fd count is checked every third pass; a new process is scanned at once.
+                let check = t.drm.is_none() || (self.pass + pid as u64).is_multiple_of(3);
+                // A full re-read only catches an fd number reused for another file with the count
+                // unchanged (rare: a new GPU client almost always changes the count, or is a new
+                // process). At 30–60 s these re-reads were most of a 60 s run's cost.
+                let max_age = Duration::from_secs(600 + (pid as u64 % 600));
+                let fd_count = check.then(|| {
+                    std::fs::metadata(dir.join("fd"))
+                        .map(|m| m.len())
+                        .unwrap_or(0)
+                });
+                let expired = t
+                    .drm
+                    .as_ref()
+                    .is_some_and(|(_, _, at)| now.duration_since(*at) > max_age);
+                let rescan = fd_count
+                    .filter(|c| expired || t.drm.as_ref().is_none_or(|(_, count, _)| count != c));
+                if let Some(count) = rescan {
+                    let started = Instant::now();
+                    prof.0 += 1;
+                    let (old, full_at) = match t.drm.take() {
+                        Some((old, _, at)) if !expired => (old, at),
+                        // A full read: an fd number reused for another file is caught here.
+                        _ => {
+                            t.known.clear();
+                            (Vec::new(), now)
+                        }
+                    };
+                    let mut known = HashMap::with_capacity(t.known.len());
+                    let mut fds = Vec::new();
+                    for f in std::fs::read_dir(dir.join("fd"))
                         .into_iter()
                         .flatten()
                         .flatten()
-                        .filter(|f| {
-                            std::fs::read_link(f.path())
+                    {
+                        let fd = f.file_name().to_string_lossy().into_owned();
+                        let drm = match t.known.get(&fd) {
+                            Some(&d) => d,
+                            None => std::fs::read_link(f.path())
                                 .map(|l| l.starts_with("/dev/dri/"))
-                                .unwrap_or(false)
-                        })
-                        .map(|f| f.file_name().to_string_lossy().into_owned())
-                        .collect();
-                    self.drm_fds.insert(key, (fds, now));
+                                .unwrap_or(false),
+                        };
+                        if drm {
+                            let slot = old.iter().find(|o| o.fd == fd).cloned();
+                            fds.push(slot.unwrap_or(DrmFd {
+                                fd: fd.clone(),
+                                ..DrmFd::default()
+                            }));
+                        }
+                        known.insert(fd, drm);
+                    }
+                    t.known = known;
+                    t.drm = Some((fds, count, full_at));
+                    prof.1 += started.elapsed();
                 }
                 let mut clients = HashSet::new();
-                if let Some((fds, _)) = self.drm_fds.get(&key) {
-                    for fd in fds {
-                        let Some((client, engines, res)) =
-                            std::fs::read_to_string(dir.join("fdinfo").join(fd))
-                                .ok()
-                                .as_deref()
-                                .and_then(parse_fdinfo)
-                        else {
+                let sparse_tick = (self.pass + pid as u64).is_multiple_of(5);
+                if let Some((fds, _, _)) = t.drm.as_mut() {
+                    for slot in fds.iter_mut() {
+                        if slot.client.is_some_and(|c| clients.contains(&c)) {
+                            continue;
+                        }
+                        // Busy clients every other pass (half the processes each pass: the
+                        // rate is over the GPU's own cycle counter, so a 2 s window is exact),
+                        // never-busy ones every fifth, unknown ones now.
+                        let fresh = slot.client.is_none()
+                            || (slot.busy_ever && (self.pass + pid as u64).is_multiple_of(2))
+                            || sparse_tick;
+                        if fresh {
+                            let started = Instant::now();
+                            prof.2 += 1;
+                            if slot.info.is_none() {
+                                slot.info = std::fs::File::open(dir.join("fdinfo").join(&slot.fd))
+                                    .ok()
+                                    .map(std::sync::Arc::new);
+                            }
+                            let parsed = slot.info.as_ref().and_then(|f| {
+                                pread_all(f, &mut buf)?;
+                                parse_fdinfo(std::str::from_utf8(&buf).ok()?)
+                            });
+                            prof.3 += started.elapsed();
+                            let Some((client, engines, res)) = parsed else {
+                                // Closed or reused for something else: look again next time.
+                                slot.client = None;
+                                slot.info = None;
+                                continue;
+                            };
+                            slot.busy_ever |= engines.iter().any(|e| e.1 > 0);
+                            slot.client = Some(client);
+                            slot.engines = engines;
+                            slot.resident = res;
+                        }
+                        let Some(client) = slot.client else {
                             continue;
                         };
                         if !clients.insert(client) {
                             continue;
                         }
-                        *vram.get_or_insert(0) += res;
-                        for (e, b, t) in engines {
-                            gpu.push((client, e, b, t));
+                        *vram.get_or_insert(0) += slot.resident;
+                        for (e, b, t) in &slot.engines {
+                            gpu.push((client, e.clone(), *b, *t));
                         }
                     }
                 }
@@ -312,18 +486,20 @@ impl Source for ProcFs {
                 pid,
                 ppid,
                 comm,
-                uid,
+                uid: t.uid,
                 cpu_ticks,
                 start,
                 rss: rss_pages * 4096,
                 io,
                 gpu,
                 vram,
-                unit,
+                unit: t.unit.clone(),
             });
         }
-        self.drm_fds.retain(|k, _| seen.contains(k));
-        self.units.retain(|k, _| seen.contains(k));
+        self.last_rescans = prof;
+        self.pass += 1;
+        // Gone processes close their files; a reused pid starts over.
+        self.tracked.retain(|pid, _| seen.contains(pid));
         out
     }
 
@@ -431,6 +607,12 @@ impl Source for ProcFs {
 
     fn own_uid(&self) -> u32 {
         self.own_uid
+    }
+
+    fn profile(&self) -> Value {
+        let (rescans, rescan_t, reads, read_t) = self.last_rescans;
+        json!({"fd_rescans": rescans, "fd_rescan_ms": rescan_t.as_secs_f64() * 1000.0,
+            "fdinfo_reads": reads, "fdinfo_ms": read_t.as_secs_f64() * 1000.0})
     }
 
     fn user_name(&mut self, uid: u32) -> String {
@@ -563,8 +745,9 @@ impl Source for Fake {
 struct Prev {
     cpu_ticks: u64,
     io: Option<(u64, u64)>,
-    /// (client, engine) → (busy, total)
-    gpu: HashMap<(u64, String), (u64, u64)>,
+    /// (client, engine) → (busy, total, the last rate): a counter not re-read this pass keeps
+    /// its rate rather than reading as 0 %.
+    gpu: HashMap<(u64, String), (u64, u64, f64)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, serde::Serialize)]
@@ -597,6 +780,10 @@ pub struct Sampler {
     pub last: Vec<Rated>,
     pub totals: ProcTotals,
     pub last_cost: Duration,
+    /// CPU time (user + system) of the last pass on this thread: the BENCHMARKS budget.
+    pub last_cpu: Duration,
+    /// Passes so far: the first has no rates, so the second comes sooner.
+    pub samples: u64,
 }
 
 impl Sampler {
@@ -610,12 +797,15 @@ impl Sampler {
             last: Vec::new(),
             totals: ProcTotals::default(),
             last_cost: Duration::ZERO,
+            last_cpu: Duration::ZERO,
+            samples: 0,
         }
     }
 
     /// One tick. `dt` is measured; the first tick has no rates (all 0, GPU/disk unknown).
     pub fn sample(&mut self, all_users: bool) {
         let began = Instant::now();
+        let cpu0 = thread_cpu();
         let raws = self.source.read(all_users);
         let sys = self.source.system();
         let dt = self
@@ -648,16 +838,19 @@ impl Sampler {
             let mut gpu_map = HashMap::new();
             for (client, engine, busy, total) in &raw.gpu {
                 let k = (*client, engine.clone());
-                if let Some(&(b0, t0)) = prev.and_then(|p| p.gpu.get(&k)) {
-                    let dt_gpu = total.saturating_sub(t0);
-                    if dt_gpu > 0 {
-                        *per_engine.entry(engine.clone()).or_default() +=
-                            busy.saturating_sub(b0) as f64 / dt_gpu as f64 * 100.0;
+                let rate = match prev.and_then(|p| p.gpu.get(&k)) {
+                    Some(&(b0, t0, last)) => {
+                        let dt_gpu = total.saturating_sub(t0);
+                        if dt_gpu > 0 {
+                            busy.saturating_sub(b0) as f64 / dt_gpu as f64 * 100.0
+                        } else {
+                            last
+                        }
                     }
-                } else {
-                    per_engine.entry(engine.clone()).or_default();
-                }
-                gpu_map.insert(k, (*busy, *total));
+                    None => 0.0,
+                };
+                *per_engine.entry(engine.clone()).or_default() += rate;
+                gpu_map.insert(k, (*busy, *total, rate));
             }
             let mut engines: Vec<(String, f64)> = per_engine
                 .into_iter()
@@ -715,7 +908,9 @@ impl Sampler {
         self.prev_at = Some(began);
         self.last = rated;
         self.record_history();
+        self.samples += 1;
         self.last_cost = began.elapsed();
+        self.last_cpu = thread_cpu().saturating_sub(cpu0);
     }
 
     fn record_history(&mut self) {
@@ -844,6 +1039,17 @@ impl Sampler {
     pub fn raw(&self, pid: i32) -> Option<&Raw> {
         self.last.iter().find(|r| r.raw.pid == pid).map(|r| &r.raw)
     }
+}
+
+/// This thread's CPU time so far (`CLOCK_THREAD_CPUTIME_ID`: user + system).
+fn thread_cpu() -> Duration {
+    // SAFETY: clock_gettime writes into the timespec we own.
+    let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
+    Duration::new(
+        ts.tv_sec.max(0) as u64,
+        ts.tv_nsec.clamp(0, 999_999_999) as u32,
+    )
 }
 
 /// A process's app: its cgroup unit, or itself when it has none.

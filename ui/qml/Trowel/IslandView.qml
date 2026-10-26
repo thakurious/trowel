@@ -342,14 +342,9 @@ Item {
         Rectangle {
           height: parent.height
           radius: 2
+          // No animation: it moves once a second, and on first show it must not grow from 0.
           width: parent.width * Math.max(0, root.fractionOf(root.primary))
           color: Theme.accent
-          Behavior on width {
-            enabled: !root.reduceMotion
-            NumberAnimation {
-              duration: 900
-            }
-          }
         }
       }
 
