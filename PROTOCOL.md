@@ -224,6 +224,8 @@ code_roots = []
 code_excluded = []
 code_editor = ""          # "" = auto/xdg-open
 code_quiet_seconds = 2
+index_speed = "gentle"    # D28: "gentle" | "balanced" | "full"; absent = gentle. Paces the GPU,
+                          # caps CPU and keeps indexing on efficiency cores; a change restarts the helper
 [ui]
 reduce_motion = false     # also follows the system preference
 pop_to_root_seconds = 90  # the panel reopens where it was left this long after closing; 0 = blank

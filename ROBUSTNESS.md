@@ -46,7 +46,15 @@ troweld.service  → Type=notify (sd_notify READY after DB open + fingerprint ch
                   WatchdogSec=30 (daemon pings from its main loop)
 trowel-index.slice → helper + worker scopes: Nice=10, IOSchedulingClass=idle, CPUWeight=20,
                     MemoryHigh=3G, MemoryMax=4G
+                    + D28 index_speed: gentle CPUQuota=100%, balanced 200%, full none;
+                      gentle/balanced pinned to the efficiency cores (sched_setaffinity before
+                      exec, inherited by worker/ffmpeg/tesseract; the user manager has no cpuset)
+                      and the helper rests pace × each batch's embedding time (2 / 1 / 0)
 ```
+
+Nice and `CPUWeight` only matter when something else wants the CPU; they never bounded the iGPU,
+which embedding kept busy ~56 % on average and 100 % at p95 while the compositor shares it
+(measured 2026-10-26, D28). The pace is the GPU limit; a lone new file is never rested on.
 
 The daemon spawns helper and worker with `systemd-run --user --scope --slice=trowel-index.slice`
 when available, and falls back to plain `fork/exec` with `setpriority` + `ioprio_set` when systemd

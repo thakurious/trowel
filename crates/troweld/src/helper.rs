@@ -33,12 +33,15 @@ impl Helper {
         on_event: impl Fn(Value) + Send + 'static,
     ) -> std::io::Result<Arc<Self>> {
         let bin = locate_trowel();
-        let mut cmd = index_command(&bin);
+        let speed = speed_profile(&cfg.index_speed);
+        let mut cmd = index_command(&bin, &speed);
         cmd.arg("index-service")
             .arg("--index")
             .arg(&opts.index_dir)
             .arg("--linger")
-            .arg(opts.linger.to_string());
+            .arg(opts.linger.to_string())
+            .arg("--pace")
+            .arg(speed.pace.to_string());
         if opts.fake {
             cmd.arg("--fake");
         }
@@ -77,15 +80,25 @@ impl Helper {
             cmd.stderr(Stdio::null());
         }
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped());
+        // D28: the efficiency cores, as a ready-made mask (nothing is allocated after fork).
+        let affinity = if speed.efficiency_cores {
+            efficiency_cpus(&read_max_freqs()).map(|cpus| cpu_mask(&cpus))
+        } else {
+            None
+        };
         // Die with troweld so a SIGKILL in tests does not leave index-service holding the DB.
         unsafe {
             use std::os::unix::process::CommandExt;
-            cmd.pre_exec(|| {
+            cmd.pre_exec(move || {
                 // SAFETY: called in the child after fork, before exec. Only async-signal-safe
-                // syscalls. Priority and the death signal survive the exec of `systemd-run --scope`
-                // into the helper, and the worker it starts inherits the priority.
+                // syscalls. Priority, affinity and the death signal survive the exec of
+                // `systemd-run --scope` into the helper, and the worker, ffmpeg and tesseract it
+                // starts inherit priority and affinity.
                 libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM, 0, 0, 0);
                 lower_priority();
+                if let Some(mask) = affinity.as_ref() {
+                    libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), mask);
+                }
                 Ok(())
             });
         }
@@ -206,10 +219,98 @@ fn spawn_from_lasting_thread(mut cmd: Command) -> std::io::Result<Child> {
 /// the daemon alone; a helper in its cgroup (with a Vulkan worker) was throttled at that line.
 pub const INDEX_SLICE: &str = "trowel-index.slice";
 
+/// What an index speed (D28, `config.index_speed`) lets the helper use. Nice 10, the idle I/O
+/// class and `CPUWeight=20` hold at every speed; these come on top.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpeedProfile {
+    /// Rest after each batch, × its embedding time (`index-service --pace`): GPU duty cycle.
+    pub pace: f64,
+    /// `CPUQuota=` on the helper's scope: the most CPU time it gets, in % of one core.
+    pub cpu_quota_percent: Option<u32>,
+    /// Run on the efficiency cores when the CPU has them.
+    pub efficiency_cores: bool,
+}
+
+/// gentle (default; also any unknown value): GPU busy at most ~1/3 of the time, one core's worth
+/// of CPU. balanced: ~1/2, two cores. full: no limits beyond priority (the pre-D28 behavior).
+pub fn speed_profile(name: &str) -> SpeedProfile {
+    match name {
+        "full" => SpeedProfile {
+            pace: 0.0,
+            cpu_quota_percent: None,
+            efficiency_cores: false,
+        },
+        "balanced" => SpeedProfile {
+            pace: 1.0,
+            cpu_quota_percent: Some(200),
+            efficiency_cores: true,
+        },
+        _ => SpeedProfile {
+            pace: 2.0,
+            cpu_quota_percent: Some(100),
+            efficiency_cores: true,
+        },
+    }
+}
+
+/// The CPUs with the lowest top frequency when cores differ (Lunar Lake: 4–7 are the low-power
+/// E-cores at 3.7 GHz, 0–3 the P-cores at 4.7–4.8 GHz). None on a uniform CPU.
+pub fn efficiency_cpus(max_freqs: &[(usize, u64)]) -> Option<Vec<usize>> {
+    let lowest = max_freqs.iter().map(|(_, f)| *f).min()?;
+    let highest = max_freqs.iter().map(|(_, f)| *f).max()?;
+    // Within 5 %: boost bins on one core type, not a second type.
+    if highest <= lowest + lowest / 20 {
+        return None;
+    }
+    let cpus: Vec<usize> = max_freqs
+        .iter()
+        .filter(|(_, f)| *f <= lowest + lowest / 20)
+        .map(|(cpu, _)| *cpu)
+        .collect();
+    (!cpus.is_empty()).then_some(cpus)
+}
+
+/// `cpuinfo_max_freq` of each online CPU.
+fn read_max_freqs() -> Vec<(usize, u64)> {
+    let mut out = Vec::new();
+    let Ok(dir) = std::fs::read_dir("/sys/devices/system/cpu") else {
+        return out;
+    };
+    for entry in dir.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(n) = name
+            .strip_prefix("cpu")
+            .and_then(|n| n.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        if let Some(f) = std::fs::read_to_string(entry.path().join("cpufreq/cpuinfo_max_freq"))
+            .ok()
+            .and_then(|t| t.trim().parse::<u64>().ok())
+        {
+            out.push((n, f));
+        }
+    }
+    out.sort();
+    out
+}
+
+fn cpu_mask(cpus: &[usize]) -> libc::cpu_set_t {
+    // SAFETY: cpu_set_t is plain data; CPU_ZERO/CPU_SET only write inside it.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        libc::CPU_ZERO(&mut set);
+        for &cpu in cpus {
+            libc::CPU_SET(cpu, &mut set);
+        }
+        set
+    }
+}
+
 /// `systemd-run --user --scope` around the helper when the user manager answers, else a plain
 /// spawn (tests, CI, no systemd). The limits go on the scope itself so they hold even before
 /// `trowel setup` has installed the slice unit. `TROWEL_NO_SCOPE=1` turns it off.
-fn index_command(bin: &Path) -> Command {
+fn index_command(bin: &Path, speed: &SpeedProfile) -> Command {
     if scopes_work() {
         let mut cmd = Command::new("systemd-run");
         cmd.args(["--user", "--scope", "--quiet", "--collect"])
@@ -221,9 +322,11 @@ fn index_command(bin: &Path) -> Command {
                 "MemoryMax=4G",
                 "-p",
                 "CPUWeight=20",
-            ])
-            .arg("--")
-            .arg(bin);
+            ]);
+        if let Some(q) = speed.cpu_quota_percent {
+            cmd.arg("-p").arg(format!("CPUQuota={q}%"));
+        }
+        cmd.arg("--").arg(bin);
         cmd
     } else {
         Command::new(bin)
@@ -284,4 +387,44 @@ pub fn linger_seconds() -> f64 {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(60.0)
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+
+    #[test]
+    fn profiles() {
+        assert_eq!(speed_profile("full").pace, 0.0);
+        assert_eq!(speed_profile("full").cpu_quota_percent, None);
+        assert_eq!(speed_profile("balanced").cpu_quota_percent, Some(200));
+        assert_eq!(speed_profile("gentle").pace, 2.0);
+        // Anything unknown is the gentle default.
+        assert_eq!(speed_profile("turbo"), speed_profile("gentle"));
+    }
+
+    #[test]
+    fn efficiency_cores_only_on_hybrid_cpus() {
+        // This machine: Core Ultra 7 258V.
+        let lunar = [
+            (0, 4_700_000),
+            (1, 4_800_000),
+            (2, 4_700_000),
+            (3, 4_800_000),
+            (4, 3_700_000),
+            (5, 3_700_000),
+            (6, 3_700_000),
+            (7, 3_700_000),
+        ];
+        assert_eq!(efficiency_cpus(&lunar), Some(vec![4, 5, 6, 7]));
+        // Uniform cores with boost bins a few % apart: no pinning.
+        let uniform = [
+            (0, 4_500_000),
+            (1, 4_600_000),
+            (2, 4_500_000),
+            (3, 4_550_000),
+        ];
+        assert_eq!(efficiency_cpus(&uniform), None);
+        assert_eq!(efficiency_cpus(&[]), None);
+    }
 }

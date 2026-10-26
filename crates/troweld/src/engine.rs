@@ -687,6 +687,7 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
                     || next.excluded_folders != prev.excluded_folders
                     || next.excluded_types != prev.excluded_types
                     || next.code_excluded != prev.code_excluded
+                    || next.index_speed != prev.index_speed
                     || next.onboarded != prev.onboarded;
                 if next.onboarded && folders_changed {
                     if let Some(helper) = engine.helper.lock().expect("helper").clone() {

@@ -265,6 +265,25 @@ var CATALOG = [{
         label: "Open Index Folder"
       }]
   }, {
+    id: "index_speed",
+    section: "Index & Storage",
+    type: "choice",
+    key: "index_speed",
+    title: "Indexing Speed",
+    glyph: "\uf0e4",
+    detail: "How hard indexing may work while you use the computer. Gentle: about a third of the graphics chip and one efficiency core, so a big import never slows anything else down; it just takes longer. Balanced: about half, two efficiency cores. Full speed: everything the machine has, fans and all. A single new file is always picked up right away.",
+    keywords: ["speed", "cpu", "gpu", "performance", "battery", "resources", "throttle", "slow", "fast", "fan"],
+    options: [{
+        label: "Gentle",
+        value: "gentle"
+      }, {
+        label: "Balanced",
+        value: "balanced"
+      }, {
+        label: "Full speed",
+        value: "full"
+      }]
+  }, {
     id: "pause",
     section: "Index & Storage",
     type: "toggle",
@@ -380,6 +399,7 @@ var DEFAULTS = {
   "ui.pop_to_root_seconds": 90,
   "ui.reduce_motion": false,
   "code_quiet_seconds": 2,
+  "index_speed": "gentle",
   "code_editor": ""
 }
 

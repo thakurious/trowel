@@ -312,6 +312,29 @@ re-enables the rest. The countdown is a pill at the top center over the bar with
 for the mouse, drawn by the panel plugin as a layer surface (human's choice, 2026-10-26), so D25
 holds and `shell.json` is untouched.
 
+## D28. **Index speed: gentle by default** (human, 2026-10-26)
+
+The human: "index being slower is fine, but it should not impact the system", plus a setting.
+Measured first (80 screenshots + 2 videos, live limits of the time: nice 10, idle I/O,
+`CPUWeight=20`): the CPU side was already polite (~1.4 cores), but **embedding kept the shared iGPU
+busy 54 % on average, 100 % at p95, in stretches up to 21 s**: the compositor and every app share
+that GPU. `config.index_speed` (Settings → Index & Storage → Indexing Speed):
+
+| | GPU pacing | CPU | Cores |
+|---|---|---|---|
+| gentle (default) | rest 2× each embedding request | `CPUQuota=100%` | efficiency cores |
+| balanced | rest 1× | `CPUQuota=200%` | efficiency cores |
+| full | none | no quota | any (the pre-D28 behavior) |
+
+Pacing is per worker request (`trowel_core::embedder::Paced`): images and sound windows go 2 at a
+time (the worker encodes each on its own, so vectors are **byte-identical**, checked on all 141
+segments of the benchmark), texts unsplit; a rest is capped at 4 s. The quota is on the helper's
+systemd scope; the affinity is set before exec (the user manager has no `cpuset`). Nice 10, idle
+I/O and `CPUWeight=20` stay at every speed; the query encoder is never paced. A change restarts
+only the helper. Results (same corpus, GPU net of an 18 % idle desktop): full 295 s / ~36 % GPU /
+longest saturated stretch 21 s; balanced 346 s / ~26 % / 6 s; gentle 471 s / ~14 % / 3 s, CPU
+≤ 1.1 cores. Throughput budgets in BENCHMARKS are measured at `full`.
+
 ## Related approvals (2026-10-13)
 
 - `wl-clipboard-rs` is **not** approved yet. Decide after spike L0.3 shows whether file paste needs

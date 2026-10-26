@@ -80,6 +80,9 @@ enum Commands {
         exclude: Vec<PathBuf>,
         #[arg(long)]
         exclude_ext: Vec<String>,
+        /// D28 index speed: rest this many × each batch's embedding time before the next batch.
+        #[arg(long, default_value_t = 0.0)]
+        pace: f64,
     },
     /// Hybrid search (meaning + words).
     Search {
@@ -224,6 +227,9 @@ enum Commands {
         exclude: Vec<PathBuf>,
         #[arg(long)]
         exclude_ext: Vec<String>,
+        /// D28 index speed: rest this many × each batch's embedding time before the next batch.
+        #[arg(long, default_value_t = 0.0)]
+        pace: f64,
     },
     /// Print a folder path chosen via the desktop portal (UI-DESIGN §6.0).
     PortalPickFolder,
@@ -455,6 +461,7 @@ fn main() {
             include_datasets,
             exclude,
             exclude_ext,
+            pace,
         } => {
             if let Err(err) = cmd_index(
                 &path,
@@ -464,6 +471,7 @@ fn main() {
                 fake,
                 json,
                 limit,
+                pace,
             ) {
                 eprintln!("{err}");
                 std::process::exit(1);
@@ -617,6 +625,7 @@ fn main() {
             include_datasets,
             exclude,
             exclude_ext,
+            pace,
         } => {
             if path.is_empty() && code_root.is_empty() {
                 eprintln!("trowel index-service: no folders to index (give a PATH or --code-root)");
@@ -639,6 +648,7 @@ fn main() {
                 code_exclude,
                 new_limit,
                 linger,
+                pace,
             );
             std::process::exit(code);
         }
@@ -795,6 +805,7 @@ mod estimate {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_index(
     paths: &[PathBuf],
     index: PathBuf,
@@ -803,6 +814,7 @@ fn cmd_index(
     fake: bool,
     json: bool,
     limit: Option<i64>,
+    pace: f64,
 ) -> Result<(), String> {
     let file = if options.code {
         IndexStore::CODE_FILE
@@ -815,6 +827,7 @@ fn cmd_index(
     }
     let mut indexer = Indexer::new(store, options, Box::new(move || make_embedder(fake)))
         .map_err(|e| e.to_string())?;
+    indexer.set_pace(pace);
     // Fingerprint is written from the live worker in Indexer::full_worker.
     // `worker_source()` now matches that line (`cpp/embedder.h`); index-service
     // uses it for `check_model`. `trowel index` still waits for the live worker
@@ -1504,6 +1517,7 @@ fn cmd_index_service(
     code_exclude: Vec<PathBuf>,
     new_limit: usize,
     linger: f64,
+    pace: f64,
 ) -> i32 {
     let model = SharedEmbedder::new(move || make_embedder(fake));
     let ready = if fake {
@@ -1521,6 +1535,7 @@ fn cmd_index_service(
                 Box::new(move || Ok(Box::new(shared.clone()) as Box<dyn Embedder>)),
             )
             .map_err(|e| e.to_string())?;
+            indexer.set_pace(pace);
             if !fake {
                 indexer.embedder_source = crate::worker::worker_source(default_backend());
             }

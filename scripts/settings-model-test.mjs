@@ -50,7 +50,8 @@ test("empty query lists every setting under its section header", () => {
 
 test("query matches title, section and keyword prefixes; empty sections drop out", () => {
   const ids = (q) => plain(S.rows(q)).map((r) => r.rowId);
-  assert.deepEqual(ids("batt"), ["hdr:General", "set:battery"]);
+  // Indexing Speed has a "battery" keyword: someone worried about drain should find it too.
+  assert.deepEqual(ids("batt"), ["hdr:General", "set:battery", "hdr:Index & Storage", "set:index_speed"]);
   assert.deepEqual(ids("nvim"), ["hdr:Code", "set:code_editor"]);
   assert.ok(ids("clipboard").includes("set:max_entries"));
   assert.ok(ids("clipboard").every((id) => id === "hdr:Clipboard" || id.startsWith("set:")));
@@ -88,6 +89,15 @@ test("accessories: toggles, choices, lists, info", () => {
   assert.equal(S.accessory(S.byId("model"), ctx), "Installed");
   assert.equal(S.accessory(S.byId("health"), ctx), "1 problem");
   assert.equal(S.accessory(S.byId("index"), { status: { phase: "indexing", main: { done: 25, total: 100 } } }), "Indexing 25%");
+});
+
+test("indexing speed: gentle by default, ←/→ through the three", () => {
+  const e = S.byId("index_speed");
+  assert.equal(S.accessory(e, { cfg }), "Gentle", "absent from older configs");
+  assert.equal(S.stepChoice(e, { cfg }, 1), "balanced");
+  assert.equal(S.stepChoice(e, { cfg: { index_speed: "balanced" } }, 1), "full");
+  assert.deepEqual(plain(S.patchFor(e.key, "full")), { index_speed: "full" });
+  assert.deepEqual(plain(S.rows("cpu")).map((r) => r.rowId), ["hdr:Index & Storage", "set:index_speed"]);
 });
 
 test("a value that isn't a choice is kept as a custom one, in order", () => {
