@@ -29,7 +29,28 @@ Item {
     "app": "M5 5h5.5v5.5H5z M13.5 5H19v5.5h-5.5z M5 13.5h5.5V19H5z M13.5 13.5H19V19h-5.5z",
     "pin": "M9 4h6l-1 5 3 3H7l3-3z M12 12v8",
     "settings": "M4 7h9 M17 7h3 M15 5v4 M4 17h3 M11 17h9 M9 15v4",
-    "keyboard": "M3.5 7h17v10h-17z M7 10h1 M10.5 10h1 M14 10h1 M17 10h0.5 M7.5 14h9"
+    "keyboard": "M3.5 7h17v10h-17z M7 10h1 M10.5 10h1 M14 10h1 M17 10h0.5 M7.5 14h9",
+    // Phase 9: the Island, system commands, timers, processes, snippets.
+    "lock": "M7 11h10v8.5H7z M9 11V8a3 3 0 0 1 6 0v3",
+    "timer": "M5 13a7 7 0 1 0 14 0a7 7 0 1 0 -14 0z M12 13V9.5 M10 3.5h4 M17.5 6.5l1.5 -1.5",
+    "process": "M3.5 12h4l2.5 -6 4 12 2.5 -6h4",
+    "snippet": "M9 4.5c-2 0 -2.5 1 -2.5 2.5v2.5c0 1.2 -0.8 2.5 -2 2.5c1.2 0 2 1.3 2 2.5v2.5c0 1.5 0.5 2.5 2.5 2.5 M15 4.5c2 0 2.5 1 2.5 2.5v2.5c0 1.2 0.8 2.5 2 2.5c-1.2 0 -2 1.3 -2 2.5v2.5c0 1.5 -0.5 2.5 -2.5 2.5",
+    "terminal": "M4 5h16v14H4z M7.5 9.5l3 2.5 -3 2.5 M12.5 15h4",
+    "palette": "M12 4a8 8 0 1 0 0 16c1.2 0 1.8 -0.8 1.8 -1.7c0 -1.2 -1 -1.5 -1 -2.5c0 -0.9 0.7 -1.6 1.7 -1.6H17a3 3 0 0 0 3 -3C20 7 16.4 4 12 4z M7.6 11.5h0.8 M10.6 7.8h0.8 M14.8 8.4h0.8",
+    "power": "M12 3.5v8 M7.5 6.5a7 7 0 1 0 9 0",
+    "sleep": "M18.5 14.5A7 7 0 0 1 9.5 5.5a7 7 0 1 0 9 9z M15 4h4l-4 4h4",
+    "moon": "M18.5 14.5A7 7 0 0 1 9.5 5.5a7 7 0 1 0 9 9z",
+    "coffee": "M5 9h11v5a4 4 0 0 1 -4 4H9a4 4 0 0 1 -4 -4z M16 10.5h1.5a2 2 0 0 1 0 4H16 M8.5 3.5v3 M11.5 3.5v3",
+    "bell": "M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z M10 20h4",
+    "bar": "M4 5h16v14H4z M4 8.5h16",
+    "touchpad": "M5 5h14v14H5z M5 15h14 M12 15v4",
+    "wifi": "M3.5 9.5a12 12 0 0 1 17 0 M6.5 12.5a7.8 7.8 0 0 1 11 0 M9.5 15.5a3.6 3.6 0 0 1 5 0 M11.5 18.5h1",
+    "bluetooth": "M7 7.5l10 9 -5 4v-17l5 4 -10 9",
+    "sound": "M4 9.5h3.5L12 5.5v13l-4.5 -4H4z M15.5 9a4 4 0 0 1 0 6 M18 6.5a7.5 7.5 0 0 1 0 11",
+    "refresh": "M19 12a7 7 0 1 1 -2 -4.9 M19 4.5v4h-4",
+    "download": "M12 4v11 M7.5 10.5L12 15l4.5 -4.5 M5 19.5h14",
+    "record": "M7 12a5 5 0 1 0 10 0a5 5 0 1 0 -10 0z",
+    "progress": "M4.5 9.5h15v5h-15z M4.5 12h8"
     })
 
   function iconName() {
@@ -59,7 +80,7 @@ Item {
     case "keyboard":
       return kind
     default:
-      return "doc"
+      return root.paths[kind] !== undefined ? kind : (kind === "music" ? "audio" : "doc")
     }
   }
 

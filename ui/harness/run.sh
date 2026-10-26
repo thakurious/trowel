@@ -17,6 +17,6 @@ MP=$!
 trap 'kill $MP 2>/dev/null; rm -rf "$R"' EXIT
 sleep 0.4
 HARNESS_OUT=$OUT HARNESS_SCRIPT="$1" TROWEL_SOCKET=$R/troweld.sock WAYLAND_DISPLAY= \
-  QT_QPA_PLATFORM="offscreen:configfile=$H/screens.json" timeout 60 quickshell -p "$H" 2>&1 |
+  QT_QPA_PLATFORM="offscreen:configfile=$H/screens.json" timeout ${HARNESS_TIMEOUT:-150} quickshell -p "$H" 2>&1 |
   grep -E "HARNESS|ERROR|WARN|TypeError|ReferenceError" |
   grep -v "window masks" || true

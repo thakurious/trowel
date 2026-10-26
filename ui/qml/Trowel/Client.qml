@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "ListMerge.js" as ListMerge
+import "DeskModel.js" as DeskModel
 
 // PROTOCOL v2 client. UI-DESIGN §5: gen-based stale dropping; ListModel
 // insert/remove/move, never clear()+append() of the whole set. Launcher sources (apps, calc,
@@ -109,9 +110,38 @@ QtObject {
   property var clipIndex: ({})
   // Request id → op, for replies that only make sense to the op that asked.
   property var routes: ({})
+  // Phase 9 (protocol v3). The island's activities, highest priority first (P-D29).
+  property var island: []
+  property var systemList: []
+  property var omarchyScripts: []
+  property var themes: []
+  property string currentTheme: ""
+  property var timers: []
+  property var timerSpec: null
+  property int timerGen: 0
+  property var mainTimerSpec: null
+  property int mainTimerGen: 0
+  property var snippets: []
+  property int snippetGen: 0
+  property var keywordSnippets: []
+  property int keywordGen: 0
+  property var procRows: []
+  property var procTotals: ({})
+  property var procDetail: ({})
+  // The protocol `hello` asked for: 3, or 2 against a daemon that predates Phase 9.
+  property int helloProtocol: 3
+  property int helloId: 0
   readonly property bool hasApps: (root.capabilities || []).indexOf("apps") >= 0
   readonly property bool hasClipboard: (root.capabilities || []).indexOf("clipboard") >= 0
   readonly property bool hasCalc: (root.capabilities || []).indexOf("calc") >= 0
+  readonly property bool hasIsland: (root.capabilities || []).indexOf("island") >= 0
+  readonly property bool hasDesk: (root.capabilities || []).indexOf("timers") >= 0
+  // Everything the main list matches as a command: the panel's own, the ones that follow state,
+  // and the daemon's system commands.
+  readonly property var allCommands: ListMerge.COMMANDS.concat(DeskModel.stateCommands({
+      "indexingPaused": root.paused,
+      "clipPaused": root.clipPausedAt(Date.now() / 1000)
+    }), DeskModel.systemCommands(root.systemList))
 
   readonly property string weakerId: "\u0000weaker"
   readonly property string bannerText: {
@@ -134,6 +164,9 @@ QtObject {
   // A routed op failed (not_found, io, …) or finished: the panel shows a toast.
   signal opFailed(string op, var error)
   signal opDone(string op, var msg)
+  signal procArrived
+  signal timersArrived
+  signal snippetsArrived
 
   property ListModel rows: ListModel {}
   property ListModel clipModel: ListModel {}
@@ -167,7 +200,7 @@ QtObject {
       text: String(text),
       limit: 8,
       gen: root.appsGen,
-      commands: ListMerge.COMMANDS.map(function (c) {
+      commands: root.allCommands.map(function (c) {
         return c.id
       })
     })
@@ -343,20 +376,183 @@ QtObject {
       root.clipsArrived()
     } else if (op === "clip_get") {
       root.clipContentArrived(msg)
+    } else if (op === "system_commands") {
+      root.systemList = msg.commands || []
+      root.omarchyScripts = msg.omarchy || []
+      root.themes = msg.themes || []
+      root.currentTheme = msg.current_theme || ""
+      root.opDone(op, msg)
+    } else if (op === "timer_list") {
+      root.timers = msg.timers || []
+      root.timersArrived()
+    } else if (op === "timer_parse") {
+      if (msg.gen === "main") {
+        if (msg.at >= root.mainTimerGen)
+          root.mainTimerSpec = msg.spec || null
+        root.syncModel()
+      } else if (msg.at >= root.timerGen) {
+        root.timerSpec = msg.spec || null
+        root.timersArrived()
+      }
+    } else if (op === "snippet_query") {
+      root.snippets = msg.rows || []
+      root.snippetsArrived()
+    } else if (op === "proc_detail") {
+      root.procDetail = msg
+      root.opDone(op, msg)
     } else {
       root.opDone(op, msg)
     }
     return true
   }
 
-  function hello() {
+  function hello(protocol) {
     root.helloOk = false
-    send({
+    root.helloProtocol = protocol || 3
+    root.helloId = send({
       op: "hello",
-      protocol: 2,
+      protocol: root.helloProtocol,
       client: root.clientName,
       pid: 0
     })
+  }
+
+  // ---- Phase 9 (v3): the island, system commands, timers, snippets, processes
+
+  function islandAction(activityId, action) {
+    return sendRouted("island_action", {
+      activity_id: activityId,
+      action: action
+    })
+  }
+
+  function systemCommands() {
+    if (root.hasDesk)
+      sendRouted("system_commands", {})
+  }
+
+  function systemRun(commandId) {
+    return sendRouted("system_run", {
+      command_id: commandId
+    })
+  }
+
+  // `tag` "main" is the main list's live "Start Timer" row; the Timer view lets a bare number
+  // mean minutes, which the daemon allows after the word "timer".
+  function timerParse(text, tag) {
+    var main = tag === "main"
+    var at = main ? ++root.mainTimerGen : ++root.timerGen
+    var id = sendRouted("timer_parse", {
+      text: main ? String(text) : "timer " + String(text)
+    })
+    // Replies carry no gen of their own: remember which request this was.
+    var g = root.parseGens
+    g[id] = {
+      "gen": main ? "main" : "view",
+      "at": at
+    }
+    return id
+  }
+  property var parseGens: ({})
+
+  function timerStart(text, seconds, label) {
+    var req = {}
+    if (seconds)
+      req.seconds = seconds
+    else
+      req.text = String(text)
+    if (label)
+      req.label = String(label)
+    return sendRouted("timer_start", req)
+  }
+
+  function timerList() {
+    if (root.hasDesk)
+      sendRouted("timer_list", {})
+  }
+
+  function timerOp(op, timerId, seconds) {
+    var req = {
+      timer_id: timerId
+    }
+    if (seconds)
+      req.seconds = seconds
+    return sendRouted(op, req)
+  }
+
+  function snippetQuery(text) {
+    if (root.hasDesk)
+      sendRouted("snippet_query", {
+        text: String(text || ""),
+        limit: 60
+      })
+  }
+
+  // The main list asks too: an exact keyword hit puts that snippet first.
+  function snippetKeyword(text) {
+    root.keywordGen += 1
+    if (!root.hasDesk || !String(text).length) {
+      root.keywordSnippets = []
+      return
+    }
+    var id = sendRouted("snippet_query", {
+      text: String(text),
+      limit: 5
+    })
+    var g = root.keywordGens
+    g[id] = root.keywordGen
+  }
+  property var keywordGens: ({})
+
+  function snippetSave(snippet) {
+    return sendRouted("snippet_save", {
+      snippet: snippet
+    })
+  }
+
+  function snippetDelete(snippetId) {
+    return sendRouted("snippet_delete", {
+      snippet_id: snippetId
+    })
+  }
+
+  function snippetPaste(snippetId, mode, args) {
+    return sendRouted("snippet_paste", {
+      snippet_id: snippetId,
+      mode: mode || "paste",
+      args: args || ({})
+    })
+  }
+
+  function procSubscribe(sort, group) {
+    if (root.hasDesk)
+      sendRouted("proc_subscribe", {
+        interval_ms: 1000,
+        sort: sort || "cpu",
+        group: group || "app"
+      })
+  }
+
+  function procUnsubscribe() {
+    root.procRows = []
+    if (root.hasDesk)
+      sendRouted("proc_unsubscribe", {})
+  }
+
+  function procDetailOf(pid) {
+    return sendRouted("proc_detail", {
+      pid: pid
+    })
+  }
+
+  function procKill(pids, signal, confirm) {
+    var req = {
+      pids: pids,
+      signal: signal || "term"
+    }
+    if (confirm)
+      req.confirm = String(confirm)
+    return sendRouted("proc_kill", req)
   }
 
   function panelOpened() {
@@ -435,7 +631,7 @@ QtObject {
   function subscribe() {
     send({
       op: "subscribe",
-      topics: ["status", "clipboard"]
+      topics: root.hasIsland ? ["status", "clipboard", "island"] : ["status", "clipboard"]
     })
   }
 
@@ -539,8 +735,12 @@ QtObject {
   function flatten() {
     var q = root.launcherQuery
     var current = root.appsText === q
+    var timer = DeskModel.timerCommand(root.mainTimerSpec)
     return ListMerge.merge(flattenFiles(), current ? root.apps : [], q, {
-      signals: current ? root.commandSignals : {}
+      signals: current ? root.commandSignals : {},
+      commands: root.allCommands,
+      lead: (q.length && timer) ? [timer] : [],
+      snippets: q.length ? DeskModel.keywordHits(root.keywordSnippets, q) : []
     })
   }
 
@@ -699,16 +899,42 @@ QtObject {
         root.status = msg
       else if (msg.event === "clipboard")
         root.clipboardChanged(msg)
+      else if (msg.event === "island")
+        root.island = msg.activities || []
+      else if (msg.event === "proc") {
+        root.procRows = msg.rows || []
+        root.procTotals = msg.totals || ({})
+        root.procArrived()
+      }
       root.lineEvent(msg)
       return
     }
     if (msg.id !== undefined && root.routes[msg.id] !== undefined) {
       var op = root.routes[msg.id]
       delete root.routes[msg.id]
+      if (op === "timer_parse" && root.parseGens[msg.id]) {
+        msg.gen = root.parseGens[msg.id].gen
+        msg.at = root.parseGens[msg.id].at
+        delete root.parseGens[msg.id]
+      }
+      if (op === "snippet_query" && root.keywordGens[msg.id] !== undefined) {
+        var kg = root.keywordGens[msg.id]
+        delete root.keywordGens[msg.id]
+        if (kg === root.keywordGen && msg.ok !== false) {
+          root.keywordSnippets = msg.rows || []
+          root.syncModel()
+        }
+        return
+      }
       root.onRouted(op, msg)
       return
     }
     if (msg.ok === false && msg.error) {
+      // A daemon from before Phase 9 refuses protocol 3: speak 2 to it (no island, no desk).
+      if (msg.id === root.helloId && root.helloProtocol === 3) {
+        hello(2)
+        return
+      }
       root.lastError = (msg.error.code || "") + ": " + (msg.error.message || "")
       return
     }
@@ -720,6 +946,8 @@ QtObject {
       if (root.helloOk) {
         subscribe()
         configGet()
+        systemCommands()
+        timerList()
       }
       return
     }

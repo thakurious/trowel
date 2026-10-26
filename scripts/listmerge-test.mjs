@@ -170,4 +170,17 @@ test("settings rows are selectable, headers are not", () => {
   assert.equal(L.defaultSelection(rows, false), "set:hotkey");
 });
 
+test("lead commands and snippet keywords go first", () => {
+  const timer = { id: "timer-start", name: "Start Timer · 25:00 tea", keywords: [] };
+  const rows = L.merge(files, [firefox], "25m", { commands: [], lead: [timer] });
+  assert.deepEqual(ids(rows).slice(0, 2), ["hdr:commands", "cmd:timer-start"]);
+  assert.equal(L.defaultSelection(rows, false), "cmd:timer-start");
+  const sig = { id: 4, name: "Signature", keyword: ";sig", body: "Best,\nme" };
+  const withSnip = L.merge(files, [], ";sig", { commands: [], snippets: [sig] });
+  assert.deepEqual(ids(withSnip).slice(0, 2), ["hdr:snippets", "snip:4"]);
+  assert.equal(withSnip[1].accessory, ";sig");
+  assert.equal(L.defaultSelection(withSnip, false), "snip:4");
+  assert.deepEqual(Array.from(L.selectable([{ rowType: "proc", rowId: "p" }, { rowType: "header", rowId: "h" }, { rowType: "timer-new", rowId: "t" }], false)), ["p", "t"]);
+});
+
 console.log(`listmerge: ${n} tests passed`);

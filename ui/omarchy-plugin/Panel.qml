@@ -9,6 +9,7 @@ import "Trowel"
 import "Trowel/ListMerge.js" as ListMerge
 import "Trowel/SettingsModel.js" as SettingsModel
 import "Trowel/KeyLockModel.js" as KeyLockModel
+import "Trowel/DeskModel.js" as DeskModel
 
 // UI-DESIGN §3 quick panel. Production plugin id (DECISIONS D12/D17).
 Item {
@@ -32,7 +33,9 @@ Item {
   // (indexing starts then; the wizard must not flip to search).
   property bool wizardOpen: false
   // "search" (files + apps + calculator), "clipboard" (history; LAUNCHER-PLAN.md L4),
-  // "settings" (the Trowel Settings command, DECISIONS D26) or "keylock" (Lock Keyboard).
+  // "settings" (the Trowel Settings command, DECISIONS D26) or "keylock" (Lock Keyboard), and the
+  // Phase 9 views (PHASE9-PLAN.md §1): "timers", "procs", "snippets", "snippet-edit", "omarchy",
+  // "themes".
   property string view: "search"
   property var clipContent: ({})
   // Clipboard History opened as a command from the search list: Esc (or Backspace on an empty
@@ -40,6 +43,19 @@ Item {
   property bool clipFromSearch: false
   property bool settingsFromSearch: false
   property bool lockFromSearch: false
+  property bool deskFromSearch: false
+  // Phase 9 rows by rowId (the ListModel holds only rowType/rowId/title, as the clipboard does).
+  property var deskIndex: ({})
+  // A system command that confirms (Log Out, Restart, Shut Down): the first ↵ only arms it.
+  property string armedCommand: ""
+  property string procSort: "cpu"
+  property string procGroup: "app"
+  property string procArmed: ""
+  property string procNotice: ""
+  // Where Create/Edit Snippet goes back to: "search" or "snippets".
+  property string snippetBack: "search"
+  readonly property var deskViews: ["timers", "procs", "snippets", "snippet-edit", "omarchy", "themes"]
+  readonly property bool inDesk: root.deskViews.indexOf(root.view) >= 0
   property string savedQuery: ""
   // Pop to root (Raycast, oma-cast `LauncherWindow.qml`): reopening within this many seconds of
   // closing keeps the view, query and selection; after it, the panel opens blank. 0 = always blank.
@@ -59,6 +75,24 @@ Item {
 
   // Footer, left: `upstream/Sources/DigUpApp/SearchPanelView.swift:131` statusText.
   readonly property string statusText: {
+    if (root.view === "timers") {
+      var nt = client.timers.length
+      return nt ? (nt === 1 ? "1 timer" : nt + " timers") : "No timers running"
+    }
+    if (root.view === "procs") {
+      var pt = client.procTotals || {}
+      if (!pt.ram_total)
+        return "Reading processes…"
+      return "CPU " + DeskModel.pct(pt.cpu) + " · GPU " + DeskModel.pct(pt.gpu) + " · " + DeskModel.bytes(pt.ram_used) + " of " + DeskModel.bytes(pt.ram_total)
+    }
+    if (root.view === "snippets")
+      return client.snippets.length === 1 ? "1 snippet" : client.snippets.length + " snippets"
+    if (root.view === "snippet-edit")
+      return "Kept in Trowel's state file; export them from Ctrl+K"
+    if (root.view === "omarchy")
+      return deskRows.count === 1 ? "1 command" : deskRows.count + " commands"
+    if (root.view === "themes")
+      return client.currentTheme.length ? "Current theme: " + client.currentTheme : ""
     if (root.view === "keylock")
       return "Locks every keyboard; the mouse keeps working"
     if (root.view === "settings") {
@@ -138,8 +172,91 @@ Item {
     if (t === "command")
       return [{
           "id": "open",
-          "label": "Open " + r.name,
+          "label": (r.confirm ? "Run " : "Open ") + r.name,
           "keys": "↵"
+        }]
+    if (t === "timer") {
+      var ta = []
+      if (r.state === "running")
+        ta.push({
+          "id": "pause",
+          "label": "Pause",
+          "keys": "↵"
+        })
+      else if (r.state === "paused")
+        ta.push({
+          "id": "resume",
+          "label": "Resume",
+          "keys": "↵"
+        })
+      ta.push({
+        "id": "add60",
+        "label": "Add 1 minute"
+      }, {
+        "id": "add300",
+        "label": "Add 5 minutes"
+      }, {
+        "id": "cancel",
+        "label": r.state === "done" ? "Dismiss" : "Cancel timer",
+        "keys": "ctrl del"
+      })
+      return ta
+    }
+    if (t === "proc") {
+      var pa = []
+      if (!r.raw.kill_refused)
+        pa.push({
+          "id": "term",
+          "label": "End " + r.title,
+          "keys": "↵"
+        }, {
+          "id": "kill",
+          "label": "Force quit " + r.title
+        })
+      pa.push({
+        "id": "copypid",
+        "label": "Copy PID " + r.raw.pids[0],
+        "keys": "ctrl C"
+      }, {
+        "id": "group",
+        "label": root.procGroup === "app" ? "Show every process" : "Group by app",
+        "keys": "ctrl G"
+      }, {
+        "id": "btop",
+        "label": "Open btop"
+      })
+      return pa
+    }
+    if (t === "snippet")
+      return [{
+          "id": "paste",
+          "label": "Paste",
+          "keys": "↵"
+        }, {
+          "id": "copy",
+          "label": "Copy",
+          "keys": "ctrl ↵"
+        }, {
+          "id": "edit",
+          "label": "Edit snippet",
+          "keys": "ctrl E"
+        }, {
+          "id": "duplicate",
+          "label": "Duplicate"
+        }, {
+          "id": "delete",
+          "label": "Delete snippet",
+          "keys": "ctrl del"
+        }, {
+          "id": "new",
+          "label": "Create snippet",
+          "keys": "ctrl N"
+        }, {
+          "id": "export",
+          "label": "Export to ~/trowel-snippets.json"
+        }, {
+          "id": "import",
+          "label": "Import ~/raycast-snippets.json"
         }]
     if (t === "app") {
       var acts = [{
@@ -179,6 +296,11 @@ Item {
         cl.push({
           "id": "browser",
           "label": "Open in browser"
+        })
+      if (r.kind === "text" || r.kind === "code" || r.kind === "link" || r.kind === "html")
+        cl.push({
+          "id": "snippet",
+          "label": "Save as snippet"
         })
       cl.push({
         "id": "pin",
@@ -265,7 +387,56 @@ Item {
       } else if (id === "pause") {
         client.clipPause(root.clipPaused ? 0 : 60)
         toast.show(root.clipPaused ? "Capturing again" : "Paused for an hour")
+      } else if (id === "snippet") {
+        var body = root.clipContent && root.clipContent.text ? root.clipContent.text : r.title
+        root.openSnippetEditor({
+          "name": String(body).replace(/\s+/g, " ").slice(0, 40),
+          "body": body
+        }, "clipboard")
       }
+    } else if (t === "timer") {
+      if (id === "pause" || id === "resume")
+        client.timerOp(id === "pause" ? "timer_pause" : "timer_resume", r.timerId)
+      else if (id === "add60" || id === "add300")
+        client.timerOp("timer_add", r.timerId, id === "add60" ? 60 : 300)
+      else if (id === "cancel")
+        client.timerOp("timer_cancel", r.timerId)
+    } else if (t === "proc") {
+      if (id === "term" || id === "kill")
+        root.killSelected(id)
+      else if (id === "copypid") {
+        client.calcCopy(String(r.raw.pids[0]), "", "copy")
+        toast.show("Copied PID " + r.raw.pids[0])
+      } else if (id === "group")
+        root.toggleProcGroup()
+      else if (id === "btop") {
+        Quickshell.execDetached(["xdg-terminal-exec", "btop"])
+        dismiss()
+      }
+    } else if (t === "snippet") {
+      if (id === "paste")
+        openSelected()
+      else if (id === "copy")
+        revealSelected()
+      else if (id === "edit")
+        root.openSnippetEditor(r.raw, root.view === "snippets" ? "snippets" : "search")
+      else if (id === "duplicate")
+        root.openSnippetEditor({
+          "name": r.raw.name + " copy",
+          "body": r.raw.body
+        }, root.view === "snippets" ? "snippets" : "search")
+      else if (id === "delete")
+        root.deleteSnippet()
+      else if (id === "new")
+        root.openSnippetEditor(null, root.view === "snippets" ? "snippets" : "search")
+      else if (id === "export")
+        client.sendRouted("snippet_export", {
+          "path": settingsStore.home + "/trowel-snippets.json"
+        })
+      else if (id === "import")
+        client.sendRouted("snippet_import", {
+          "path": settingsStore.home + "/raycast-snippets.json"
+        })
     } else if (t === "row") {
       if (id === "open")
         openSelected()
@@ -296,6 +467,18 @@ Item {
           openSettings(false)
         return
       }
+      var wanted = JSON.parse(payloadJson || "{}").view
+      if (root.deskViews.indexOf(wanted) >= 0) {
+        if (keep && root.view === wanted)
+          reopen()
+        else {
+          unmapTimer.stop()
+          root.mapped = true
+          root.opened = true
+          root.openDesk(wanted, false)
+        }
+        return
+      }
       if (JSON.parse(payloadJson || "{}").view === "clipboard") {
         if (keep && root.view === "clipboard")
           reopen()
@@ -314,6 +497,8 @@ Item {
     root.clipFromSearch = false
     root.settingsFromSearch = false
     root.lockFromSearch = false
+    root.deskFromSearch = false
+    root.armedCommand = ""
     root.mapped = true
     root.opened = true
     root.navigated = false
@@ -344,9 +529,16 @@ Item {
       client.clipRefresh()
     if (root.view === "settings")
       settingsStore.refresh()
+    if (root.inDesk)
+      root.refreshDesk()
+    client.systemCommands()
     Qt.callLater(function () {
-      query.forceActiveFocus()
-      query.selectAll()
+      if (root.view === "snippet-edit")
+        snippetEditor.forceActiveFocus()
+      else {
+        query.forceActiveFocus()
+        query.selectAll()
+      }
     })
   }
 
@@ -448,6 +640,182 @@ Item {
     root.settleSelection()
   }
 
+  // Phase 9 views: Timer, Process Monitor, Snippets, Create Snippet, Omarchy Commands, themes.
+  function openDesk(view, fromSearch) {
+    root.deskFromSearch = fromSearch === true
+    root.savedQuery = root.deskFromSearch ? query.text : ""
+    hybridTimer.stop()
+    actions.visible = false
+    root.view = view
+    root.navigated = false
+    root.selection = ""
+    root.selectedRow = null
+    root.procArmed = ""
+    root.procNotice = ""
+    root.armedCommand = ""
+    root.now = Date.now() / 1000
+    query.text = ""
+    root.phase = view
+    client.clearApps()
+    client.clearCalc()
+    deskRows.clear()
+    root.deskIndex = ({})
+    root.refreshDesk()
+    root.syncDesk()
+    Qt.callLater(function () {
+      if (view === "snippet-edit")
+        snippetEditor.forceActiveFocus()
+      else
+        query.forceActiveFocus()
+    })
+  }
+
+  // Ask the daemon for what the view shows (replies land in syncDesk).
+  function refreshDesk() {
+    if (root.view === "timers") {
+      client.timerList()
+      client.timerParse(query.text)
+    } else if (root.view === "procs")
+      client.procSubscribe(root.procSort, root.procGroup)
+    else if (root.view === "snippets")
+      client.snippetQuery(query.text)
+    else if (root.view === "omarchy" || root.view === "themes")
+      client.systemCommands()
+  }
+
+  // The view's rows from what the client holds, written in place (the process list changes every
+  // second: clearing it would reset the scroll and flash).
+  function syncDesk() {
+    var rows = []
+    var q = query.text
+    if (root.view === "timers")
+      rows = DeskModel.timerRows(q, client.timerSpec, client.timers, Date.now() / 1000)
+    else if (root.view === "procs")
+      rows = DeskModel.procRows(client.procRows, q)
+    else if (root.view === "snippets")
+      rows = DeskModel.snippetRows(client.snippets)
+    else if (root.view === "omarchy")
+      rows = DeskModel.scriptRows(client.omarchyScripts, q)
+    else if (root.view === "themes")
+      rows = DeskModel.themeRows(client.themes, client.currentTheme, q)
+    var index = ({})
+    for (var i = 0; i < rows.length; i++) {
+      index[rows[i].rowId] = rows[i]
+      var item = {
+        "rowType": rows[i].rowType,
+        "rowId": rows[i].rowId,
+        "title": rows[i].title || ""
+      }
+      if (i < deskRows.count)
+        deskRows.set(i, item)
+      else
+        deskRows.append(item)
+    }
+    if (deskRows.count > rows.length)
+      deskRows.remove(rows.length, deskRows.count - rows.length)
+    root.deskIndex = index
+    // A typed timer is what the user meant: select it even after moving.
+    if (rows.length && rows[0].rowId === "tnew:typed")
+      root.navigated = false
+    root.settleSelection()
+  }
+
+  function toggleProcGroup() {
+    root.procGroup = root.procGroup === "app" ? "pid" : "app"
+    root.selection = ""
+    root.navigated = false
+    client.procSubscribe(root.procSort, root.procGroup)
+    toast.show(root.procGroup === "app" ? "Grouped by app" : "Every process")
+  }
+
+  function cycleProcSort(step) {
+    var i = DeskModel.SORTS.indexOf(root.procSort)
+    root.procSort = DeskModel.SORTS[(i + step + DeskModel.SORTS.length) % DeskModel.SORTS.length]
+    client.procSubscribe(root.procSort, root.procGroup)
+  }
+
+  // ↵ (or Ctrl+K) on a process: the first ↵ arms, the second ends it; a protected one wants its
+  // name typed in the pane (P-D30); Force quit is SIGKILL.
+  function killSelected(how) {
+    var r = root.selectedRow
+    if (!r || r.rowType !== "proc")
+      return
+    if (r.raw.kill_refused) {
+      toast.show("Trowel won't end " + r.title)
+      return
+    }
+    if (r.raw.protected && !procPane.typed.length) {
+      procPane.focusConfirm()
+      return
+    }
+    if (how === "term" && !r.raw.protected && root.procArmed !== r.rowId) {
+      root.procArmed = r.rowId
+      return
+    }
+    root.procArmed = ""
+    client.procKill(r.raw.pids, how === "kill" ? "kill" : "term", r.raw.protected ? procPane.typed : "")
+    root.procNotice = ""
+    toast.show((how === "kill" ? "Force quitting " : "Ending ") + r.title)
+  }
+
+  function openSnippetEditor(snippet, back) {
+    root.snippetBack = back || "search"
+    root.openDesk("snippet-edit", root.view === "search")
+    if (root.snippetBack !== "search")
+      root.deskFromSearch = true
+    snippetEditor.load(snippet)
+  }
+
+  function deleteSnippet() {
+    var r = root.selectedRow
+    if (!r || r.rowType !== "snippet")
+      return
+    var ids = ListMerge.selectable(shownRows(), false)
+    var at = ids.indexOf(root.selection)
+    root.selection = ids[at + 1] || ids[at - 1] || ""
+    client.snippetDelete(r.snippetId)
+    toast.show("Deleted " + r.title)
+  }
+
+  // ↵ on a snippet (its view, or a keyword hit in the main list): blanks first, then paste.
+  function pasteSnippet(r, mode) {
+    var args = r.raw.arguments || []
+    if (args.length && root.view !== "snippets") {
+      root.openDesk("snippets", true)
+      query.text = r.raw.keyword || r.raw.name
+      root.onQueryEdited()
+      return
+    }
+    if (args.length && !snippetPane.complete()) {
+      snippetPane.focusArguments()
+      return
+    }
+    var values = snippetPane.values
+    if (mode === "copy") {
+      client.snippetPaste(r.snippetId, "copy", values)
+      root.closeWithToast("Copied " + r.title)
+    } else {
+      dismiss()
+      client.snippetPaste(r.snippetId, "paste", values)
+    }
+  }
+
+  // A system command from the main list (P-D31). Toggles report their new state; session
+  // commands want ↵ twice.
+  function runSystem(r) {
+    var id = r.raw.system
+    if (r.confirm && root.armedCommand !== r.rowId) {
+      root.armedCommand = r.rowId
+      toast.show("Press ↵ again to " + r.name.toLowerCase())
+      return
+    }
+    root.armedCommand = ""
+    client.systemRun(id)
+    if (r.accessory === "On" || r.accessory === "Off")
+      return
+    dismiss()
+  }
+
   function lockKeyboard(seconds) {
     root.dismiss()
     lockProc.command = ["trowel", "keyboard", "lock", String(seconds)]
@@ -525,10 +893,14 @@ Item {
     root.stampClose()
     root.opened = false
     unmapTimer.restart()
+    client.procUnsubscribe()
   }
 
   function dismiss() {
     actions.visible = false
+    // The process sampler runs only while the view is on screen (PHASE9-PLAN §1.2).
+    if (root.view === "procs")
+      client.procUnsubscribe()
     root.stampClose()
     root.opened = false
     unmapTimer.restart()
@@ -545,6 +917,15 @@ Item {
 
   function onQueryEdited() {
     root.navigated = false
+    root.armedCommand = ""
+    if (root.inDesk) {
+      if (root.view === "timers")
+        client.timerParse(query.text)
+      else if (root.view === "snippets")
+        client.snippetQuery(query.text)
+      root.syncDesk()
+      return
+    }
     if (root.view === "keylock") {
       root.syncKeyLock()
       return
@@ -601,14 +982,45 @@ Item {
       openSettings(true)
     else if (id === "lock-keyboard")
       openKeyLock(true)
+    else if (id === "timers" || id === "procs" || id === "snippets" || id === "omarchy" || id === "themes")
+      openDesk(id, true)
+    else if (id === "snippet-new")
+      openSnippetEditor(null, "search")
+    else if (id === "timer-start") {
+      var spec = client.mainTimerSpec
+      if (spec) {
+        client.timerStart("", spec.seconds, spec.label)
+        dismiss()
+      }
+    } else if (id === "pause-indexing" || id === "resume-indexing") {
+      if (id === "pause-indexing")
+        client.pause()
+      else
+        client.resume()
+      root.closeWithToast(id === "pause-indexing" ? "Indexing paused" : "Indexing resumed")
+    } else if (id === "pause-clipboard" || id === "resume-clipboard") {
+      client.clipPause(id === "pause-clipboard" ? 30 : 0)
+      root.closeWithToast(id === "pause-clipboard" ? "Clipboard history paused for 30 minutes" : "Clipboard history is recording again")
+    }
   }
 
   // Esc / Backspace on an empty field inside a command: back to the search it came from.
   function goBack() {
-    var fromSearch = (root.view === "clipboard" && root.clipFromSearch) || (root.view === "settings" && root.settingsFromSearch) || (root.view === "keylock" && root.lockFromSearch)
+    var fromSearch = (root.view === "clipboard" && root.clipFromSearch) || (root.view === "settings" && root.settingsFromSearch) || (root.view === "keylock" && root.lockFromSearch) || (root.inDesk && root.deskFromSearch)
     if (!fromSearch)
       return false
     actions.visible = false
+    if (root.view === "procs")
+      client.procUnsubscribe()
+    if (root.view === "snippet-edit" && root.snippetBack === "snippets") {
+      root.openDesk("snippets", true)
+      return true
+    }
+    if (root.view === "snippet-edit" && root.snippetBack === "clipboard") {
+      root.openClipboard(root.clipFromSearch)
+      return true
+    }
+    root.deskFromSearch = false
     root.view = "search"
     root.clipFromSearch = false
     root.settingsFromSearch = false
@@ -650,6 +1062,15 @@ Item {
       return
     }
     client.launcherQuery = text
+    // A typed timer ("25m tea", "at 15:30") and a snippet keyword (";sig") join the list.
+    if (client.hasDesk && /^(timer\b|countdown\b|at\s+\d|\d)/i.test(text))
+      client.timerParse(text, "main")
+    else
+      client.mainTimerSpec = null
+    if (client.hasDesk && text.length <= 32 && !/\s/.test(text))
+      client.snippetKeyword(text)
+    else
+      client.keywordSnippets = []
     client.syncModel()
     root.settleSelection()
     if (client.hasApps)
@@ -690,10 +1111,11 @@ Item {
     client.search(text, "hybrid", root.codeMode, false)
   }
 
-  readonly property var listModel: root.view === "clipboard" ? client.clipModel : (root.view === "settings" ? settingsRows : (root.view === "keylock" ? keylockRows : client.rows))
+  readonly property var listModel: root.inDesk ? deskRows : (root.view === "clipboard" ? client.clipModel : (root.view === "settings" ? settingsRows : (root.view === "keylock" ? keylockRows : client.rows)))
 
   property ListModel settingsRows: ListModel {}
   property ListModel keylockRows: ListModel {}
+  property ListModel deskRows: ListModel {}
 
   // {rowType, rowId} of the list on screen, for ListMerge's selection rules.
   function shownRows() {
@@ -731,6 +1153,17 @@ Item {
   }
 
   function pickSelected() {
+    if (root.inDesk) {
+      var was = root.selectedRow ? root.selectedRow.rowId : ""
+      root.selectedRow = root.deskIndex[root.selection] || null
+      if (root.selection !== was) {
+        root.procArmed = ""
+        root.procNotice = ""
+      }
+      if (root.selectedRow && root.selectedRow.rowType === "proc" && root.selection !== was)
+        client.procDetailOf(root.selectedRow.raw.pids[0])
+      return
+    }
     if (root.view === "keylock") {
       root.selectedRow = null
       for (var k = 0; k < keylockRows.count; k++)
@@ -756,7 +1189,7 @@ Item {
       return
     }
     var app = client.rowIndex[root.selection]
-    if (root.view === "search" && app && (app.rowType === "app" || app.rowType === "command")) {
+    if (root.view === "search" && app && (app.rowType === "app" || app.rowType === "command" || app.rowType === "snippet")) {
       root.selectedRow = app
       return
     }
@@ -794,8 +1227,48 @@ Item {
       return
     }
     if (t === "command") {
-      client.commandRun(root.selectedRow.commandId, client.launcherQuery)
-      runCommand(root.selectedRow.commandId)
+      var cmd = root.selectedRow
+      if (cmd.raw && cmd.raw.system) {
+        if (!cmd.confirm || root.armedCommand === cmd.rowId)
+          client.commandRun(cmd.commandId, client.launcherQuery)
+        root.runSystem(cmd)
+        return
+      }
+      client.commandRun(cmd.commandId, client.launcherQuery)
+      runCommand(cmd.commandId)
+      return
+    }
+    if (t === "snippet") {
+      root.pasteSnippet(root.selectedRow, "paste")
+      return
+    }
+    if (t === "timer-new") {
+      client.timerStart("", root.selectedRow.seconds, root.selectedRow.label)
+      dismiss()
+      return
+    }
+    if (t === "timer") {
+      var tr = root.selectedRow
+      if (tr.state === "running")
+        client.timerOp("timer_pause", tr.timerId)
+      else if (tr.state === "paused")
+        client.timerOp("timer_resume", tr.timerId)
+      else
+        client.timerOp("timer_cancel", tr.timerId)
+      return
+    }
+    if (t === "proc") {
+      root.killSelected("term")
+      return
+    }
+    if (t === "script") {
+      client.systemRun(root.selectedRow.rowId)
+      dismiss()
+      return
+    }
+    if (t === "theme") {
+      client.systemRun(root.selectedRow.rowId)
+      root.closeWithToast("Theme: " + root.selectedRow.title)
       return
     }
     if (t === "setting") {
@@ -842,7 +1315,11 @@ Item {
       root.closeWithToast("Copied")
       return
     }
-    if (t === "app")
+    if (t === "snippet") {
+      root.pasteSnippet(root.selectedRow, "copy")
+      return
+    }
+    if (t === "app" || root.inDesk)
       return
     if (root.selectedRow)
       client.revealRow(root.selectedRow)
@@ -924,8 +1401,17 @@ Item {
         root.open('{"view": "settings"}')
     }
     // Debugging without keystrokes: `omarchy-shell trowel debugState` etc.
+    // Phase 9 views straight from a key binding: `omarchy-shell trowel desk timers`.
+    function desk(view: string): void {
+      if (root.opened && root.view === view)
+        root.dismiss()
+      else
+        root.open(JSON.stringify({
+          "view": view
+        }))
+    }
     function debugState(): string {
-      var lv = root.view === "clipboard" ? clipList : (root.view === "settings" ? settingsList : (root.view === "keylock" ? lockList : list))
+      var lv = root.inDesk ? deskList : (root.view === "clipboard" ? clipList : (root.view === "settings" ? settingsList : (root.view === "keylock" ? lockList : list)))
       var m = lv.model
       var shown = []
       for (var i = 0; i < Math.min(m ? m.count : 0, 12); i++)
@@ -962,7 +1448,11 @@ Item {
     }
   }
 
-  KeyLockPill {}
+  // P-D29: the Dynamic Island under the bar (the keyboard lock, timers, any `trowel island post`).
+  Island {
+    client: client
+    barHeight: Style.bar.sizeHorizontal || 26
+  }
 
   Process {
     id: lockProc
@@ -1053,10 +1543,62 @@ Item {
         toast.show("Couldn't open the app")
       else if (op === "clip_delete" || op === "clip_pin")
         client.clipRefresh()
+      else if (op === "proc_kill")
+        root.procNotice = error.message || "Couldn't end it"
+      else if (op === "snippet_save")
+        snippetEditor.error = error.message || "Couldn't save it"
+      else if (op === "snippet_paste" || op === "system_run" || op === "timer_start" || op === "snippet_import" || op === "snippet_export")
+        toast.show(error.message || "Couldn't do that")
     }
     onOpDone: function (op, msg) {
       if ((op === "clip_pin" || op === "clip_delete") && root.view === "clipboard")
         client.clipRefresh()
+      else if (op.indexOf("timer_") === 0 && op !== "timer_parse")
+        client.timerList()
+      else if (op === "system_commands" && (root.view === "omarchy" || root.view === "themes"))
+        root.syncDesk()
+      else if (op === "system_run" && msg.state !== undefined && msg.state !== null) {
+        client.systemCommands()
+        var r = root.selectedRow
+        root.closeWithToast((r && r.name ? r.name.replace(/^Toggle /, "") : "Done") + (msg.state ? " on" : " off"))
+      } else if (op === "snippet_save") {
+        toast.show("Saved " + (msg.snippet ? msg.snippet.name : "the snippet"))
+        if (root.view === "snippet-edit") {
+          root.deskFromSearch = true
+          root.snippetBack = "snippets"
+          root.goBack()
+        }
+      } else if (op === "snippet_delete")
+        client.snippetQuery(query.text)
+      else if (op === "snippet_export")
+        toast.show("Exported " + msg.exported + " snippets to ~/trowel-snippets.json")
+      else if (op === "snippet_import") {
+        toast.show("Imported " + msg.imported + (msg.skipped ? ", skipped " + msg.skipped : ""))
+        client.snippetQuery(query.text)
+      } else if (op === "proc_kill") {
+        var left = msg.alive || []
+        root.procNotice = left.length ? "Still running after a moment. Ctrl+K → Force quit ends it at once." : ""
+      }
+    }
+    onProcArrived: {
+      if (root.view !== "procs")
+        return
+      root.syncDesk()
+      if (root.selectedRow && root.selectedRow.rowType === "proc")
+        client.procDetailOf(root.selectedRow.raw.pids[0])
+    }
+    onTimersArrived: {
+      if (root.view === "timers")
+        root.syncDesk()
+    }
+    onSnippetsArrived: {
+      if (root.view === "snippets")
+        root.syncDesk()
+    }
+    onIslandChanged: {
+      // A button on the island changed a timer.
+      if (root.opened && root.view === "timers")
+        client.timerList()
     }
     onPreviewArrived: function (msg) {
       root.preview = msg
@@ -1239,10 +1781,20 @@ Item {
             id: query
             width: parent.width
             codeMode: root.codeMode
-            crumb: root.view === "clipboard" ? "Clipboard History" : (root.view === "settings" ? "Settings" : (root.view === "keylock" ? "Lock Keyboard" : ""))
+            crumb: ({
+                "clipboard": "Clipboard History",
+                "settings": "Settings",
+                "keylock": "Lock Keyboard",
+                "timers": "Timer",
+                "procs": "Process Monitor",
+                "snippets": "Snippets",
+                "snippet-edit": snippetEditor.snippetId ? "Edit Snippet" : "Create Snippet",
+                "omarchy": "Omarchy Commands",
+                "themes": "Pick Theme"
+              })[root.view] || ""
             hybridPending: root.phase === "words"
             countText: root.activityBadge
-            placeholder: root.view === "keylock" ? "How long? Pick one, or type 45 or 3m" : root.view === "settings" ? "Search settings" : root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
+            placeholder: root.view === "timers" ? "How long? 25m tea, 1h 30m, at 15:30" : root.view === "procs" ? "Filter by name or PID" : root.view === "snippets" ? "Search snippets" : root.view === "snippet-edit" ? "" : root.view === "omarchy" ? "Search Omarchy commands" : root.view === "themes" ? "Search themes" : root.view === "keylock" ? "How long? Pick one, or type 45 or 3m" : root.view === "settings" ? "Search settings" : root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
             onTextEdited: root.onQueryEdited()
             onKeyPressed: function (event) {
               var ctrl = event.modifiers & Qt.ControlModifier
@@ -1250,6 +1802,30 @@ Item {
               if (query.composing() && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Up || event.key === Qt.Key_Down || event.key === Qt.Key_Escape))
                 return
               if (root.view === "settings" && root.settingsKey(event)) {
+                event.accepted = true
+              } else if (root.view === "procs" && (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) && !ctrl) {
+                root.cycleProcSort(event.key === Qt.Key_Backtab || shift ? -1 : 1)
+                event.accepted = true
+              } else if (root.view === "procs" && ctrl && event.key === Qt.Key_G) {
+                root.toggleProcGroup()
+                event.accepted = true
+              } else if (root.view === "procs" && ctrl && event.key === Qt.Key_C && root.selectedType === "proc" && !query.hasSelectedText()) {
+                root.runAction("copypid")
+                event.accepted = true
+              } else if (root.selectedType === "snippet" && event.key === Qt.Key_Tab && !ctrl && root.selectedRow.raw.arguments && root.selectedRow.raw.arguments.length && root.view === "snippets") {
+                snippetPane.focusArguments()
+                event.accepted = true
+              } else if (root.selectedType === "snippet" && ctrl && event.key === Qt.Key_E) {
+                root.runAction("edit")
+                event.accepted = true
+              } else if ((root.view === "snippets" || root.selectedType === "snippet") && ctrl && event.key === Qt.Key_N) {
+                root.runAction("new")
+                event.accepted = true
+              } else if (ctrl && event.key === Qt.Key_Delete && (root.selectedType === "snippet" || root.selectedType === "timer")) {
+                if (root.selectedType === "snippet")
+                  root.deleteSnippet()
+                else
+                  root.runAction("cancel")
                 event.accepted = true
               } else if (event.key === Qt.Key_Escape) {
                 root.escapeStep()
@@ -1328,7 +1904,59 @@ Item {
           Item {
             width: parent.width
             height: visible ? 34 : 0
-            visible: root.phase !== "empty" && root.view !== "settings" && root.view !== "keylock"
+            visible: root.phase !== "empty" && root.view !== "settings" && root.view !== "keylock" && (!root.inDesk || root.view === "procs")
+            // Process Monitor: what the list is sorted by, and apps or every process.
+            Row {
+              visible: root.view === "procs"
+              anchors.left: parent.left
+              anchors.leftMargin: 14
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 6
+              Repeater {
+                model: DeskModel.SORTS
+                delegate: Rectangle {
+                  id: sortPill
+                  required property string modelData
+                  implicitHeight: 24
+                  implicitWidth: sortLab.implicitWidth + 16
+                  radius: 12
+                  color: root.procSort === modelData ? Theme.selectedFill : Theme.keycapFill
+                  Text {
+                    id: sortLab
+                    anchors.centerIn: parent
+                    text: DeskModel.SORT_LABELS[sortPill.modelData]
+                    color: Theme.foreground
+                    font.pixelSize: Theme.captionSize
+                  }
+                  MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                      root.procSort = sortPill.modelData
+                      client.procSubscribe(root.procSort, root.procGroup)
+                    }
+                  }
+                }
+              }
+              Rectangle {
+                implicitHeight: 24
+                implicitWidth: groupLab.implicitWidth + 16
+                radius: 12
+                color: Theme.keycapFill
+                border.width: Theme.hairlineWidth()
+                border.color: Theme.hairline
+                Text {
+                  id: groupLab
+                  anchors.centerIn: parent
+                  text: root.procGroup === "app" ? "By app" : "Every process"
+                  color: Theme.secondary
+                  font.pixelSize: Theme.captionSize
+                }
+                MouseArea {
+                  anchors.fill: parent
+                  onClicked: root.toggleProcGroup()
+                }
+              }
+            }
             KindChips {
               id: chips
               visible: root.view === "clipboard"
@@ -1370,7 +1998,7 @@ Item {
                 size: 11
               }
               Text {
-                text: "Type"
+                text: root.view === "procs" ? "Sort" : "Type"
                 color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.62)
                 font.pixelSize: 11
                 anchors.verticalCenter: parent.verticalCenter
@@ -1414,10 +2042,22 @@ Item {
           }
 
           EmptyState {
-            visible: root.listModel.count === 0 && !root.showCalc
+            visible: root.listModel.count === 0 && !root.showCalc && root.view !== "snippet-edit"
             anchors.centerIn: parent
             width: parent.width - 48
             title: {
+              if (root.view === "timers")
+                return "That isn't a duration"
+              if (root.view === "procs")
+                return client.procRows.length ? "No process matches" : "Reading processes…"
+              if (root.view === "snippets")
+                return query.text.length ? "No snippets match" : "No snippets yet"
+              if (root.view === "omarchy")
+                return "No Omarchy command matches"
+              if (root.view === "themes")
+                return client.themes.length ? "No theme matches" : "No themes found"
+              if (root.view === "snippet-edit")
+                return ""
               if (root.view === "keylock")
                 return "Type a duration, like 45 or 3m"
               if (root.view === "settings")
@@ -1435,6 +2075,12 @@ Item {
               return "No good matches"
             }
             detail: {
+              if (root.view === "timers")
+                return "Try 25m, 1h 30m, 90s, at 15:30, or 10 tea."
+              if (root.view === "snippets")
+                return query.text.length ? "" : "Ctrl+N creates one."
+              if (root.inDesk)
+                return ""
               if (root.view === "keylock")
                 return "Up to 30 minutes."
               if (root.view === "settings")
@@ -1450,7 +2096,7 @@ Item {
           }
 
           Row {
-            visible: root.listModel.count > 0
+            visible: root.listModel.count > 0 || root.view === "snippet-edit"
             anchors.top: calcCard.visible ? calcCard.bottom : parent.top
             anchors.topMargin: calcCard.visible ? 8 : 0
             anchors.left: parent.left
@@ -1594,9 +2240,9 @@ Item {
                   }
                 }
                 AppRow {
-                  visible: rowType === "app" || rowType === "command"
+                  visible: rowType === "app" || rowType === "command" || rowType === "snippet"
                   width: parent.width
-                  row: (rowType === "app" || rowType === "command") ? (client.rowIndex[rowId] || ({})) : ({})
+                  row: (rowType === "app" || rowType === "command" || rowType === "snippet") ? (client.rowIndex[rowId] || ({})) : ({})
                   selected: root.selection === rowId
                   onClicked: {
                     root.selection = rowId
@@ -1705,6 +2351,82 @@ Item {
               }
             }
 
+            // Phase 9 views share one model; a delegate draws its row by type (never a swapped model).
+            ListView {
+              id: deskList
+              visible: root.inDesk && root.view !== "snippet-edit"
+              width: visible ? root.listWidth : 0
+              height: parent.height
+              model: deskRows
+              clip: true
+              cacheBuffer: 240
+
+              Connections {
+                target: root
+                function onSelectionChanged() {
+                  if (!deskList.visible)
+                    return
+                  var id = root.selection
+                  Qt.callLater(function () {
+                    for (var i = 0; i < deskRows.count; i++)
+                      if (deskRows.get(i).rowId === id) {
+                        if (i > 0 && deskRows.get(i - 1).rowType === "header")
+                          deskList.positionViewAtIndex(i - 1, ListView.Contain)
+                        deskList.positionViewAtIndex(i, ListView.Contain)
+                        return
+                      }
+                  })
+                }
+              }
+
+              delegate: Item {
+                id: deskCell
+                required property string rowType
+                required property string rowId
+                required property string title
+                readonly property var item: root.deskIndex[rowId] || ({})
+                width: deskList.width
+                height: rowType === "header" ? 28 : 46
+                GroupHeader {
+                  visible: deskCell.rowType === "header"
+                  title: deskCell.title
+                  width: parent.width
+                }
+                ListRow {
+                  visible: deskCell.rowType !== "header" && deskCell.rowType !== "proc"
+                  width: parent.width
+                  glyph: deskCell.item.glyph || (deskCell.rowType === "snippet" ? "snippet" : "timer")
+                  title: deskCell.item.title || ""
+                  subtitle: deskCell.item.subtitle || ""
+                  accessory: deskCell.item.accessory || ""
+                  accent: deskCell.rowType === "timer" && deskCell.item.state === "running" || deskCell.item.accessory === "Current"
+                  mono: deskCell.rowType === "timer" || deskCell.rowType === "snippet"
+                  selected: root.selection === deskCell.rowId
+                  onClicked: {
+                    root.selection = deskCell.rowId
+                    root.navigated = true
+                    root.pickSelected()
+                    query.forceActiveFocus()
+                  }
+                  onOpened: root.openSelected()
+                }
+                ProcRow {
+                  visible: deskCell.rowType === "proc"
+                  width: parent.width
+                  row: deskCell.rowType === "proc" ? (deskCell.item.raw || ({})) : ({})
+                  sort: root.procSort
+                  selected: root.selection === deskCell.rowId
+                  onClicked: {
+                    root.selection = deskCell.rowId
+                    root.navigated = true
+                    root.pickSelected()
+                    query.forceActiveFocus()
+                  }
+                  onOpened: root.openSelected()
+                }
+              }
+            }
+
             ListView {
               id: settingsList
               visible: root.view === "settings"
@@ -1763,14 +2485,66 @@ Item {
             }
 
             Rectangle {
-              width: 1
+              width: root.view === "snippet-edit" ? 0 : 1
               height: parent.height
               color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.14)
             }
 
             Item {
-              width: parent.width - root.listWidth - 1
+              width: root.view === "snippet-edit" ? parent.width : parent.width - root.listWidth - 1
               height: parent.height
+
+              TimerPane {
+                anchors.fill: parent
+                visible: root.view === "timers"
+                row: (root.selectedType === "timer" || root.selectedType === "timer-new") ? root.selectedRow : null
+                timer: {
+                  if (root.selectedType !== "timer")
+                    return null
+                  for (var i = 0; i < client.timers.length; i++)
+                    if (client.timers[i].id === root.selectedRow.timerId)
+                      return client.timers[i]
+                  return null
+                }
+              }
+              ProcPane {
+                id: procPane
+                anchors.fill: parent
+                visible: root.view === "procs"
+                row: root.selectedType === "proc" ? root.selectedRow.raw : null
+                detail: client.procDetail
+                notice: root.procNotice.length ? root.procNotice : (root.procArmed === root.selection && root.selection.length ? "Press ↵ again to end " + root.selectedRow.title + "." : "")
+                onConfirmAccepted: root.killSelected("term")
+                onEscaped: query.forceActiveFocus()
+              }
+              SnippetPane {
+                id: snippetPane
+                anchors.fill: parent
+                visible: root.view === "snippets" || (root.view === "search" && root.selectedType === "snippet")
+                snippet: root.selectedType === "snippet" ? root.selectedRow.raw : null
+                onSubmit: function (args) {
+                  root.pasteSnippet(root.selectedRow, "paste")
+                }
+                onEscaped: query.forceActiveFocus()
+              }
+              SnippetEditor {
+                id: snippetEditor
+                anchors.fill: parent
+                visible: root.view === "snippet-edit"
+                onSave: function (snippet) {
+                  snippetEditor.error = ""
+                  client.snippetSave(snippet)
+                }
+                onCancel: {
+                  if (!root.goBack())
+                    root.dismiss()
+                }
+              }
+              ListPane {
+                anchors.fill: parent
+                visible: root.view === "omarchy" || root.view === "themes"
+                row: (root.selectedType === "script" || root.selectedType === "theme") ? root.selectedRow : null
+              }
 
               KeyLockPane {
                 anchors.fill: parent
@@ -1790,7 +2564,7 @@ Item {
               }
               PreviewPane {
                 anchors.fill: parent
-                visible: root.view !== "settings" && root.view !== "keylock" && (root.selectedType === "row" || root.selectedType === "")
+                visible: root.view !== "settings" && root.view !== "keylock" && !root.inDesk && (root.selectedType === "row" || root.selectedType === "")
                 preview: root.preview
                 row: root.selectedType === "row" ? root.selectedRow : ({})
                 query: query.text
@@ -1843,6 +2617,22 @@ Item {
             // `SearchPanelView.swift` keysText, with Ctrl for ⌘.
             Repeater {
               model: {
+                var back = ["esc", root.deskFromSearch ? "Back" : "Close"]
+                if (root.view === "timers") {
+                  if (root.selectedType === "timer")
+                    return [["↵", root.selectedRow.state === "running" ? "Pause" : (root.selectedRow.state === "paused" ? "Resume" : "Dismiss")], ["ctrl del", "Cancel"], ["ctrl K", "Actions"], back]
+                  return [["↵", "Start"], back]
+                }
+                if (root.view === "procs")
+                  return [["↵", root.procArmed === root.selection && root.selection.length ? "Confirm End" : "End"], ["tab", "Sort"], ["ctrl K", "Actions"], back]
+                if (root.view === "snippets")
+                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["ctrl N", "New"], ["ctrl K", "Actions"], back]
+                if (root.view === "snippet-edit")
+                  return [["tab", "Next field"], ["ctrl ↵", "Save"], ["esc", "Cancel"]]
+                if (root.view === "omarchy")
+                  return [["↵", "Run"], back]
+                if (root.view === "themes")
+                  return [["↵", "Apply"], back]
                 if (root.view === "keylock")
                   return [["↵", "Lock"], ["esc", root.lockFromSearch ? "Back" : "Close"]]
                 if (root.view === "settings") {
@@ -1869,7 +2659,11 @@ Item {
                 case "app":
                   return [["↵", "Open"], ["ctrl K", "Actions"]]
                 case "command":
-                  return [["↵", "Open"]]
+                  if (root.selectedRow && root.selectedRow.confirm)
+                    return [["↵", root.armedCommand === root.selection ? "Confirm " + root.selectedRow.name : root.selectedRow.name]]
+                  return [["↵", (root.selectedRow && root.selectedRow.raw && root.selectedRow.raw.system) ? "Run" : "Open"]]
+                case "snippet":
+                  return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["ctrl K", "Actions"]]
                 case "clip":
                   return [["↵", "Paste"], ["ctrl ↵", "Copy"], ["ctrl del", "Remove"], ["ctrl K", "Actions"]].concat(root.clipFromSearch ? [["esc", "Back"]] : [])
                 case "row":

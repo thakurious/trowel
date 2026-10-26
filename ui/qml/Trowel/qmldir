@@ -34,5 +34,14 @@ ToggleSwitch 1.0 ToggleSwitch.qml
 SettingsState 1.0 SettingsState.qml
 SettingDetail 1.0 SettingDetail.qml
 SettingRow 1.0 SettingRow.qml
-KeyLockPill 1.0 KeyLockPill.qml
 KeyLockPane 1.0 KeyLockPane.qml
+Island 1.0 Island.qml
+IslandView 1.0 IslandView.qml
+ListRow 1.0 ListRow.qml
+ListPane 1.0 ListPane.qml
+ProcRow 1.0 ProcRow.qml
+ProcPane 1.0 ProcPane.qml
+Sparkline 1.0 Sparkline.qml
+TimerPane 1.0 TimerPane.qml
+SnippetPane 1.0 SnippetPane.qml
+SnippetEditor 1.0 SnippetEditor.qml

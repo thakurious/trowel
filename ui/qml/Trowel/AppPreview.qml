@@ -77,8 +77,13 @@ Item {
     Text {
       width: parent.width
       text: {
-        if (root.row && root.row.rowType === "command")
-          return "Press Enter to open"
+        if (root.row && root.row.rowType === "command") {
+          if (root.row.confirm)
+            return "Press Enter twice: it asks first"
+          if (root.row.accessory === "On" || root.row.accessory === "Off")
+            return "It's " + root.row.accessory.toLowerCase() + " now. Press Enter to switch it"
+          return (root.row.raw && root.row.raw.system) ? "Press Enter to run" : "Press Enter to open"
+        }
         var n = (root.row && root.row.launches) ? root.row.launches : 0
         if (!n)
           return "Not launched from Trowel yet"

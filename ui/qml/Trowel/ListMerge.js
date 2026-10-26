@@ -26,6 +26,42 @@ var COMMANDS = [{
     subtitle: "Ignore every key for a while, to clean the keyboard",
     keywords: ["lock", "keyboard", "clean", "wipe", "disable", "keys", "cat"],
     glyph: "keyboard"
+  }, {
+    id: "timers",
+    name: "Timer",
+    subtitle: "Count down on the Island; it rings when it's done",
+    keywords: ["timer", "countdown", "alarm", "pomodoro", "stopwatch", "remind"],
+    glyph: "timer"
+  }, {
+    id: "procs",
+    name: "Process Monitor",
+    subtitle: "What's using the CPU, graphics, memory and disk, and end it",
+    keywords: ["process", "task manager", "top", "kill", "cpu", "gpu", "ram", "memory", "activity monitor", "btop", "quit"],
+    glyph: "process"
+  }, {
+    id: "snippets",
+    name: "Snippets",
+    subtitle: "Paste saved text, with dates, the clipboard and blanks filled in",
+    keywords: ["snippet", "snippets", "text", "template", "expand", "signature"],
+    glyph: "snippet"
+  }, {
+    id: "snippet-new",
+    name: "Create Snippet",
+    subtitle: "Save text you type often, with a keyword like ;sig",
+    keywords: ["create", "new", "add", "snippet", "template"],
+    glyph: "snippet"
+  }, {
+    id: "omarchy",
+    name: "Omarchy Commands",
+    subtitle: "Every Omarchy command, searchable",
+    keywords: ["omarchy", "commands", "scripts", "system", "menu"],
+    glyph: "terminal"
+  }, {
+    id: "themes",
+    name: "Pick Theme",
+    subtitle: "Switch the Omarchy theme",
+    keywords: ["theme", "themes", "colors", "look", "appearance", "dark", "light"],
+    glyph: "palette"
   }]
 
 function words(text) {
@@ -90,7 +126,23 @@ function commandItem(c) {
     name: c.name,
     title: c.name,
     generic: c.subtitle || "",
-    glyph: c.glyph || "app"
+    glyph: c.glyph || "app",
+    accessory: c.accessory || "",
+    confirm: !!c.confirm,
+    raw: c
+  }
+}
+
+function snippetItem(s) {
+  return {
+    rowType: "snippet",
+    rowId: "snip:" + s.id,
+    snippetId: s.id,
+    title: s.name,
+    name: s.name,
+    generic: String(s.body || "").replace(/\s+/g, " ").slice(0, 80),
+    accessory: s.keyword || "",
+    raw: s
   }
 }
 
@@ -153,6 +205,16 @@ function merge(files, apps, query, opts) {
   var top = []
   var bottom = []
   var cmds = matchCommands(query, opts.commands, opts.signals)
+  // Lead commands (a typed timer) don't match by name: they are what the text means.
+  var lead = (opts.lead || []).map(function (c) {
+    return {
+      command: c,
+      strong: true,
+      signal: null,
+      order: -1
+    }
+  })
+  cmds = lead.concat(cmds)
   var cs = []
   if (cmds.length) {
     cs = [{
@@ -202,8 +264,25 @@ function merge(files, apps, query, opts) {
       break
     }
   }
-  return top.concat(rest.slice(0, fold), bottom, rest.slice(fold))
+  // A snippet's exact keyword (`;sig`) is what the user meant: it goes first.
+  var hits = opts.snippets || []
+  var sn = []
+  if (hits.length) {
+    sn = [{
+      rowType: "header",
+      rowId: "hdr:snippets",
+      title: "Snippets",
+      kind: "snippets",
+      count: hits.length
+    }]
+    for (var h = 0; h < hits.length; h++)
+      sn.push(snippetItem(hits[h]))
+  }
+  return sn.concat(top, rest.slice(0, fold), bottom, rest.slice(fold))
 }
+
+// Row types ↑/↓ can land on (headers and the like are skipped).
+var SELECTABLE = ["row", "fold", "app", "clip", "command", "setting", "duration", "timer-new", "timer", "proc", "snippet", "script", "theme"]
 
 // Clipboard view rows: pinned first, as the daemon returns them; a "Pinned" header when any.
 // `headers: false` for the Images grid, whose cells are all thumbnails.
@@ -240,8 +319,7 @@ function clipRows(clips, headers) {
 function selectable(rows, hasCalc) {
   var ids = hasCalc ? ["calc:"] : []
   for (var i = 0; i < rows.length; i++) {
-    var t = rows[i].rowType
-    if (t === "row" || t === "fold" || t === "app" || t === "clip" || t === "command" || t === "setting" || t === "duration")
+    if (SELECTABLE.indexOf(rows[i].rowType) >= 0)
       ids.push(rows[i].rowId)
   }
   return ids
@@ -254,7 +332,7 @@ function defaultSelection(rows, hasCalc) {
     return "calc:"
   for (var i = 0; i < rows.length; i++) {
     var t = rows[i].rowType
-    if (t === "row" || t === "app" || t === "clip" || t === "command" || t === "setting" || t === "duration")
+    if (t !== "fold" && SELECTABLE.indexOf(t) >= 0)
       return rows[i].rowId
   }
   return ""
