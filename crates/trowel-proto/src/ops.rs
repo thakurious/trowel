@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::desk::{IslandActivity, KillSignal, ProcGroup, ProcSort, Snippet};
 use crate::launcher::{ClipKind, ClipOffer, PasteMode};
 use crate::path::PathValue;
 use crate::results::SearchMode;
@@ -209,6 +210,110 @@ pub enum Op {
         #[serde(default)]
         mode: PasteMode,
     },
+    // ---- v3 (Phase 9, PHASE9-PLAN §3) ----
+    /// Adds or replaces an activity; subscribers to `island` get the new list.
+    IslandPost {
+        activity: IslandActivity,
+    },
+    IslandDismiss {
+        activity_id: String,
+    },
+    /// A button on an expanded activity was pressed; routed to its producer.
+    IslandAction {
+        activity_id: String,
+        action: String,
+    },
+    IslandList,
+    /// `proc` events every `interval_ms` on this connection until `proc_unsubscribe` or close.
+    ProcSubscribe {
+        #[serde(default = "default_proc_interval")]
+        interval_ms: u32,
+        #[serde(default)]
+        sort: ProcSort,
+        #[serde(default)]
+        group: ProcGroup,
+        #[serde(default)]
+        all_users: bool,
+    },
+    ProcUnsubscribe,
+    ProcDetail {
+        pid: i32,
+    },
+    /// `confirm` carries the typed name for a protected process (P-D30).
+    ProcKill {
+        pids: Vec<i32>,
+        signal: KillSignal,
+        #[serde(default)]
+        confirm: Option<String>,
+    },
+    SystemCommands,
+    SystemRun {
+        command_id: String,
+    },
+    /// `text` ("25m tea", "at 15:30") or an explicit `seconds` + `label`.
+    TimerStart {
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        seconds: Option<f64>,
+        #[serde(default)]
+        label: Option<String>,
+    },
+    TimerParse {
+        text: String,
+    },
+    TimerList,
+    TimerPause {
+        timer_id: i64,
+    },
+    TimerResume {
+        timer_id: i64,
+    },
+    TimerAdd {
+        timer_id: i64,
+        seconds: f64,
+    },
+    TimerCancel {
+        timer_id: i64,
+    },
+    SnippetQuery {
+        #[serde(default)]
+        text: String,
+        #[serde(default = "default_snippet_limit")]
+        limit: u32,
+    },
+    SnippetGet {
+        snippet_id: i64,
+    },
+    /// `id` 0 creates; otherwise updates.
+    SnippetSave {
+        snippet: Snippet,
+    },
+    SnippetDelete {
+        snippet_id: i64,
+    },
+    /// Expands placeholders (`args` fills `{argument:name}`) and pastes or copies (D21 path).
+    SnippetPaste {
+        snippet_id: i64,
+        #[serde(default)]
+        mode: PasteMode,
+        #[serde(default)]
+        args: std::collections::BTreeMap<String, String>,
+    },
+    SnippetImport {
+        path: String,
+    },
+    SnippetExport {
+        path: String,
+    },
+}
+
+fn default_proc_interval() -> u32 {
+    1000
+}
+
+fn default_snippet_limit() -> u32 {
+    50
 }
 
 fn default_limit() -> u32 {
@@ -235,7 +340,7 @@ fn yes() -> bool {
     true
 }
 
-/// Closed set of `op` names in protocol v2. Anything else is `unknown_op`.
+/// Closed set of `op` names (v3). Anything else is `unknown_op`.
 pub const KNOWN_OPS: &[&str] = &[
     "hello",
     "panel_opened",
@@ -277,6 +382,30 @@ pub const KNOWN_OPS: &[&str] = &[
     "calc",
     "calc_history",
     "calc_copy",
+    "island_post",
+    "island_dismiss",
+    "island_action",
+    "island_list",
+    "proc_subscribe",
+    "proc_unsubscribe",
+    "proc_detail",
+    "proc_kill",
+    "system_commands",
+    "system_run",
+    "timer_start",
+    "timer_parse",
+    "timer_list",
+    "timer_pause",
+    "timer_resume",
+    "timer_add",
+    "timer_cancel",
+    "snippet_query",
+    "snippet_get",
+    "snippet_save",
+    "snippet_delete",
+    "snippet_paste",
+    "snippet_import",
+    "snippet_export",
 ];
 
 impl Op {
@@ -300,6 +429,37 @@ impl Op {
                 | Self::Calc { .. }
                 | Self::CalcHistory { .. }
                 | Self::CalcCopy { .. }
+        )
+    }
+
+    /// Ops added in protocol v3 (Phase 9).
+    pub fn is_v3(&self) -> bool {
+        matches!(
+            self,
+            Self::IslandPost { .. }
+                | Self::IslandDismiss { .. }
+                | Self::IslandAction { .. }
+                | Self::IslandList
+                | Self::ProcSubscribe { .. }
+                | Self::ProcUnsubscribe
+                | Self::ProcDetail { .. }
+                | Self::ProcKill { .. }
+                | Self::SystemCommands
+                | Self::SystemRun { .. }
+                | Self::TimerStart { .. }
+                | Self::TimerParse { .. }
+                | Self::TimerList
+                | Self::TimerPause { .. }
+                | Self::TimerResume { .. }
+                | Self::TimerAdd { .. }
+                | Self::TimerCancel { .. }
+                | Self::SnippetQuery { .. }
+                | Self::SnippetGet { .. }
+                | Self::SnippetSave { .. }
+                | Self::SnippetDelete { .. }
+                | Self::SnippetPaste { .. }
+                | Self::SnippetImport { .. }
+                | Self::SnippetExport { .. }
         )
     }
 
@@ -345,6 +505,30 @@ impl Op {
             Self::Calc { .. } => "calc",
             Self::CalcHistory { .. } => "calc_history",
             Self::CalcCopy { .. } => "calc_copy",
+            Self::IslandPost { .. } => "island_post",
+            Self::IslandDismiss { .. } => "island_dismiss",
+            Self::IslandAction { .. } => "island_action",
+            Self::IslandList => "island_list",
+            Self::ProcSubscribe { .. } => "proc_subscribe",
+            Self::ProcUnsubscribe => "proc_unsubscribe",
+            Self::ProcDetail { .. } => "proc_detail",
+            Self::ProcKill { .. } => "proc_kill",
+            Self::SystemCommands => "system_commands",
+            Self::SystemRun { .. } => "system_run",
+            Self::TimerStart { .. } => "timer_start",
+            Self::TimerParse { .. } => "timer_parse",
+            Self::TimerList => "timer_list",
+            Self::TimerPause { .. } => "timer_pause",
+            Self::TimerResume { .. } => "timer_resume",
+            Self::TimerAdd { .. } => "timer_add",
+            Self::TimerCancel { .. } => "timer_cancel",
+            Self::SnippetQuery { .. } => "snippet_query",
+            Self::SnippetGet { .. } => "snippet_get",
+            Self::SnippetSave { .. } => "snippet_save",
+            Self::SnippetDelete { .. } => "snippet_delete",
+            Self::SnippetPaste { .. } => "snippet_paste",
+            Self::SnippetImport { .. } => "snippet_import",
+            Self::SnippetExport { .. } => "snippet_export",
         }
     }
 }

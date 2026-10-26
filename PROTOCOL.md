@@ -57,8 +57,9 @@ The first request on every connection:
    "state":"ready|onboarding|model_missing|model_downloading"}
 ```
 
-If the protocol versions differ, the daemon answers `ok:false, code:"bad_request"` and the UI shows
-"Trowel was updated, restart it". Do not try to negotiate across versions.
+The daemon speaks v2 and v3 (D34: v3 only adds ops). It answers `hello` with the client's own
+version, so a v2 panel keeps working beside a v3 one. Any other version gets `ok:false,
+code:"bad_request"` and the UI shows "Trowel was updated, restart it".
 
 `capabilities` gains `apps`, `clipboard` and `calc` (D22) as the daemon serves them: `calc` since
 L2c, `apps` since L2, `clipboard` since L3. `troweld --mock` advertises and serves all three from
@@ -186,6 +187,38 @@ Optional fields are **absent** when empty, never `null`. `ClipKind` is the close
 {"expr":"1920*1.25 + 15%", "pretty_expr":"1920 × 1.25 + 15%", "display":"2,760", "copy":"2760",
  "kind":"number", "unit":"cm", "approx":false, "alts":[{"label":"Hex","copy":"0xac8"}]}
 ```
+
+### Desk (v3, Phase 9, `PHASE9-PLAN.md`)
+
+Island, process monitor, system commands, timers and snippets. Types are `trowel_proto::desk`.
+Fields named after their object (`activity_id`, `timer_id`, `snippet_id`, `command_id`): a bare `id`
+would collide with the envelope. An op whose part isn't built yet answers `not_ready`.
+`capabilities` gains `island`, `proc`, `system`, `timers`, `snippets` as each lands.
+
+| Op | Params | Reply / events |
+|---|---|---|
+| `island_post` | `{activity}` | `{}`; `island` event `{activities}` to subscribers |
+| `island_dismiss` | `{activity_id}` | `{}` |
+| `island_action` | `{activity_id, action}` | `{}`; handled by the producer |
+| `island_list` | — | `{activities}` |
+| `proc_subscribe` | `{interval_ms=1000, sort, group, all_users}` | `{}`; `proc` events `{totals, rows}` |
+| `proc_unsubscribe` | — | `{}` |
+| `proc_detail` | `{pid}` | cmdline, user, start, PSS, 60-sample history |
+| `proc_kill` | `{pids, signal: term|kill, confirm?}` | `{}` / `not_allowed` (P-D30) |
+| `system_commands` | — | `{commands:[SystemCommand]}` |
+| `system_run` | `{command_id}` | `{}` |
+| `timer_start` | `{text}` or `{seconds, label}` | `Timer` |
+| `timer_parse` | `{text}` | `TimerSpec` or `null` |
+| `timer_list` | — | `{timers}` |
+| `timer_pause` / `timer_resume` / `timer_cancel` | `{timer_id}` | `Timer` / `{}` |
+| `timer_add` | `{timer_id, seconds}` | `Timer` |
+| `snippet_query` | `{text, limit=50}` | `{rows:[Snippet]}` |
+| `snippet_get` / `snippet_delete` | `{snippet_id}` | `Snippet` / `{}` |
+| `snippet_save` | `{snippet}` (`id` 0 creates) | `Snippet` |
+| `snippet_paste` | `{snippet_id, mode, args}` | `{}` (D21 paste path) |
+| `snippet_import` / `snippet_export` | `{path}` | `{imported, skipped}` / `{exported}` |
+
+Topics for `subscribe`: `island`, `timers`.
 
 ### `status` event
 

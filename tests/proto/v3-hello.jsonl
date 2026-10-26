@@ -1,0 +1,4 @@
+{"send": {"id": 1, "op": "hello", "protocol": 3, "client": "panel", "pid": 1}}
+{"recv": {"id": 1, "ok": true, "protocol": 3, "daemon": "0.1.0", "capabilities": ["code", "audio", "video", "ocr", "apps", "clipboard", "calc"], "state": "ready"}}
+{"send": {"id": 2, "op": "hello", "protocol": 4, "client": "panel", "pid": 1}}
+{"recv": {"id": 2, "ok": false, "error": {"code": "bad_request", "message": "Trowel was updated, restart it"}}}

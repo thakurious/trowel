@@ -17,7 +17,7 @@ use trowel_core::{Embedder, FakeEmbedder, FileKind, IndexStore, Prompts, Rules, 
 use trowel_proto::ops::KNOWN_OPS;
 use trowel_proto::{
     CalcReply, Config, ErrorBody, ErrorCode, Meaning, Op, PasteMode, Request, SearchMode, Status,
-    MAX_LINE_BYTES, PROTOCOL_VERSION,
+    MAX_LINE_BYTES, OLDEST_PROTOCOL, PROTOCOL_VERSION,
 };
 
 use crate::actions;
@@ -105,6 +105,34 @@ struct Engine {
     clip_events: clip::Events,
     /// Captures are ignored until then: the daemon's own `wl-copy` from a `clip_paste`.
     clip_suppress: Mutex<Option<Instant>>,
+    /// Phase 9 (island, processes, system commands, timers, snippets). Set right after the
+    /// engine is built, since its host holds a weak reference back.
+    desk: std::sync::OnceLock<Arc<crate::desk::Desk>>,
+}
+
+/// The desk's view of the real daemon.
+struct EngineHost(std::sync::Weak<Engine>);
+
+impl crate::desk::Host for EngineHost {
+    fn with_state(
+        &self,
+        f: &mut dyn FnMut(&StateDb) -> Result<Value, trowel_core::DbError>,
+    ) -> Result<Value, String> {
+        let engine = self.0.upgrade().ok_or("daemon is stopping")?;
+        engine.with_state(f)
+    }
+
+    fn paste_text(&self, text: &str, copy_only: bool) -> Result<(), String> {
+        actions::copy_text(text).map_err(|e| e.to_string())?;
+        if !copy_only {
+            actions::paste_keystroke();
+        }
+        Ok(())
+    }
+
+    fn spawn(&self, argv: &[String]) -> Result<(), String> {
+        apps::spawn(argv).map_err(|e| e.to_string())
+    }
 }
 
 enum Queued {
@@ -168,6 +196,8 @@ struct Conn {
     last_status: Mutex<Option<Instant>>,
     /// `SO_PEERCRED` pid: `clip_ingest` is only taken from our own capture child.
     peer_pid: u32,
+    /// This connection as the desk sees it (subscriptions to `island`, `proc`, `timers`).
+    sink: crate::desk::Sink,
 }
 
 pub fn run(opts: EngineOpts) -> io::Result<()> {
@@ -246,7 +276,11 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
         clip_subscribers,
         clip_events,
         clip_suppress: Mutex::new(None),
+        desk: std::sync::OnceLock::new(),
     });
+    let _ = engine.desk.set(crate::desk::Desk::new(Arc::new(EngineHost(
+        Arc::downgrade(&engine),
+    ))));
 
     start_apps(&engine);
     engine.clip_watch.start();
@@ -413,6 +447,14 @@ fn handle_conn(stream: UnixStream, engine: Arc<Engine>, peer_pid: u32) -> io::Re
         preview_epoch: Arc::new(AtomicU64::new(0)),
         last_status: Mutex::new(None),
         peer_pid,
+        sink: {
+            let push = Arc::clone(&out);
+            let alive = Arc::clone(&out);
+            crate::desk::Sink::new(
+                move |line| push.push_line(line),
+                move || !alive.dead.load(Ordering::Relaxed),
+            )
+        },
     };
     let mut reader = BufReader::new(stream);
     loop {
@@ -427,6 +469,7 @@ fn handle_conn(stream: UnixStream, engine: Arc<Engine>, peer_pid: u32) -> io::Re
         }
     }
     out.close();
+    engine.desk().forget(&conn.sink);
     let _ = write_thread.join();
     Ok(())
 }
@@ -528,7 +571,7 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
     }
     match req.op {
         Op::Hello { protocol, .. } => {
-            if protocol != PROTOCOL_VERSION {
+            if !(OLDEST_PROTOCOL..=PROTOCOL_VERSION).contains(&protocol) {
                 reply_error(
                     conn,
                     Some(id),
@@ -550,9 +593,13 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
                 conn,
                 id,
                 json!({
-                    "protocol": PROTOCOL_VERSION,
+                    // The version the client speaks: a v2 panel keeps working (v3 is additive).
+                    "protocol": protocol,
                     "daemon": DAEMON_VERSION,
-                    "capabilities": CAPABILITIES,
+                    "capabilities": CAPABILITIES
+                        .iter()
+                        .chain(engine.desk().capabilities())
+                        .collect::<Vec<_>>(),
                     "state": state,
                 }),
             );
@@ -1108,6 +1155,10 @@ fn handle_op(req: Request, conn: &mut Conn, engine: &Arc<Engine>) {
                 Err(err) => reply_error(conn, Some(id), ErrorCode::Io, err),
             }
         }
+        op => match engine.desk().handle(op, conn.sink.clone()) {
+            Ok(body) => reply_ok(conn, id, body),
+            Err((code, message)) => reply_error(conn, Some(id), code, message),
+        },
     }
 }
 
@@ -1982,6 +2033,10 @@ impl Engine {
                 .clone(),
             stats,
         )
+    }
+
+    fn desk(&self) -> &Arc<crate::desk::Desk> {
+        self.desk.get().expect("desk set at start")
     }
 
     /// Runs `f` on `state.sqlite`, opening it on first use.

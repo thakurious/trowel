@@ -6,6 +6,7 @@ pub mod cache;
 pub mod calc;
 pub mod clip;
 pub mod config_file;
+pub mod desk;
 pub mod disk;
 pub mod doctor;
 pub mod encoder;

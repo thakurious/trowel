@@ -19,7 +19,8 @@ pub const STATE_FILE: &str = "state.sqlite";
 /// 1: L1. 2: `apps_launches.score` (decayed frecency sum, L2). 3: `clip_entries.seq`, the
 /// recency order (`last_used` is whole seconds, so copies within a second would tie; L3).
 /// 4: `learned`, Raycast-style frecency and search terms for apps and commands (D19 amended).
-const SCHEMA_VERSION: i64 = 4;
+/// 5: `timers` and `snippets` (+ `snippets_fts`), Phase 9 (PHASE9-PLAN §3).
+const SCHEMA_VERSION: i64 = 5;
 
 pub struct StateDb {
     pub(crate) db: Database,
@@ -165,6 +166,42 @@ impl StateDb {
                 expr TEXT NOT NULL,
                 result TEXT NOT NULL,
                 at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS timers(
+                id INTEGER PRIMARY KEY,
+                label TEXT NOT NULL DEFAULT '',
+                total REAL NOT NULL,
+                state TEXT NOT NULL,
+                ends_at REAL,
+                left REAL NOT NULL,
+                created REAL NOT NULL,
+                fired_at REAL,
+                late INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE IF NOT EXISTS snippets(
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                keyword TEXT NOT NULL DEFAULT '',
+                body TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                created INTEGER NOT NULL,
+                last_used INTEGER NOT NULL DEFAULT 0,
+                uses INTEGER NOT NULL DEFAULT 0);
+            CREATE VIRTUAL TABLE IF NOT EXISTS snippets_fts USING fts5(
+                name, keyword, body, content = 'snippets', content_rowid = 'id',
+                tokenize = '{tokenizer}');
+            CREATE TRIGGER IF NOT EXISTS snippets_fts_ai AFTER INSERT ON snippets BEGIN
+                INSERT INTO snippets_fts(rowid, name, keyword, body)
+                    VALUES (new.id, new.name, new.keyword, new.body);
+            END;
+            CREATE TRIGGER IF NOT EXISTS snippets_fts_ad AFTER DELETE ON snippets BEGIN
+                INSERT INTO snippets_fts(snippets_fts, rowid, name, keyword, body)
+                    VALUES ('delete', old.id, old.name, old.keyword, old.body);
+            END;
+            CREATE TRIGGER IF NOT EXISTS snippets_fts_au AFTER UPDATE OF name, keyword, body ON snippets BEGIN
+                INSERT INTO snippets_fts(snippets_fts, rowid, name, keyword, body)
+                    VALUES ('delete', old.id, old.name, old.keyword, old.body);
+                INSERT INTO snippets_fts(rowid, name, keyword, body)
+                    VALUES (new.id, new.name, new.keyword, new.body);
+            END;
             COMMIT;"
         ))?;
         let mut has_seq = false;
@@ -503,6 +540,44 @@ mod tests {
             "{nvim:?}"
         );
         assert!(nvim.terms.is_empty());
+    }
+
+    #[test]
+    fn v4_files_get_timers_and_snippets_and_keep_their_rows() {
+        let dir = temp();
+        let state = StateDb::open(&dir).unwrap();
+        state.record_calc("2+2", "4", 1).unwrap();
+        state
+            .db
+            .execute(
+                "DROP TABLE snippets_fts; DROP TABLE snippets; DROP TABLE timers;
+                 PRAGMA user_version = 4;",
+            )
+            .unwrap();
+        drop(state);
+        let state = StateDb::open(&dir).unwrap();
+        assert_eq!(state.db.user_version().unwrap(), 5);
+        assert_eq!(state.calc_history(10).unwrap().len(), 1);
+        state
+            .db
+            .execute(
+                "INSERT INTO snippets(name, keyword, body, created) VALUES ('Sig', ';sig', 'Thanks', 1);
+                 INSERT INTO timers(label, total, state, left, created) VALUES ('tea', 60, 'paused', 30, 1);",
+            )
+            .unwrap();
+        let mut hits = 0;
+        state
+            .db
+            .query(
+                "SELECT rowid FROM snippets_fts WHERE snippets_fts MATCH 'thanks'",
+                &[],
+                |_| {
+                    hits += 1;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert_eq!(hits, 1);
     }
 
     #[test]
