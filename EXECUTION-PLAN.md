@@ -289,6 +289,16 @@ To do (in this order; each its own small PR):
 
 ---
 
+## Phase 9: Island, Process Monitor, System Commands, Timers, Snippets (`phase-9-island`)
+
+Requested 2026-10-26, **draft awaiting sign-off** of P-D29…P-D34. The full plan is in
+**`PHASE9-PLAN.md`**: P0 spikes → P1 protocol v3 + `state.sqlite` v5 + mock → P2 the Island
+(replaces the keyboard-lock pill) → P3 System Commands ∥ P4 Timers → P5 Process Monitor →
+P6 Snippets → P7 hardening. File search and every fidelity invariant stay untouched.
+
+**Acceptance:** each P-phase acceptance line in `PHASE9-PLAN.md` is demonstrated with output in
+`PROGRESS.md`, and the P4 evals re-run with identical numbers at the end.
+
 ## Cross-cutting workstreams
 
 - **Fidelity harness** (from Phase 0, permanent): reference vectors (Vulkan and CPU) plus the three
