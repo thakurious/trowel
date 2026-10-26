@@ -224,7 +224,23 @@ Leave these in place until the IME re-test is done so `SUPER+D` still summons th
   Pill seen live (layer 663,2 211×22, centered over the bar). **Not verified:** that keys were
   physically ignored (needs a human pressing keys); the Unlock button clicked live.
 
+- **Screenshot not found (human, same day):** the human's screenshot was never a file. Their Print /
+  F12 / Alt+Shift+4 run **omasnap** (`~/.config/hypr/bindings.lua`), which copies + previews and saves
+  only on Save/Enter (to `~/Pictures/Screenshots`, name `screenshot-{date}_{time}-{app}.png`). It was
+  only clipboard entry 163. Also, a saved omasnap region capture classified as `image` (no OCR): the
+  name check rejected `-{app}` and 1045×202 isn't a monitor size. Fixed (`7fa2342`): `-{app}`/`-2`
+  suffixes and any image directly in a `Screenshots` folder are screenshots. Deployed binaries
+  (backups `…bak.trowel-20261026-144112`, daemon restart only). Live: their capture copied into
+  `~/Pictures/Screenshots` → `screenshot done`, `ocr_chars 791` in ~8 s, #1 for "skipped images";
+  probe removed. **Open (human):** omasnap doesn't save by default — bind `omasnap --copy --save`,
+  save by hand, or build clipboard-image OCR (L6 backlog).
+
 ### Verified facts (2026-10-26)
+
+- omasnap (`~/.local/bin/omasnap`, source `~/omasnap`): quick capture = copy + 10 s preview, no file;
+  `--save`/`--copy` quick outputs; save dir `[output] directory` in `~/.config/omasnap/omasnap.conf`
+  or `OMASNAP_SCREENSHOT_DIR` (default `~/Pictures/Screenshots`); last 5 captures (full frame + crop
+  op JSON) in `~/.local/state/Omarchy/omasnap/recent`. No "always save" setting.
 
 - `hyprctl eval 'hl.device({ name = "<n>", enabled = false|true })'` prints `ok` (also for a name
   that doesn't exist), exit 0. `omarchy-toggle-input-device` uses the same call. Runtime only.
