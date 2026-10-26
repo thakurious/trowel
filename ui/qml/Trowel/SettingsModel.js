@@ -163,6 +163,15 @@ var CATALOG = [{
     empty: "No apps are hidden.",
     keywords: ["hide", "apps", "applications", "launcher", "show"]
   }, {
+    id: "timer_sound",
+    section: "Launcher",
+    type: "toggle",
+    key: "timer_sound",
+    title: "Timer Sound",
+    glyph: "",
+    detail: "Play a chime when a timer finishes. The Island and a notification show it either way.",
+    keywords: ["timer", "sound", "alarm", "chime", "ring", "beep"]
+  }, {
     id: "capture",
     section: "Clipboard",
     type: "toggle",
@@ -400,6 +409,7 @@ var DEFAULTS = {
   "ui.reduce_motion": false,
   "code_quiet_seconds": 2,
   "index_speed": "gentle",
+  "timer_sound": true,
   "code_editor": ""
 }
 

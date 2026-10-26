@@ -2,6 +2,7 @@
 //! (`PROTOCOL.md`).
 
 pub mod config;
+pub mod desk;
 pub mod error;
 pub mod launcher;
 pub mod ops;
@@ -10,6 +11,10 @@ pub mod results;
 pub mod status;
 
 pub use config::{ClipboardConfig, Config, UiConfig};
+pub use desk::{
+    IslandActivity, IslandButton, IslandState, KillSignal, ProcGroup, ProcRow, ProcSort,
+    ProcTotals, Snippet, SystemCommand, Timer, TimerSpec, TimerState,
+};
 pub use error::{ErrorBody, ErrorCode};
 pub use launcher::{
     AppAction, AppRow, AppsResult, CalcAlt, CalcHistoryRow, CalcKind, CalcReply, CalcResult,
@@ -21,7 +26,9 @@ pub use path::PathValue;
 pub use results::{Meaning, ResultGroup, ResultRow, SearchMode, SearchResult};
 pub use status::{Counts, ModelStatus, Progress, Status};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+/// v3 (Phase 9) is additive: the daemon still accepts a v2 `hello` ([`OLDEST_PROTOCOL`]).
+pub const PROTOCOL_VERSION: u32 = 3;
+pub const OLDEST_PROTOCOL: u32 = 2;
 /// Max JSON line length. A longer line closes the connection with `{"error":"too_large"}`.
 pub const MAX_LINE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -77,6 +84,49 @@ mod tests {
             assert!(ops::KNOWN_OPS.contains(&req.op.name()), "{raw}");
             assert!(req.op.is_v2(), "{raw}");
         }
+    }
+
+    #[test]
+    fn every_v3_op_parses_and_is_known() {
+        let samples = [
+            r#"{"id":1,"op":"island_post","activity":{"id":"keylock","title":"Keyboard locked","ends_at":1.0}}"#,
+            r#"{"id":1,"op":"island_dismiss","activity_id":"keylock"}"#,
+            r#"{"id":1,"op":"island_action","activity_id":"keylock","action":"unlock"}"#,
+            r#"{"id":1,"op":"island_list"}"#,
+            r#"{"id":1,"op":"proc_subscribe","sort":"gpu"}"#,
+            r#"{"id":1,"op":"proc_unsubscribe"}"#,
+            r#"{"id":1,"op":"proc_detail","pid":42}"#,
+            r#"{"id":1,"op":"proc_kill","pids":[42],"signal":"term"}"#,
+            r#"{"id":1,"op":"system_commands"}"#,
+            r#"{"id":1,"op":"system_run","command_id":"lock"}"#,
+            r#"{"id":1,"op":"timer_start","text":"25m tea"}"#,
+            r#"{"id":1,"op":"timer_parse","text":"at 15:30"}"#,
+            r#"{"id":1,"op":"timer_list"}"#,
+            r#"{"id":1,"op":"timer_pause","timer_id":7}"#,
+            r#"{"id":1,"op":"timer_resume","timer_id":7}"#,
+            r#"{"id":1,"op":"timer_add","timer_id":7,"seconds":60}"#,
+            r#"{"id":1,"op":"timer_cancel","timer_id":7}"#,
+            r#"{"id":1,"op":"snippet_query","text":"sig"}"#,
+            r#"{"id":1,"op":"snippet_get","snippet_id":3}"#,
+            r#"{"id":1,"op":"snippet_save","snippet":{"name":"Sig","body":"Thanks,\nS"}}"#,
+            r#"{"id":1,"op":"snippet_delete","snippet_id":3}"#,
+            r#"{"id":1,"op":"snippet_paste","snippet_id":3,"args":{"who":"Ana"}}"#,
+            r#"{"id":1,"op":"snippet_import","path":"/tmp/s.json"}"#,
+            r#"{"id":1,"op":"snippet_export","path":"/tmp/s.json"}"#,
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for raw in samples {
+            let req: Request = serde_json::from_str(raw).unwrap_or_else(|e| panic!("{raw}: {e}"));
+            assert_eq!(req.id, 1, "{raw}: params must not shadow the envelope id");
+            assert!(ops::KNOWN_OPS.contains(&req.op.name()), "{raw}");
+            assert!(req.op.is_v3() && !req.op.is_v2(), "{raw}");
+            seen.insert(req.op.name());
+        }
+        let v3_names = ops::KNOWN_OPS
+            .iter()
+            .skip_while(|n| **n != "island_post")
+            .collect::<Vec<_>>();
+        assert_eq!(v3_names.len(), seen.len(), "a v3 op has no sample");
     }
 
     #[test]

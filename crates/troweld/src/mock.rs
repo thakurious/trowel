@@ -92,6 +92,154 @@ struct MockState {
     config: Mutex<Config>,
     status: Mutex<Status>,
     launcher: LauncherMock,
+    /// Phase 9, the real code over a throwaway `state.sqlite` ([`MockHost`]).
+    desk: Arc<crate::desk::Desk>,
+}
+
+/// The mock's desk host: a private state dir, and paste/spawn only recorded (never run), so a
+/// harness can't lock a keyboard or log the user out.
+pub struct MockHost {
+    state_dir: std::path::PathBuf,
+    state: Mutex<Option<crate::state::StateDb>>,
+    pub log: Mutex<Vec<String>>,
+}
+
+impl MockHost {
+    pub fn new(state_dir: std::path::PathBuf) -> Self {
+        Self {
+            state_dir,
+            state: Mutex::new(None),
+            log: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl crate::desk::Host for MockHost {
+    fn with_state(
+        &self,
+        f: &mut dyn FnMut(&crate::state::StateDb) -> Result<Value, trowel_core::DbError>,
+    ) -> Result<Value, String> {
+        let mut slot = self.state.lock().expect("mock state");
+        if slot.is_none() {
+            *slot = Some(crate::state::StateDb::open(&self.state_dir).map_err(|e| e.to_string())?);
+        }
+        f(slot.as_ref().expect("open")).map_err(|e| e.to_string())
+    }
+
+    fn paste_text(&self, text: &str, copy_only: bool) -> Result<(), String> {
+        let verb = if copy_only { "copy" } else { "paste" };
+        self.log.lock().expect("log").push(format!("{verb} {text}"));
+        Ok(())
+    }
+
+    fn spawn(&self, argv: &[String]) -> Result<(), String> {
+        let line = format!("spawn {}", argv.join(" "));
+        eprintln!("mock: {line}");
+        self.log.lock().expect("log").push(line);
+        Ok(())
+    }
+
+    /// Canned answers for the read-only probes; nothing is run.
+    fn capture(&self, argv: &[String], _timeout: Duration) -> Result<String, String> {
+        let line = format!("capture {}", argv.join(" "));
+        eprintln!("mock: {line}");
+        self.log.lock().expect("log").push(line);
+        match argv.first().map(String::as_str) {
+            Some("omarchy-toggle-nightlight") => {
+                Ok(r#"{"enabled":false,"temperature":6500}"#.into())
+            }
+            Some("omarchy-shell") => Ok("off\n".into()),
+            Some("omarchy-theme-list") => Ok("Catppuccin\nGruvbox\nKanagawa\nTokyo Night\n".into()),
+            Some("omarchy-theme-current") => Ok("Tokyo Night\n".into()),
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn home(&self) -> std::path::PathBuf {
+        self.state_dir.join("home")
+    }
+
+    fn script_dirs(&self) -> Vec<std::path::PathBuf> {
+        vec![self.state_dir.join("bin")]
+    }
+
+    fn keylock_state(&self) -> Option<Value> {
+        None
+    }
+
+    fn proc_source(&self) -> Box<dyn crate::desk::procs::Source> {
+        Box::<crate::desk::procs::Fake>::default()
+    }
+
+    fn clipboard_text(&self) -> String {
+        "copied text".into()
+    }
+
+    fn trowel_exe(&self) -> String {
+        "trowel".into()
+    }
+
+    fn timer_sound(&self) -> bool {
+        true
+    }
+
+    fn state_exists(&self) -> bool {
+        self.state_dir.join("state.sqlite").exists()
+    }
+}
+
+/// Fixture `omarchy-*` scripts for "All Omarchy commands" (never run: spawn only logs).
+fn write_mock_scripts(dir: &std::path::Path) {
+    let bin = dir.join("bin");
+    let _ = fs::create_dir_all(&bin);
+    for (name, body) in [
+        ("omarchy-theme-bg-next", "# omarchy:summary=Cycle to the next background for the current theme\n"),
+        ("omarchy-update", "# omarchy:summary=Update Omarchy and the system\ngum confirm \"Update?\"\n"),
+        ("omarchy-toggle-idle", "# omarchy:summary=Toggle idle behavior\n# omarchy:args=[toggle|stay-awake|allow-idle|status]\n"),
+        ("omarchy-theme-set", "# omarchy:summary=Apply an Omarchy theme\n# omarchy:args=<theme-name>\n"),
+        ("omarchy-internal", "# omarchy:summary=Internal\n# omarchy:hidden=true\n"),
+    ] {
+        let _ = fs::write(bin.join(name), body);
+    }
+}
+
+/// Five snippets and two timers, so every Phase 9 view has something to show.
+fn seed_desk(desk: &crate::desk::Desk) {
+    let sink = crate::desk::Sink::new(|_| {}, || false);
+    let snippets = [
+        ("Email signature", ";sig", "Best,\nSaurabh"),
+        ("Meeting link", ";meet", "https://meet.example.com/trowel"),
+        (
+            "Greeting",
+            ";hi",
+            "Hi {argument:name}, thanks for reaching out!",
+        ),
+        ("Today's date", ";date", "{date}"),
+        ("Quote clipboard", ";quote", "> {clipboard}"),
+    ];
+    for (name, keyword, body) in snippets {
+        let _ = desk.handle(
+            serde_json::from_value(json!({"op": "snippet_save", "snippet": {"name": name, "keyword": keyword, "body": body}}))
+                .expect("op"),
+            sink.clone(),
+        );
+    }
+    let _ = desk.handle(
+        serde_json::from_value(json!({"op": "timer_start", "seconds": 1500, "label": "Tea"}))
+            .expect("op"),
+        sink.clone(),
+    );
+    if let Ok(t) = desk.handle(
+        serde_json::from_value(json!({"op": "timer_start", "seconds": 600, "label": "Stretch"}))
+            .expect("op"),
+        sink.clone(),
+    ) {
+        let _ = desk.handle(
+            serde_json::from_value(json!({"op": "timer_pause", "timer_id": t["timer"]["id"]}))
+                .expect("op"),
+            sink,
+        );
+    }
 }
 
 enum Queued {
@@ -155,6 +303,7 @@ struct Conn {
     inflight: Arc<Mutex<Option<u64>>>,
     epoch: Arc<AtomicU64>,
     last_status: Mutex<Option<Instant>>,
+    sink: crate::desk::Sink,
 }
 
 pub fn run(opts: MockOpts) -> io::Result<()> {
@@ -181,7 +330,14 @@ pub fn run(opts: MockOpts) -> io::Result<()> {
             .clone()
             .unwrap_or_else(LauncherFixture::default_fixture),
     );
+    // `<socket>.state`: one per mock (tests run several side by side in /tmp), empty each run.
+    let desk_dir = std::path::PathBuf::from(format!("{}.state", socket.display()));
+    let _ = fs::remove_dir_all(&desk_dir);
+    write_mock_scripts(&desk_dir);
+    let desk = crate::desk::Desk::new(Arc::new(MockHost::new(desk_dir)));
+    seed_desk(&desk);
     let state = Arc::new(MockState {
+        desk,
         launcher,
         status: Mutex::new(fixture.status.clone()),
         config: Mutex::new(Config::default()),
@@ -231,6 +387,14 @@ fn handle_conn(stream: UnixStream, state: Arc<MockState>) -> io::Result<()> {
         inflight: Arc::new(Mutex::new(None)),
         epoch: Arc::new(AtomicU64::new(0)),
         last_status: Mutex::new(None),
+        sink: {
+            let push = Arc::clone(&out);
+            let alive = Arc::clone(&out);
+            crate::desk::Sink::new(
+                move |line| push.push_line(line),
+                move || !alive.dead.load(Ordering::Relaxed),
+            )
+        },
     };
     let mut reader = BufReader::new(stream);
     loop {
@@ -245,6 +409,7 @@ fn handle_conn(stream: UnixStream, state: Arc<MockState>) -> io::Result<()> {
         }
     }
     out.close();
+    state.desk.forget(&conn.sink);
     let _ = write_thread.join();
     Ok(())
 }
@@ -346,7 +511,7 @@ fn handle_op(req: Request, conn: &mut Conn, state: &Arc<MockState>) {
     }
     match req.op {
         Op::Hello { protocol, .. } => {
-            if protocol != PROTOCOL_VERSION {
+            if !(trowel_proto::OLDEST_PROTOCOL..=PROTOCOL_VERSION).contains(&protocol) {
                 reply_error(
                     conn,
                     Some(id),
@@ -360,9 +525,13 @@ fn handle_op(req: Request, conn: &mut Conn, state: &Arc<MockState>) {
                 conn,
                 id,
                 json!({
-                    "protocol": PROTOCOL_VERSION,
+                    // The version the client speaks: a v2 panel keeps working (v3 is additive).
+                    "protocol": protocol,
                     "daemon": DAEMON_VERSION,
-                    "capabilities": CAPABILITIES,
+                    "capabilities": CAPABILITIES
+                        .iter()
+                        .chain(state.desk.capabilities())
+                        .collect::<Vec<_>>(),
                     "state": state.fixture.state,
                 }),
             );
@@ -429,6 +598,7 @@ fn handle_op(req: Request, conn: &mut Conn, state: &Arc<MockState>) {
                             .to_string(),
                         );
                     }
+                    "island" => state.desk.island.subscribe(conn.sink.clone()),
                     _ => {}
                 }
             }
@@ -479,6 +649,10 @@ fn handle_op(req: Request, conn: &mut Conn, state: &Arc<MockState>) {
         Op::ModelDownload { .. } => reply_ok(conn, id, json!({})),
         Op::Doctor => reply_ok(conn, id, json!({"ok": true, "checks": []})),
         Op::SetHotkey { .. } => reply_ok(conn, id, json!({})),
+        op if op.is_v3() => match state.desk.handle(op, conn.sink.clone()) {
+            Ok(body) => reply_ok(conn, id, body),
+            Err((code, message)) => reply_error(conn, Some(id), code, message),
+        },
         op => match state.launcher.handle(op) {
             Ok(body) => reply_ok(conn, id, body),
             Err((code, message)) => reply_error(conn, Some(id), code, message),

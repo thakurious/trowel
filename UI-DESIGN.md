@@ -18,6 +18,7 @@ Verified environment: omarchy-shell (Quickshell 0.3.1, Qt 6.11) running from
 | **Quick panel** (upstream `SearchPanel`) | Omarchy shell **plugin** `trowel` (kind `panel`, `keepLoaded: true`), namespace `trowel-panel` | Summoning a panel is an IPC call into the already-running shell, so the open is instant. It gets `Color`/`Style` theme tokens for free and behaves like Omarchy's own launcher, clipboard and emoji overlays. |
 | ~~**Bar status**~~ (upstream `StatusMenu`) | none (D25) | Removed 2026-10-16 at the human's request: the panel footer shows indexing progress, `trowel-app` holds settings. |
 | **Main window, Quick Look, Onboarding, Model download** (Settings moved to the panel, D26) | `trowel-app`, a **separate Quickshell instance** (`quickshell -p /usr/share/trowel/app`) using `FloatingWindow` | Image grids, video playback (QtMultimedia) and long forms are heavy. Keeping them out of omarchy-shell means a Trowel bug can never take down the user's bar, notifications or **lock screen** (which run in that process). It uses the same QML components, so both look identical. |
+| **The Island** (D29) | the same plugin, its own layer surface (namespace `trowel-popup`, `WlrLayer.Overlay`, `Island.qml` + `IslandView.qml`) | Anything that keeps running after the panel closes (keyboard lock, timers, `trowel island post`). Just below the bar (`Style.bar.sizeHorizontal` + 6 px), centered on the monitor Hyprland had focused when it appeared; a fixed 420×240 surface with an input mask on the pill and bubble, never keyboard focus. |
 | Non-Omarchy fallback | `quickshell -p /usr/share/trowel/panel` runs the panel plugin's QML standalone, with a theme shim | So the panel still works on plain Hyprland or Sway. This is secondary; do not let it constrain the Omarchy design. |
 
 Shared code: `ui/qml/Trowel/` is a QML module with `Client.qml` (the protocol client), `Theme.qml`,
@@ -168,6 +169,13 @@ hl.layer_rule({ match = { namespace = "^trowel-(panel|popup)$" }, no_anim = true
 | `Ctrl+K` | Action panel for the selection (filter as you type, `Enter` runs, `Esc` closes) | Raycast ⌘K |
 | `Enter` on a command (`Clipboard History`) | Opens it inside the panel, with its name as a pill in the field | `Esc`, or `Backspace` on an empty field, goes back to the search it came from |
 | `Ctrl+Shift+P`, `Ctrl+Delete` on a clip | Pin or unpin, delete | Clipboard view (`omarchy-shell trowel clipboard`); `Tab` cycles All · Text · Images · Files · Links · Colors there |
+| `Enter` on a system command | Runs it; a toggle reports its new state in a toast. Log Out, Restart, Shut Down only arm on the first `Enter` (footer "Confirm …", toast "Press ↵ again") | D31. Toggles show On/Off as the row's accessory |
+| `Enter` on "Start Timer · 25:00 tea" | Starts it and closes; the Island counts down | A typed duration (`25m tea`, `1h 30m`, `at 15:30`, `timer 5`) leads the Commands section |
+| `Enter` on a snippet keyword hit (`;sig`) | Pastes it (D21); one with blanks opens Snippets with the form | The snippet's keyword exactly as typed puts a Snippets section first |
+| Timer view | `Enter`: start the preset/typed one, or pause / resume / dismiss a timer; `Ctrl+Delete` cancels; `Ctrl+K`: +1 min, +5 min | A bare number means minutes here |
+| Process Monitor | `Tab` / `Shift+Tab` sort CPU · GPU · Memory · Disk; `Ctrl+G` apps ↔ every process; `Enter` arms End, `Enter` again sends SIGTERM; a protected one asks for its name in the pane; `Ctrl+K` → Force quit, Copy PID, Open btop; `Ctrl+C` copies the PID | D30. Samples once a second only while the view is on screen |
+| Snippets | `Enter` pastes (blanks first: `Tab`/`Enter` move through the fields); `Ctrl+Enter` copies; `Ctrl+N` new; `Ctrl+E` edit; `Ctrl+Delete` delete; `Ctrl+K` also Duplicate, Export, Import | Create/Edit: `Tab` between Name, Keyword, Text; `Ctrl+Enter` or `Ctrl+S` saves; `Esc` back |
+| Omarchy Commands / Pick Theme | `Enter` runs the script (in a terminal if it asks questions) / applies the theme | D31 |
 
 **Focus loss** hides the panel (upstream hides on `didResignActive`, Spotlight-style). Also hide
 when another Trowel window comes forward. On Hyprland, watch `HyprlandFocusedMonitor` and
@@ -177,6 +185,22 @@ Overlay layer, the way Omarchy's menus do it).
 **IME**: the field must honor `Qt.inputMethod` pre-edit: no search on pre-edit text, and `Enter`
 commits the IME first. Test it with fcitx5 (installed) Bengali or Japanese input on the Overlay
 layer with `Exclusive` focus, since text-input-v3 on layer-shell is the risky path.
+
+### 3.5 The Island (D29)
+
+| State | Size (logical) | Shows | Enters |
+|---|---|---|---|
+| hidden | 0 (surface unmapped after the 320 ms shrink) | — | no activity |
+| compact | 168–340 × 30, radius 15 | ring (time left / progress) + glyph · title · trailing value (`0:42`, `40%`) | one activity |
+| split | compact + a 30 px round bubble 6 px to its right | the second activity's glyph and ring, `+N` for more | two or more |
+| expanded | 380 × content (≥ 60), radius 22 | glyph in a ring, title, subtitle, a big countdown, a 4 px bar, up to 3 capsule buttons, the next two activities as lines | hover 300 ms (leave 200 ms collapses), a click, an alert |
+| alert | expanded + one scale bounce (1 → 1.06 → spring) | e.g. "Time's up" | an activity with `alert`; back to compact after 4 s or a click |
+
+Colors: near-black fill `rgba(0.035, 0.035, 0.045, 0.97)` whatever the theme (the iPhone island
+is black), text `#f4f4f5` / `#a1a1aa`, the theme's accent for rings, values and hovered buttons,
+`urgent` for a danger button. Motion: one `SpringAnimation` (spring 4, damping 0.32, P0: 0 frames
+over 25 ms) per width and height; reduce motion makes every change instant. A countdown ticks once
+a second only while one is shown; nothing ticks otherwise.
 
 ## 4. Motion spec
 

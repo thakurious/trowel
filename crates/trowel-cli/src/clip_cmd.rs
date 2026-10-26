@@ -159,7 +159,7 @@ pub fn capture() -> i32 {
     }
 }
 
-fn socket_path() -> PathBuf {
+pub(crate) fn socket_path() -> PathBuf {
     std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"))
@@ -167,7 +167,7 @@ fn socket_path() -> PathBuf {
 }
 
 /// One request after `hello`. Errors carry the daemon's message.
-fn request_at(socket: &Path, req: Value, timeout: Duration) -> Result<Value, String> {
+pub(crate) fn request_at(socket: &Path, req: Value, timeout: Duration) -> Result<Value, String> {
     let stream = UnixStream::connect(socket)
         .map_err(|e| format!("no daemon at {} ({e})", socket.display()))?;
     stream

@@ -291,10 +291,14 @@ To do (in this order; each its own small PR):
 
 ## Phase 9: Island, Process Monitor, System Commands, Timers, Snippets (`phase-9-island`)
 
-Requested 2026-10-26, **draft awaiting sign-off** of P-D29…P-D34. The full plan is in
-**`PHASE9-PLAN.md`**: P0 spikes → P1 protocol v3 + `state.sqlite` v5 + mock → P2 the Island
-(replaces the keyboard-lock pill) → P3 System Commands ∥ P4 Timers → P5 Process Monitor →
-P6 Snippets → P7 hardening. File search and every fidelity invariant stay untouched.
+Requested 2026-10-26, approved the same day (P-D29…P-D34 are now **D29–D34** in
+`DECISIONS.md`). The full plan is in **`PHASE9-PLAN.md`**: P0 spikes → P1 protocol v3 +
+`state.sqlite` v5 + mock → P2 the Island (replaces the keyboard-lock pill) → P3 System Commands ∥
+P4 Timers → P5 Process Monitor → P6 Snippets → P7 hardening. File search and every fidelity
+invariant stay untouched (no change under `crates/trowel-core`, the index service or `cpp/`).
+**Status 2026-10-26:** P0–P7 built and live-tested; see the PROGRESS session entry for each
+acceptance line and what is still open (the sampler p95, a real suspend, the Island's frame times
+inside omarchy-shell, clicks on the Island).
 
 **Acceptance:** each P-phase acceptance line in `PHASE9-PLAN.md` is demonstrated with output in
 `PROGRESS.md`, and the P4 evals re-run with identical numbers at the end.

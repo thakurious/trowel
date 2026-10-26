@@ -78,7 +78,7 @@ Rectangle {
         width: parent.width
         text: {
           var r = root.row || {}
-          return r.generic || r.comment || (r.rowType === "command" ? "Command" : "Application")
+          return r.generic || r.comment || (r.rowType === "command" ? "Command" : (r.rowType === "snippet" ? "Snippet" : "Application"))
         }
         color: Theme.secondary
         font.family: Theme.fontFamily
@@ -90,12 +90,12 @@ Rectangle {
     // "3 actions" (desktop actions, run from the action panel); "Command" for a built-in command.
     Rectangle {
       id: badge
-      visible: (root.row && (root.row.actionCount > 0 || root.row.rowType === "command")) === true
+      visible: (root.row && (root.row.actionCount > 0 || root.row.rowType === "command" || root.row.rowType === "snippet")) === true
       anchors.verticalCenter: parent.verticalCenter
       width: badgeText.implicitWidth + 12
       height: badgeText.implicitHeight + 4
       radius: height / 2
-      color: Theme.keycapFill
+      color: (root.row && root.row.accessory === "On") ? Theme.alpha(Theme.accent, 0.2) : Theme.keycapFill
       border.width: Theme.hairlineWidth()
       border.color: Theme.hairline
 
@@ -103,6 +103,9 @@ Rectangle {
         id: badgeText
         anchors.centerIn: parent
         text: {
+          // A toggle's On/Off, a snippet's keyword; "Command" for the rest.
+          if (root.row && root.row.accessory)
+            return root.row.accessory
           if (root.row && root.row.rowType === "command")
             return "Command"
           var n = (root.row && root.row.actionCount) ? root.row.actionCount : 0

@@ -9,10 +9,10 @@
 //! 2. the lock is capped at [`MAX_SECONDS`];
 //! 3. the power button, lid and other non-typing devices stay on, and so do virtual keyboards
 //!    (fcitx5, wtype);
-//! 4. the panel's countdown pill has an Unlock button for the mouse.
+//! 4. the countdown on the Island (P-D29) has an Unlock button for the mouse.
 //!
-//! State lives in `$XDG_RUNTIME_DIR/trowel/keyboard-lock.json` (tmpfs, gone after a reboot), which
-//! the panel watches for the countdown.
+//! State lives in `$XDG_RUNTIME_DIR/trowel/keyboard-lock.json` (tmpfs, gone after a reboot); the
+//! daemon re-posts the island from it after a restart.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -234,6 +234,15 @@ pub fn status(path: &std::path::Path) -> Value {
     }
 }
 
+/// What `trowel keyboard lock` posts (same as troweld's `desk::keylock_activity`).
+pub fn island_activity(state: &Value) -> Value {
+    json!({
+        "id": "keylock", "icon": "lock", "title": "Keyboard locked",
+        "subtitle": "The mouse still works", "ends_at": state["until"], "total": state["seconds"],
+        "priority": 100, "actions": [{"id": "unlock", "label": "Unlock"}],
+    })
+}
+
 pub fn run_cli(action: &str, seconds: Option<u64>) -> Result<(), String> {
     let path = state_path();
     let mut sys = System;
@@ -241,10 +250,16 @@ pub fn run_cli(action: &str, seconds: Option<u64>) -> Result<(), String> {
         "lock" => {
             let secs = seconds.ok_or("how long? trowel keyboard lock <seconds>")?;
             let state = lock(&mut sys, secs, &path)?;
+            crate::desk_cmd::try_request(
+                json!({"op": "island_post", "activity": island_activity(&state)}),
+            );
             println!("{state}");
         }
         "unlock" => {
-            let devices = unlock(&mut sys, &path)?;
+            let result = unlock(&mut sys, &path);
+            // The island goes even when a device failed to come back: the error says which.
+            crate::desk_cmd::try_request(json!({"op": "island_dismiss", "activity_id": "keylock"}));
+            let devices = result?;
             println!("{}", json!({"unlocked": devices}));
         }
         _ => println!("{}", status(&path)),
@@ -395,6 +410,17 @@ mod tests {
             .last()
             .unwrap()
             .contains("stop trowel-keyboard-unlock.timer"));
+    }
+
+    #[test]
+    fn island_activity_parses() {
+        let a: trowel_proto::IslandActivity = serde_json::from_value(island_activity(
+            &json!({"until": 1_793_000_000u64, "seconds": 60, "devices": []}),
+        ))
+        .unwrap();
+        assert_eq!((a.id.as_str(), a.priority), ("keylock", 100));
+        assert_eq!(a.ends_at, Some(1_793_000_000.0));
+        assert_eq!(a.actions[0].id, "unlock");
     }
 
     #[test]

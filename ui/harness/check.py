@@ -51,6 +51,38 @@ steps = [
     {"do": "command", "id": "lock-keyboard", "wait": 600}, {"do": "log", "what": "lock-open"}, {"do": "shot", "name": "lock-keyboard"},
     {"do": "type", "text": "3m", "wait": 300}, {"do": "log", "what": "lock-typed"},
     {"do": "esc", "wait": 200}, {"do": "esc", "wait": 400}, {"do": "log", "what": "lock-back"},
+    # Phase 9: system commands in the main list, a typed timer, a snippet keyword (mock: nothing runs).
+    {"do": "type", "text": "night", "wait": 700}, {"do": "log", "what": "sys-night"},
+    {"do": "type", "text": "shut", "wait": 700}, {"do": "enter", "wait": 300}, {"do": "log", "what": "sys-armed"}, {"do": "shot", "name": "sys-shutdown"},
+    {"do": "enter", "wait": 500}, {"do": "log", "what": "sys-ran"},
+    {"do": "open", "wait": 400}, {"do": "type", "text": "25m tea", "wait": 800}, {"do": "log", "what": "main-timer"}, {"do": "shot", "name": "main-timer"},
+    {"do": "type", "text": ";sig", "wait": 800}, {"do": "log", "what": "main-snippet"},
+    {"do": "type", "text": "", "wait": 200},
+    # Timer view: presets and the two seeded timers, then a typed one.
+    {"do": "command", "id": "timers", "wait": 800}, {"do": "log", "what": "timers"}, {"do": "shot", "name": "timers"},
+    {"do": "type", "text": "10 tea", "wait": 600}, {"do": "log", "what": "timer-typed"},
+    {"do": "esc", "wait": 200}, {"do": "esc", "wait": 400}, {"do": "log", "what": "timers-back"},
+    # Process Monitor: CPU first, Tab to GPU, ↵ twice ends the busy app (the mock only forgets it).
+    {"do": "command", "id": "procs", "wait": 2200}, {"do": "log", "what": "procs"}, {"do": "shot", "name": "procs"},
+    {"do": "call", "fn": "cycleProcSort", "args": [1], "wait": 1600}, {"do": "log", "what": "procs-gpu"},
+    {"do": "call", "fn": "cycleProcSort", "args": [-1], "wait": 1600},
+    {"do": "enter", "wait": 300}, {"do": "log", "what": "procs-armed"},
+    {"do": "enter", "wait": 2000}, {"do": "log", "what": "procs-killed"},
+    {"do": "esc", "wait": 400}, {"do": "log", "what": "procs-back"},
+    # Snippets: the seeded five; a snippet with a blank asks for it first.
+    {"do": "command", "id": "snippets", "wait": 800}, {"do": "log", "what": "snippets"}, {"do": "shot", "name": "snippets"},
+    {"do": "type", "text": "greet", "wait": 600}, {"do": "enter", "wait": 400}, {"do": "log", "what": "snippet-args"}, {"do": "shot", "name": "snippet-args"},
+    {"do": "call", "target": "snippet", "fn": "escaped", "wait": 200}, {"do": "esc", "wait": 200}, {"do": "esc", "wait": 400},
+    # Create Snippet saves through the daemon and lands in the list.
+    {"do": "command", "id": "snippet-new", "wait": 600}, {"do": "log", "what": "snippet-new"}, {"do": "shot", "name": "snippet-new"},
+    {"do": "call", "target": "editor", "fn": "load", "args": [{"name": "Address", "keyword": "!addr", "body": "1 Main St"}], "wait": 200},
+    {"do": "call", "target": "editor", "fn": "submit", "wait": 1000}, {"do": "log", "what": "snippet-saved"},
+    {"do": "esc", "wait": 200}, {"do": "esc", "wait": 400}, {"do": "open", "wait": 400},
+    # Omarchy Commands (fixture scripts) and Pick Theme.
+    {"do": "command", "id": "omarchy", "wait": 800}, {"do": "log", "what": "omarchy"},
+    {"do": "esc", "wait": 400},
+    {"do": "command", "id": "themes", "wait": 800}, {"do": "log", "what": "themes"}, {"do": "shot", "name": "themes"},
+    {"do": "esc", "wait": 400}, {"do": "log", "what": "island-state"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -96,6 +128,26 @@ checks = [
     ("Lock Keyboard lists the durations", lambda s: s["lock-open"]["view"] == "keylock" and s["lock-open"]["rows"][:3] == ["lock:15", "lock:30", "lock:60"] and s["lock-open"]["selection"] == "lock:15"),
     ("a typed duration is offered and selected", lambda s: s["lock-typed"]["rows"] == ["lock:180"] and s["lock-typed"]["selection"] == "lock:180"),
     ("Esc from Lock Keyboard goes back", lambda s: s["lock-back"]["view"] == "search"),
+    ("'night' finds Toggle Night Light with its state", lambda s: s["sys-night"]["selection"] == "cmd:sys:night-light" and s["sys-night"]["accessory"] == "Off"),
+    ("↵ on Shut Down only arms it", lambda s: s["sys-armed"]["selection"] == "cmd:sys:shut-down" and s["sys-armed"]["armed"] == "cmd:sys:shut-down" and s["sys-armed"]["opened"] is True),
+    ("↵ again runs it and closes the panel", lambda s: s["sys-ran"]["opened"] is False and s["sys-ran"]["armed"] == ""),
+    ("'25m tea' offers Start Timer first", lambda s: s["main-timer"]["rows"][:2] == ["hdr:commands", "cmd:timer-start"] and s["main-timer"]["selection"] == "cmd:timer-start"),
+    ("a snippet keyword puts that snippet first", lambda s: s["main-snippet"]["rows"][:2] == ["hdr:snippets", "snip:1"] and s["main-snippet"]["selection"] == "snip:1"),
+    ("Timer: presets, then the running and paused timers", lambda s: s["timers"]["view"] == "timers" and s["timers"]["desk"][0].startswith("tnew:1|") and "timer:1|Tea|" in "".join(s["timers"]["desk"]) and any(r.startswith("timer:2|Stretch|") for r in s["timers"]["desk"])),
+    ("a typed '10 tea' is offered and selected", lambda s: s["timer-typed"]["selection"] == "tnew:typed" and s["timer-typed"]["title"] == "Start 10:00 · tea"),
+    ("Esc from Timer goes back", lambda s: s["timers-back"]["view"] == "search"),
+    ("Process Monitor: grouped by app, the busiest first", lambda s: s["procs"]["view"] == "procs" and s["procs"]["rows"][0] == "app:app-ghostty-surface-transient-9.scope"),
+    ("Tab sorts by GPU: the worker first", lambda s: s["procs-gpu"]["procSort"] == "gpu" and s["procs-gpu"]["rows"][0] == "app:troweld.service"),
+    ("↵ once arms End", lambda s: s["procs-armed"]["procArmed"] == "app:app-ghostty-surface-transient-9.scope"),
+    ("↵ twice ends it: gone from the list", lambda s: "app:app-ghostty-surface-transient-9.scope" not in s["procs-killed"]["rows"] and s["procs-killed"]["procArmed"] == ""),
+    ("Esc from Process Monitor goes back", lambda s: s["procs-back"]["view"] == "search"),
+    ("Snippets lists the five", lambda s: s["snippets"]["view"] == "snippets" and len(s["snippets"]["rows"]) == 5),
+    ("↵ on a snippet with a blank asks for it", lambda s: s["snippet-args"]["selection"] == "snip:3" and s["snippet-args"]["snippetEditing"] is True and s["snippet-args"]["opened"] is True),
+    ("Create Snippet opens the form", lambda s: s["snippet-new"]["view"] == "snippet-edit"),
+    ("saving lands in Snippets with the new one", lambda s: s["snippet-saved"]["view"] == "snippets" and len(s["snippet-saved"]["rows"]) == 6),
+    ("Omarchy Commands: summary scripts, not hidden or arg-only ones", lambda s: [r.split("|")[0] for r in s["omarchy"]["desk"]] == ["omarchy:omarchy-theme-bg-next", "omarchy:omarchy-toggle-idle", "omarchy:omarchy-update"] and s["omarchy"]["desk"][2].endswith("|Terminal")),
+    ("Pick Theme marks the current one", lambda s: len(s["themes"]["rows"]) == 4 and "theme:Tokyo Night|Tokyo Night|Current" in s["themes"]["desk"]),
+    ("the island holds the seeded timers", lambda s: s["island-state"]["island"] == ["timer:1", "timer:2"] and s["island-state"]["opened"] is True),
 ]
 failed = 0
 for name, check in checks:

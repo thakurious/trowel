@@ -3,6 +3,7 @@ mod autostart;
 mod calc_cmd;
 mod clip_cmd;
 mod debug_ui;
+mod desk_cmd;
 mod index_service;
 mod keyboard;
 mod parity;
@@ -247,6 +248,17 @@ enum Commands {
         /// How long to lock, in seconds (lock only; at most 1800).
         seconds: Option<u64>,
     },
+    /// The Island under the bar (Phase 9): post, dismiss, list activities, or watch for button
+    /// presses. Any script can use it.
+    Island {
+        #[command(subcommand)]
+        action: IslandCmd,
+    },
+    /// Timers that show on the Island and ring when done (`trowel timer start 25m tea`).
+    Timer {
+        #[command(subcommand)]
+        action: TimerCmd,
+    },
     /// Install plugin, hotkey, and user systemd units (DECISIONS D12).
     Setup {
         /// Repo checkout to copy QML from (defaults to walking up from this binary).
@@ -262,6 +274,64 @@ enum Commands {
         purge: bool,
         #[arg(long)]
         no_enable: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum IslandCmd {
+    /// Add or replace an activity (same id replaces).
+    Post {
+        id: String,
+        title: String,
+        #[arg(long)]
+        subtitle: Option<String>,
+        /// lock, timer, progress, download, record, music, bell… or one character.
+        #[arg(long)]
+        icon: Option<String>,
+        /// Count down this many seconds.
+        #[arg(long)]
+        seconds: Option<f64>,
+        /// 0 to 1, drawn as a bar.
+        #[arg(long)]
+        progress: Option<f64>,
+        /// A short trailing value, like 42%.
+        #[arg(long)]
+        value: Option<String>,
+        /// Higher shows first (keyboard lock 100, a running timer 50).
+        #[arg(long)]
+        priority: Option<i32>,
+        /// Drop it after this many seconds.
+        #[arg(long)]
+        ttl: Option<f64>,
+        /// A button, `id:Label`; up to 3. `trowel island watch` prints presses.
+        #[arg(long = "button")]
+        buttons: Vec<String>,
+        /// Expand and bounce once.
+        #[arg(long)]
+        alert: bool,
+    },
+    Dismiss {
+        id: String,
+    },
+    List,
+    /// Print button presses as JSON lines (`--once` exits after the first).
+    Watch {
+        id: Option<String>,
+        #[arg(long)]
+        once: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TimerCmd {
+    /// `25m tea`, `1h 30m`, `at 15:30 call`, or plain minutes.
+    Start {
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+    },
+    List,
+    Cancel {
+        id: i64,
     },
 }
 
@@ -678,6 +748,53 @@ fn main() {
                 ),
             };
             if let Err(e) = err {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Island { action } => {
+            let r = match action {
+                IslandCmd::Post {
+                    id,
+                    title,
+                    subtitle,
+                    icon,
+                    seconds,
+                    progress,
+                    value,
+                    priority,
+                    ttl,
+                    buttons,
+                    alert,
+                } => desk_cmd::island_post(&desk_cmd::Post {
+                    id,
+                    title,
+                    subtitle,
+                    icon,
+                    seconds,
+                    progress,
+                    value,
+                    priority,
+                    ttl,
+                    buttons,
+                    alert,
+                }),
+                IslandCmd::Dismiss { id } => desk_cmd::island_dismiss(&id),
+                IslandCmd::List => desk_cmd::island_list(),
+                IslandCmd::Watch { id, once } => desk_cmd::island_watch(id.as_deref(), once),
+            };
+            if let Err(e) = r {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Timer { action } => {
+            let r = match action {
+                TimerCmd::Start { text } => desk_cmd::timer_start(&text.join(" ")),
+                TimerCmd::List => desk_cmd::timer_list(),
+                TimerCmd::Cancel { id } => desk_cmd::timer_cancel(id),
+            };
+            if let Err(e) = r {
                 eprintln!("{e}");
                 std::process::exit(1);
             }

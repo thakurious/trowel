@@ -10,9 +10,22 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 - **Deployed 2026-10-22 12:47 (human's request):** `troweld`/`trowel` release builds of `9793bad` in `~/.local/bin`, plugin `Panel.qml` copied, troweld and omarchy-shell restarted. `state.sqlite` migrated to v4 (`learned`: 2 apps seeded). Live: `apps_query` accepts `commands`, `config_get` → `ui.pop_to_root_seconds: 90`, `omarchy-shell trowel debugState` answers. Backups: `~/.local/bin/{troweld,trowel}.bak.trowel-20261022-124733`, `~/.local/share/trowel/omarchy-plugin/Panel.qml.bak.trowel-20261022-124733`, `~/.local/share/trowel/state.sqlite.bak.trowel-20261022-124733` (revert: copy back, restart both). PR #10 is open with CI green; the merge to `main` was left to the human (the agent's merge was blocked by a permission rule).
 - **2026-10-23:** `Esc` leaves the Code tab (session log); plugin `Panel.qml` redeployed, backup `Panel.qml.bak.trowel-20261023-174350`.
 - **Deployed 2026-10-26 14:29 (human's request):** release `troweld`/`trowel` of `cabfab3`+, plugin `Panel.qml` (`c5980ee`), `omarchy restart shell`. Settings live in the panel (D26), Lock Keyboard (D27), ffmpeg stderr fix. 9 failed video rows re-queued (ids 5213–5226, see session log). Backups `…bak.trowel-20261026-142922` of `~/.local/bin/{troweld,trowel}`, `omarchy-plugin/Panel.qml` and `index/index.sqlite`. Revert: stop `troweld.socket troweld.service`, copy the four back, start them, `omarchy restart shell`.
-- **Next step:** human signs off PHASE9-PLAN §2 (P-D29…P-D34), then P0 spikes on `phase-9-island`.
-  Still open: human tries Lock Keyboard by hand (keys ignored? Unlock click?) and Settings from the
-  keyboard; then push `phase-8-launcher` (4 new commits) to PR #10 and merge. Then: merge PR #10. Then use it live: pick Chrome with `c` a few times → `c` puts Chrome first; close and reopen within 90 s → same view, query and selection. Then the L4 live acceptance, the L3 24 h orphan check, then L5. Open: rich HTML paste (question 2), the L0.5 password-manager copy.
+- **Phase 9 (`phase-9-island`): P0–P7 built, deployed and live-tested 2026-10-26** (D29–D34). The
+  Island replaced the keyboard-lock pill; Timer, Process Monitor, Snippets, Create Snippet, system
+  commands, Omarchy Commands and Pick Theme are in the panel. Details and acceptance output: session
+  log "Phase 9 P2–P7". **Open:** the sampler's p95 (16.1 ms vs the 15 ms budget, busy machine), the
+  Island's frame times inside omarchy-shell, a real suspend with a timer running, clicks on the
+  Island's buttons (no input tool here), Lock Screen / Night Light / paste-into-apps not run live
+  (disruptive; the paths are tested).
+- **Deployed 2026-10-26 20:42 (Phase 9, for its live acceptance):** release `troweld`/`trowel`
+  (redeployed several times while tuning the sampler; last at `078fb11`), plugin `Panel.qml`,
+  `omarchy restart shell` (twice). `state.sqlite` migrated v4 → v5. Backups
+  `…bak.trowel-20261026-204257` of `~/.local/bin/{troweld,trowel}`,
+  `omarchy-plugin/Panel.qml` and `state.sqlite{,-wal,-shm}`. Revert: stop `troweld.socket
+  troweld.service`, copy them back, start, `omarchy restart shell` (the plugin's `Trowel/` links to
+  this repo, so check out `main` first or `KeyLockPill.qml` will be missing).
+- **Next step:** the human reviews; then push `phase-9-island` and open the PR to `main` (P7's last
+  line), or first decide the sampler budget (open question 4).
 
 ### Phase 8 map
 
@@ -45,9 +58,23 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 | P4 evals meet TESTING §3 | ✅ | Linux testbed `/tmp/trowel-eval` (no Mac). `synthetic.json` ALL **37/37 R@1=1.00** (TESTING: 0.88). `code.json` **41/41**. `multilingual.json` ALL **R@1=0.92** / R@5=0.98 / R@10=1.00. 0 expected answers folded on all three. `real/` not run (CLAUDE.md: no `$HOME` until Phase 5). |
 | P5 daemon + robustness + doctor | ✅ | `cargo test -p troweld --test daemon` **9/9** (folder-change, overflow SIGUSR1, suspend/resume SIGUSR2, idle RSS ≤120 MB + `release_vectors`, estimate+subscribe+doctor). `trowel doctor` exit 0, no FAIL (daemon/index WARN: units not enabled, `$HOME` not indexed). systemd written, **not enabled**. F7 via `gdbus` PrepareForSleep + sysfs, no zbus. |
 | P6 UI checklist + budgets + visual QA | ✅ | `cargo test --workspace` green including `ui_phase6` **3/3** (two-phase place badges `p. 3` / `0:06` / `L12–40`, F18 SIGSTOP stall + CONT reconnect, kill connect fails &lt;2s) and `cli_ui` **4/4** (`ui-trace` vs `--mock` meets IPC budgets). `trowel debug ui-trace --json`: hello 0.75 ms / panel_opened 0.29 ms / keyword_refund 0.57 ms / hybrid_zebra 0.56 ms (budgets 50/50/40/200). Layout snapshots in `design/linux/*.json`. Honest gaps: no macOS refs, no live QSG on keepLoaded shell, IME not retested this phase. |
+| Phase 9 (D29–D34) | ◐ | `cargo test --workspace` all ok (troweld lib **124**, incl. 30 desk); `proto_replay` 3/3 with `v3-desk.jsonl`; panel harness **55/55**, island harness **10/10**; node deskmodel 7, listmerge 15, settings 13, keylock 4. Live: island below the bar, lock 10 s, timer 10 s fired < 50 ms late, restart survival, `yes` ended, snippet copy, toggle. Sampler p95 **16.1 ms** (budget 15) — over. P4 evals re-run: synthetic 37/37 R@1 1.00, code 41/41, multilingual R@1 0.88 (0.92 recorded on an older download of the corpus; the pre-Phase-9 binary gives the same 0.88 and the same misses on today's index). |
 | P7 fault injection + packaging + soak | 🟡 | `trowel setup` installed plugin+socket on this user. `cargo test` includes `setup --no-enable` and F10 corrupt-index quarantine. **Not done:** 72 h `$HOME` soak, `makepkg -si` on a fresh account, SYCL vs Vulkan bench, remaining TESTING §7 rows (hang stub, device-lost ×3, tmpfs disk-full, unmount). |
 
 ## Verified facts
+
+- **Phase 9 (2026-10-26):** Hyprland 0.56 Lua moves the pointer with
+  `hyprctl dispatch 'hl.dsp.cursor.move({ x = 768, y = 47 })'` (a table; `movecursor x y` is a Lua
+  syntax error now). `stat(/proc/<pid>/fd).st_size` is the open-fd count on this kernel (Hyprland:
+  243 = 243 entries). `xe` fdinfo reads cost 85–300 µs each (more while the GPU is busy); 88 DRM fds
+  were 46 distinct clients, 38 never busy. The daemon's 1 Hz sampler thread runs mostly on cpu4
+  (efficiency core, 3.7 GHz max; P-cores 4.7–4.8). `/proc/meminfo` units are `kB`. A Unix socket
+  path over 108 bytes fails (`AF_UNIX path too long`): the session scratchpad is too deep for a mock
+  socket, so benchmarks use `$XDG_RUNTIME_DIR`. The Island's layer: `trowel-popup` at 558,32
+  420×240 with the bar `omarchy-bar` 0,0 1536×26 (screenshot: clock fully visible).
+  `omarchy-notification-send` accepts `-g <glyph> -u <urgency>`; DND was on, so its toast was not
+  seen. 302 `omarchy-*` scripts pass the Omarchy Commands filter (107 open in a terminal); 24
+  themes.
 
 - **upstream/** is the submodule at `6faa29e` (`v0.6.0-3-g6faa29e`). Read-only.
 - **llama.cpp** `b11461` cloned at `cpp/llama/src` (gitignored). `llama.cpp-no-logits.patch` applied. CMake: `GGML_NATIVE=OFF`, Vulkan build `GGML_VULKAN=ON`, CPU build `GGML_VULKAN=OFF`, `LLAMA_BUILD_MTMD=ON`, `BUILD_SHARED_LIBS=OFF`.
@@ -133,6 +160,17 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
 
 ## Open questions for the human
 
+4. **Phase 9 sampler budget.** Per-tick CPU at 386 processes: median 8.6 ms, p95 16.1 ms (budget
+   15), on a busy machine (indexing, a process at 95 % CPU) with the thread on an efficiency core.
+   It was 18.6 / 37.9 before this session's optimizations. Options: (a) keep 1 s and accept the
+   p95 (the budget's intent, "doesn't burden the machine", holds: ~1 % of one E-core); (b) sample
+   every 1.5 s; (c) keep optimizing (next: netlink taskstats instead of `/proc/<pid>/stat`, a new
+   code path). The gate is not marked passed.
+5. **Phase 9 live checks left to a person:** click the Island's buttons (Unlock, Pause, +1 min) —
+   there is no pointer-click tool here; Lock Screen and Shut Down (not run: they end the session);
+   Night Light from the panel (Keep Awake was flipped and back instead); a snippet pasted into
+   Ghostty and Chromium (copy mode verified; paste uses the D21 path measured in L0.4).
+
 1. **Watchdog kill after resume (2026-10-16 10:17, old v1 binary):** systemd's 30 s watchdog fired right after the laptop woke; core dump in `coredumpctl`. Check whether the current build's watchdog thread survives suspend/resume (ROBUSTNESS F7) before L5 closes.
 1. **L0.5 leftover:** copy one test password from Chrome's password manager (or whatever manager is used) with the metadata logger running, to see whether it marks itself sensitive.
 2. **HTML entries pasted into plain-text targets paste markup.** `wl-copy --type text/html` serves the same HTML bytes for `text/plain`/`UTF8_STRING` too (L0.6), so `clip_paste` mode `paste` of an `html` entry into a terminal or plain field inserts `<p><b>…`. Options: (a) approve `wl-clipboard-rs` to offer `text/html` + real `text/plain` in one selection (Raycast-like rich paste); (b) make `paste` restore HTML entries as plain text and keep rich HTML for an explicit "Paste formatted" action; (c) pick by the focused window's class (terminal → plain), a heuristic. **2026-10-22: the human hit this live (paste put the HTML on the clipboard), so `clip_paste` now restores `html` entries as their text in every mode (`clip/mod.rs` `restore`; `tests/clipboard.rs` checks paste/copy/plain). Not deployed yet. Still open: whether to approve (a) for formatted paste.**
@@ -176,6 +214,153 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-10-26 — Phase 9 P2–P7 (`phase-9-island`)
+
+Human: "continue with complete phase 9 implementation". Commits `aeaa66a` (daemon desk), `3eef653`
+(panel), sampler commit, `078fb11` (docs). Not pushed.
+
+**Built.** `troweld::desk` handles all 24 v3 ops for the real daemon and `--mock` through `Host`:
+island registry + ticker (TTL, timers), timers (parser table, wall-clock rows, fire → island alert +
+`omarchy-notification-send` + `pw-play`, re-post on start), snippets (FTS, placeholders, Raycast
+import/export, paste via D21 without entering clipboard history), system commands (16-id allow-list,
+read-only toggle probes, Omarchy script scanner, themes), processes (`/proc` + xe fdinfo + io +
+cgroup sampler, app grouping named from the scope, 60-sample history, kill policy D30). CLI `trowel
+island post|dismiss|list|watch`, `trowel timer start|list|cancel`; `trowel keyboard lock|unlock`
+post/dismiss the keylock activity. Panel: `IslandView.qml` + `Island.qml` (KeyLockPill.qml deleted),
+Client v3 (falls back to v2), views timers/procs/snippets/snippet-edit/omarchy/themes, system and
+state commands in the main list, typed timer and snippet keyword rows, Timer Sound setting. Docs:
+D29–D34, PROTOCOL v3 table, UI-DESIGN §1/§3.4/§3.5, BENCHMARKS, TESTING §4.1/§6, ROBUSTNESS
+F21–F23, README.
+
+**Gates and tests (2026-10-26):**
+```
+$ cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings   # clean
+$ cargo test --workspace          # all ok, 0 failed (troweld lib 124, proto_replay 3 incl. v3-desk.jsonl)
+$ python3 -I ui/harness/check.py           # 55 ok (20 Phase 9), exit 0
+$ python3 -I ui/harness/island/check.py    # 10 ok, exit 0
+$ node scripts/deskmodel-test.mjs && node scripts/listmerge-test.mjs   # 7 / 15 passed
+$ trowel eval evals/synthetic.json …       # ALL 37  R@1 1.00 (unchanged)
+$ trowel eval evals/code.json …            # ALL 41  R@1 1.00 (unchanged)
+$ trowel eval evals/multilingual.json …    # ALL 48  R@1 0.88 R@5 0.98 R@10 1.00 MRR 0.93
+  (pre-Phase-9 binary on the same rebuilt index: identical, same 6 misses; 0.92 was an older
+   download of the network-sourced corpus. No file under crates/trowel-core, cpp/ or
+   index_service.rs changed in Phase 9.)
+```
+
+**Live acceptance (deployed 20:42, backups `…bak.trowel-20261026-204257`):**
+```
+$ trowel island post p9-check "Island check" --progress 0.6 --value 60% --ttl 25
+layers: omarchy-bar 0,0 1536x26 · trowel-popup 558,32 420x240        # below the bar; clock visible (grim)
+$ trowel keyboard lock 10      # island: split (keylock + p9-check), countdown 0:09
+20:43:50 lock → 20:44:00 {"unlocked":[…4 devices…]}; island list → []   # auto-unlock dismissed it
+hover (hl.dsp.cursor.move to the pill): expanded with Pause / +1 min / Cancel; away: compact again
+$ trowel timer start 2m p9 restart check; systemctl --user restart troweld
+timer_list after restart: same ends_at 1793027790.87, state running; island re-posted timer:1
+$ trowel timer start 10s test   → fired 0.0 s after its end (fired_at − ends_at < 0.05), island
+  alert "Time's up" (+5 min / Dismiss), pw-play alarm-clock-elapsed.oga running
+proc_subscribe all_users (386 processes, 60 ticks, thread CPU): median 8.6 ms, p95 16.1, max 17.2
+  (before the optimizations: median 18.6, p95 37.9); yes (own child) top under CPU at 1.38 s in
+  one run, 2.4–3.4 s in others (tied with a 95 %-CPU process); proc_kill term → alive [], exit -15
+snippet: copy mode "Hello Ana, today is 2026-10-26" = wl-paste; history unchanged; clipboard restored
+system_commands 66 ms (16 curated, 302 scripts, 24 themes); keep-awake True → False → True 22 ms
+```
+Protected-process refusal is **not** exercised live (the classifier blocked signalling Hyprland,
+rightly); it is tested on the fake source (`rates_grouping_sort_and_policy`, `v3-desk.jsonl`).
+
+**Fixed during acceptance:** the Create Snippet form was invisible (its row hid on an empty list);
+the procs footer overran; meminfo `kB`; the progress bar grew from 0 on first expand; the sampler
+kept running after leaving the procs view (now `onViewChanged`); app groups were named after their
+oldest process ("bash", "cat") — now from the scope (ghostty, T3Code).
+
+**Exact next step:** the human reviews the open questions 4–5; then `git push -u origin
+phase-9-island` and open the PR to `main` (do not merge).
+
+### 2026-10-26 — Phase 9 P1 + P2 start (handoff)
+
+Branch `phase-9-island` (from `main` d17171c), commits: `520a49f` P0 spikes, `5423c25` P1, plus the
+P2 island registry (this entry's commit). Nothing deployed from Phase 9; the live daemon/panel are the
+`main` build (D28 deploy, backups `…bak.trowel-20261026-153055`).
+
+**P1 done** (`5423c25`): `trowel_proto::desk` types; 24 v3 ops (fields `activity_id` / `timer_id` /
+`snippet_id` / `command_id`, since a bare `id` collides with the envelope); `PROTOCOL_VERSION` 3,
+`OLDEST_PROTOCOL` 2 — the daemon answers `hello` with the client's version, so the running v2 panel
+keeps working; `state.sqlite` v5 (`timers`, `snippets`, `snippets_fts`); `troweld::desk` behind a
+`Host` trait (`with_state`, `paste_text`, `spawn`) used by both `troweld` (`EngineHost`, weak ref to
+the engine) and `--mock` (`MockHost`: state in `<socket>.state/`, paste/spawn only logged). Unbuilt
+v3 ops answer `not_ready`. PROTOCOL.md §4 "Desk (v3)" table. Tests: proto 15, state v4→v5 migration,
+`tests/proto/v3-hello.jsonl`, `cargo clippy -D warnings` clean.
+
+**P2 so far:** `crates/troweld/src/desk/island.rs` — the activity registry (post/replace keeps place,
+dismiss, priority-then-age order, TTL prune, `subscribe` snapshot + broadcast, dead sinks dropped),
+3 tests passing. **Not yet wired** into `Desk::handle`.
+
+**P2 remaining checklist (in order):**
+1. `desk/mod.rs`: `Desk { island }`; handle `island_post|dismiss|list|action`; a ticker thread that
+   sleeps until `island.next_expiry()` (≤ 5 s) and prunes; `capabilities()` → `["island"]`.
+   `island_action`: `keylock`+`unlock` → `host.spawn([<trowel>, "keyboard", "unlock"])`
+   (`crate::helper::locate_trowel()`); any `dismiss` → dismiss. On `Desk::new`, read
+   `$XDG_RUNTIME_DIR/trowel/keyboard-lock.json` and re-post the lock if still running.
+2. `Subscribe { topics }` in `engine.rs` and `mock.rs`: topic `island` → `desk.island.subscribe(sink)`;
+   `Desk::forget` → `island.forget`.
+3. `trowel keyboard lock|unlock` (`crates/trowel-cli/src/keyboard.rs`): after locking, `island_post`
+   `{id:"keylock", icon:"lock", title:"Keyboard locked", ends_at, total, priority:100,
+   actions:[{id:"unlock",label:"Unlock"}]}`; unlock → `island_dismiss`. Reuse the request helper
+   pattern of `clip_cmd.rs::request_at` (hello with `PROTOCOL_VERSION`); a missing daemon is not an
+   error for the lock itself. Add `trowel island post|dismiss|list` (JSON from args).
+4. Plugin: `ui/qml/Trowel/IslandView.qml` (pure Item: states hidden/compact/split/expanded/alert,
+   `SpringAnimation` spring 4 damping 0.32 as in the P0 spike, near-black pill, countdown from
+   `ends_at` via a 1 Hz Timer only while one exists, buttons → signal `action(id, action)`, hover
+   300 ms expands, leave collapses, `alert` bounces + auto-collapse 4 s, `Motion.reduceMotion`
+   instant) and `Island.qml` (`PanelWindow` anchored top, `margins.top: Style.bar.sizeHorizontal + 6`
+   (pass in from Panel; 26 fallback), namespace `trowel-popup`, `WlrLayer.Overlay`, keyboardFocus
+   None, `mask: Region { item: <shape> }`). `Client.qml`: hello `protocol: 3`, subscribe `island`,
+   `property var island: []` from `event == "island"`, `islandAction(id, action)` sends
+   `island_action`. `Panel.qml`: replace `KeyLockPill {}` with `Island { … }`; delete
+   `KeyLockPill.qml` (+ qmldir, harness `prep.py` strip line → strip `Island {`).
+5. Harness: an offscreen `IslandView` entry (`ui/harness/island.sh` or a step in `shell.qml`) that
+   renders each state and checks sizes/positions; `check.py` stays green.
+6. Live acceptance (deploy needs: daemon first, then plugin + `omarchy restart shell`, backups):
+   10 s `trowel keyboard lock 10` → island below the bar (clock visible, screenshot), hover expands,
+   Unlock click works, it shrinks away at the end; `QSG_RENDER_TIMING` shows no frame > 25 ms.
+7. Docs: D29 into DECISIONS, UI-DESIGN island section, BENCHMARKS island rows; commit; then P3.
+
+Process notes for the next session: `grim -g` takes **logical** coordinates; never `pkill -f` a
+pattern that appears in your own shell command (it killed the tool shell twice); never call an
+Omarchy script without reading its `omarchy:args`/arg parsing (the night-light incident).
+
+### 2026-10-26 — Phase 9 started (`phase-9-island`), P0 spikes
+
+Human: "lets do phase 9 also" → PHASE9-PLAN §2 taken as accepted (§8). P0 results:
+
+1. **Island surface** (standalone `quickshell -p` spike, not omarchy-shell): `PanelWindow` anchored
+   top, `margins.top: 32`, `mask: Region { item: pill }`, namespace `trowel-popup` → layer
+   `558,32 420×180`, below `omarchy-bar 0,0 1536×26`; the bar clock stays visible (screenshot).
+   `SpringAnimation` (spring 4, damping 0.32) morphing 200×30 ↔ 380×120 every 1.5 s for 12 s with
+   `QSG_RENDER_TIMING=1`: 335 frames, max frame interval 21 ms, 0 intervals > 25 ms (no drops at
+   60 Hz). Click-through not click-tested (no input tool); same `mask: Region` as omarchy's bar/OSD.
+2. **Bar**: `Style.bar.sizeHorizontal` token = 26 (matches the layer); `shell.json` `bar.position`
+   = `top`.
+3. **Process sampling scale**: 705 pids, 333 own, ~9,900 fds to readlink, 100 DRM fds, `/proc/pid/io`
+   readable for 331/333 own. A naive full pass is 56 ms in Python → P5 caches DRM fds per pid and
+   rescans fds only for new pids / every 5 s.
+4. **Notifications**: `omarchy-notification-send [-g glyph] [-u urgency] [-t ms] [-r id] [-p]
+   [--image] <headline> [description] [--exec prog args…]`: one click action, no buttons.
+5. **Toggle state, read-only**: night light `omarchy-toggle-nightlight --status` (JSON `.enabled`);
+   keep awake `omarchy-toggle-idle status` (JSON `.enabled` = staying awake), set with
+   `stay-awake|allow-idle`; DND `omarchy-shell notifications isDnd` (`on|off`), set with `setDnd`;
+   suspend-in-menu `omarchy-toggle-enabled suspend-off`; touchpad: the
+   `~/.local/state/omarchy/toggles/hypr/touchpad-disabled-name` file; bar `omarchy-toggle-bar
+   toggle|on|off`.
+6. **Protected processes**: Hyprland (1670), `quickshell` (omarchy-shell, which also runs the lock
+   screen), systemd (user manager), dbus-broker, pipewire/wireplumber/pipewire-pulse, uwsm, fcitx5,
+   troweld.
+
+**Incident:** `omarchy-toggle-nightlight status` (I assumed a `status` verb; it only knows
+`--status`) toggled the night light on: hyprsunset started 15:36:20. It exited again and
+`--status` reports `enabled: false`, the state before. Rule kept since: read each script's
+`omarchy:args` and argument parsing before calling it.
+
 
 ### 2026-10-26 — Indexing check, ffmpeg fix, Settings in the panel, Lock Keyboard
 

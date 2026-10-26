@@ -76,6 +76,25 @@ lookups still work via keyword.
 - Screen recordings/screenshots captured for regression (`trowel debug snapshot`) across the theme and
   scale matrix (UI-DESIGN §9).
 
+### 4.1 Phase 9 checks (the Island, Timer, Process Monitor, Snippets, system commands)
+
+- `cargo test -p troweld --lib desk`: island order/TTL/subscribers, timer parser table
+  (`25m`, `1h30`, `at 15:30`, `timer 5 min pizza`, rejects), timers fire onto the island with
+  notification + sound and survive a new `Desk`, snippet placeholders/FTS/import/export, system
+  allow-list and Omarchy script scanner (fixture scripts), sampler rates/grouping/kill policy over a
+  fake `/proc`, and the real `/proc` read of the test process.
+- `tests/proto/v3-desk.jsonl` (golden transcript against `--mock`).
+- `python3 -I ui/harness/check.py`: the panel's 55 offscreen checks, 20 of them Phase 9 (system
+  command state and ↵↵ confirm, typed timer and snippet keyword first, each view, End ↵↵ on the
+  mock's busy process, the snippet blanks form, Create Snippet saving).
+- `python3 -I ui/harness/island/check.py`: the Island's states (geometry, centering, split bubble,
+  alert expand/settle, unmap, reduce motion).
+- `node scripts/deskmodel-test.mjs`, `node scripts/listmerge-test.mjs`.
+- Live (recorded in PROGRESS): keyboard lock on the island below the bar, hover expand, a 10 s
+  timer firing with sound, a timer across a daemon restart, a `yes` process ended from the monitor,
+  sampler cost, snippet copy, a toggle flipped and back. Never signal a protected process live: the
+  policy is tested on the fake source.
+
 ## 5. CI
 
 GitHub Actions on an `archlinux` container:
@@ -88,7 +107,9 @@ GitHub Actions on an `archlinux` container:
 
 Golden transcripts in `tests/proto/` are replayed against `troweld --mock` and the real daemon. They
 include out-of-order `gen` handling, `superseded` responses, the slow-reader queue cap, the
-non-UTF-8 path encoding, and the version-mismatch `hello`.
+non-UTF-8 path encoding, and the version-mismatch `hello`. Protocol v3 adds `v3-hello.jsonl`
+(v2 and v3 both answered with the client's version) and `v3-desk.jsonl` (every desk area, error
+codes `bad_request`, `not_found`, `not_allowed`).
 
 ## 7. Fault injection (Phase 7 gate): one automated test per ROBUSTNESS row
 
