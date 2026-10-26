@@ -4,6 +4,7 @@ mod calc_cmd;
 mod clip_cmd;
 mod debug_ui;
 mod index_service;
+mod keyboard;
 mod parity;
 mod setup;
 mod worker;
@@ -233,6 +234,13 @@ enum Commands {
     },
     /// Start troweld at login (`systemctl --user enable troweld.socket`).
     Autostart { action: AutostartAction },
+    /// Lock the keyboard for a while, to clean it (the panel's Lock Keyboard command). A systemd
+    /// user timer unlocks it even if Trowel stops.
+    Keyboard {
+        action: KeyboardAction,
+        /// How long to lock, in seconds (lock only; at most 1800).
+        seconds: Option<u64>,
+    },
     /// Install plugin, hotkey, and user systemd units (DECISIONS D12).
     Setup {
         /// Repo checkout to copy QML from (defaults to walking up from this binary).
@@ -325,6 +333,13 @@ enum DebugCmd {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum KeyboardAction {
+    Lock,
+    Unlock,
+    Status,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -653,6 +668,17 @@ fn main() {
                 ),
             };
             if let Err(e) = err {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Commands::Keyboard { action, seconds } => {
+            let name = match action {
+                KeyboardAction::Lock => "lock",
+                KeyboardAction::Unlock => "unlock",
+                KeyboardAction::Status => "status",
+            };
+            if let Err(e) = keyboard::run_cli(name, seconds) {
                 eprintln!("{e}");
                 std::process::exit(1);
             }

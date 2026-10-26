@@ -27,7 +27,9 @@ Item {
     "files": "M8 3.5h6l4 4V17.5H8z M14 3.5V8h4 M5.5 7v13.5h10",
     "clipboard": "M8 5h-1.5a1.5 1.5 0 0 0 -1.5 1.5v13a1.5 1.5 0 0 0 1.5 1.5h11a1.5 1.5 0 0 0 1.5 -1.5v-13a1.5 1.5 0 0 0 -1.5 -1.5H16 M9 3.5h6v3h-6z",
     "app": "M5 5h5.5v5.5H5z M13.5 5H19v5.5h-5.5z M5 13.5h5.5V19H5z M13.5 13.5H19V19h-5.5z",
-    "pin": "M9 4h6l-1 5 3 3H7l3-3z M12 12v8"
+    "pin": "M9 4h6l-1 5 3 3H7l3-3z M12 12v8",
+    "settings": "M4 7h9 M17 7h3 M15 5v4 M4 17h3 M11 17h9 M9 15v4",
+    "keyboard": "M3.5 7h17v10h-17z M7 10h1 M10.5 10h1 M14 10h1 M17 10h0.5 M7.5 14h9"
     })
 
   function iconName() {
@@ -53,6 +55,8 @@ Item {
     case "clipboard":
     case "app":
     case "pin":
+    case "settings":
+    case "keyboard":
       return kind
     default:
       return "doc"

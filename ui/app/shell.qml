@@ -3,7 +3,7 @@ import QtQuick
 import Quickshell
 import "Trowel"
 
-// trowel-app: search, Quick Look, Settings, Onboarding. Separate process
+// trowel-app: search, Quick Look, Onboarding (Settings live in the panel, D26). Separate process
 // so a bug here cannot take down omarchy-shell (UI-DESIGN §1 / F18).
 ShellRoot {
   id: rootShell
@@ -26,18 +26,14 @@ ShellRoot {
 
   FloatingWindow {
     id: main
-    visible: surface === "search" || surface === "onboarding" || surface === "settings"
+    visible: surface === "search" || surface === "onboarding"
     title: "Trowel"
     implicitWidth: {
-      if (surface === "settings")
-        return 640
       if (surface === "onboarding" || rootShell.wizardOpen || (client.config && client.config.onboarded === false))
         return 680
       return 1040
     }
     implicitHeight: {
-      if (surface === "settings")
-        return 520
       if (surface === "onboarding" || rootShell.wizardOpen || (client.config && client.config.onboarded === false))
         return 600
       return 700
@@ -50,8 +46,6 @@ ShellRoot {
       sourceComponent: {
         if (surface === "onboarding" || rootShell.wizardOpen || (client.config && client.config.onboarded === false))
           return onboardingComp
-        if (surface === "settings")
-          return settingsComp
         return searchComp
       }
     }
@@ -76,12 +70,6 @@ ShellRoot {
     SearchWindow {
       client: client
       onQuickLookRequested: look.visible = true
-    }
-  }
-  Component {
-    id: settingsComp
-    SettingsWindow {
-      client: client
     }
   }
   Component {

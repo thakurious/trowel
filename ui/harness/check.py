@@ -38,6 +38,19 @@ steps = [
     {"do": "esc", "wait": 300}, {"do": "log", "what": "code-esc1"},
     {"do": "esc", "wait": 300}, {"do": "log", "what": "code-esc2"},
     {"do": "esc", "wait": 300}, {"do": "open", "wait": 600}, {"do": "log", "what": "code-reopen"},
+    # Settings in the panel (D26): the command, a switch from the list, a choice with ←, the pane.
+    {"do": "type", "text": "settings", "wait": 600}, {"do": "log", "what": "set-cmd"},
+    {"do": "enter", "wait": 800}, {"do": "log", "what": "set-open"}, {"do": "shot", "name": "settings"},
+    {"do": "type", "text": "battery", "wait": 300}, {"do": "enter", "wait": 600}, {"do": "log", "what": "set-batt"},
+    {"do": "type", "text": "remember", "wait": 300}, {"do": "call", "fn": "settingStep", "args": [-1], "wait": 600}, {"do": "log", "what": "set-pop"},
+    {"do": "type", "text": "search folders", "wait": 300}, {"do": "call", "fn": "settingPrimary", "wait": 300}, {"do": "log", "what": "set-pane"},
+    {"do": "call", "target": "detail", "fn": "removeAt", "args": [0], "wait": 200}, {"do": "log", "what": "set-armed"},
+    {"do": "call", "target": "detail", "fn": "removeAt", "args": [0], "wait": 600}, {"do": "log", "what": "set-removed"}, {"do": "shot", "name": "settings-folders"},
+    {"do": "call", "target": "detail", "fn": "done"}, {"do": "esc", "wait": 200}, {"do": "esc", "wait": 400}, {"do": "log", "what": "set-back"},
+    # Lock Keyboard: never ↵ here, that would lock the real keyboard.
+    {"do": "command", "id": "lock-keyboard", "wait": 600}, {"do": "log", "what": "lock-open"}, {"do": "shot", "name": "lock-keyboard"},
+    {"do": "type", "text": "3m", "wait": 300}, {"do": "log", "what": "lock-typed"},
+    {"do": "esc", "wait": 200}, {"do": "esc", "wait": 400}, {"do": "log", "what": "lock-back"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -73,6 +86,16 @@ checks = [
     ("Esc closes; reopening soon is All, not Code", lambda s: s["code-reopen"]["tab"] == "all" and s["code-reopen"]["codeMode"] is False),
     ("reopened after 90 s: a blank search", lambda s: s["popped"]["view"] == "search" and s["popped"]["query"] == "" and s["popped"]["rows"] == []),
     ("the summon payload opens the clipboard view", lambda s: s["bar-summon"]["view"] == "clipboard" and s["bar-summon"]["selection"] == "clip:808"),
+    ("'settings' finds the Trowel Settings command", lambda s: s["set-cmd"]["selection"] == "cmd:settings"),
+    ("Enter on it opens Settings: every section, the shortcut first", lambda s: s["set-open"]["view"] == "settings" and s["set-open"]["selection"] == "set:hotkey" and "hdr:Index & Storage" in s["set-open"]["rows"]),
+    ("Enter on a switch flips it from the list", lambda s: s["set-batt"]["setting"] == "battery" and s["set-batt"]["cfg"]["index_on_battery"] is True and not s["set-batt"]["detailFocus"]),
+    ("← on a choice steps it down", lambda s: s["set-pop"]["cfg"]["ui"]["pop_to_root_seconds"] == 60 and s["set-pop"]["cfg"]["ui"]["reduce_motion"] is False),
+    ("Enter on a folder list hands the keys to the pane", lambda s: s["set-pane"]["detailFocus"] is True and s["set-pane"]["items"][0] == "entry:~/Desktop" and s["set-pane"]["items"][-1] == "add"),
+    ("⌫ once only arms; twice removes the folder", lambda s: "~/Desktop" in s["set-armed"]["cfg"]["roots"] and "~/Desktop" not in s["set-removed"]["cfg"]["roots"]),
+    ("Esc from Settings goes back to the search it came from", lambda s: s["set-back"]["view"] == "search" and s["set-back"]["query"] == "settings"),
+    ("Lock Keyboard lists the durations", lambda s: s["lock-open"]["view"] == "keylock" and s["lock-open"]["rows"][:3] == ["lock:15", "lock:30", "lock:60"] and s["lock-open"]["selection"] == "lock:15"),
+    ("a typed duration is offered and selected", lambda s: s["lock-typed"]["rows"] == ["lock:180"] and s["lock-typed"]["selection"] == "lock:180"),
+    ("Esc from Lock Keyboard goes back", lambda s: s["lock-back"]["view"] == "search"),
 ]
 failed = 0
 for name, check in checks:

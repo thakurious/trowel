@@ -127,18 +127,20 @@ test("action filter: prefix, then word start, then subsequence", () => {
 
 test("learned: an app opened with this query leads the commands", () => {
   const chrome = { id: "google-chrome", name: "Google Chrome", learned: { frecency: 101, term: "exact" } };
-  // "c" is a Clipboard History keyword prefix and not Chrome's name, but "c" opened Chrome.
-  let rows = L.merge([], [chrome], "c");
+  // "c" is a Clipboard History keyword prefix and not Chrome's name, but "c" opened Chrome. Only
+  // the clipboard command, so the test is about order and not about which commands exist.
+  const clip = [{ id: "clipboard", name: "Clipboard History", keywords: ["clipboard", "copy"] }];
+  let rows = L.merge([], [chrome], "c", { commands: clip });
   assert.deepEqual(ids(rows), ["hdr:apps", "app:google-chrome", "hdr:commands", "cmd:clipboard"]);
   assert.equal(L.defaultSelection(rows, false), "app:google-chrome");
   // Nothing learned: commands keep leading.
-  rows = L.merge([], [chromium], "c");
+  rows = L.merge([], [chromium], "c", { commands: clip });
   assert.deepEqual(ids(rows), ["hdr:commands", "cmd:clipboard", "hdr:apps", "app:chromium"]);
   // Both strong, only frecency: the more frecent section first; a learned command wins back.
   const used = { id: "chromium", name: "Chromium", learned: { frecency: 150 } };
-  rows = L.merge([], [used], "c");
+  rows = L.merge([], [used], "c", { commands: clip });
   assert.equal(rows[0].rowId, "hdr:apps");
-  rows = L.merge([], [used], "c", { signals: { clipboard: { frecency: 101, term: "prefix" } } });
+  rows = L.merge([], [used], "c", { commands: clip, signals: { clipboard: { frecency: 101, term: "prefix" } } });
   assert.equal(rows[0].rowId, "hdr:commands");
 });
 
@@ -156,6 +158,16 @@ test("learned: commands order by learned term, then text, then frecency", () => 
   // A learned weak command lifts the section above the files.
   const rows = L.merge(files, [], "not", { commands: cmds.slice(0, 1), signals: { a: { frecency: 101, term: "prefix" } } });
   assert.equal(rows[0].rowId, "hdr:commands");
+});
+
+test("settings rows are selectable, headers are not", () => {
+  const rows = [
+    { rowType: "header", rowId: "hdr:General" },
+    { rowType: "setting", rowId: "set:hotkey" },
+    { rowType: "setting", rowId: "set:battery" },
+  ];
+  assert.deepEqual(Array.from(L.selectable(rows, false)), ["set:hotkey", "set:battery"]);
+  assert.equal(L.defaultSelection(rows, false), "set:hotkey");
 });
 
 console.log(`listmerge: ${n} tests passed`);

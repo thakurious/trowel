@@ -14,6 +14,18 @@ var COMMANDS = [{
     subtitle: "Search, paste, copy and remove what you've copied",
     keywords: ["clipboard", "clip", "history", "paste", "copied", "copy"],
     glyph: "clipboard"
+  }, {
+    id: "settings",
+    name: "Trowel Settings",
+    subtitle: "Folders, shortcut, clipboard, code search and the index",
+    keywords: ["settings", "preferences", "config", "configure", "options", "folders", "trowel"],
+    glyph: "settings"
+  }, {
+    id: "lock-keyboard",
+    name: "Lock Keyboard",
+    subtitle: "Ignore every key for a while, to clean the keyboard",
+    keywords: ["lock", "keyboard", "clean", "wipe", "disable", "keys", "cat"],
+    glyph: "keyboard"
   }]
 
 function words(text) {
@@ -229,7 +241,7 @@ function selectable(rows, hasCalc) {
   var ids = hasCalc ? ["calc:"] : []
   for (var i = 0; i < rows.length; i++) {
     var t = rows[i].rowType
-    if (t === "row" || t === "fold" || t === "app" || t === "clip" || t === "command")
+    if (t === "row" || t === "fold" || t === "app" || t === "clip" || t === "command" || t === "setting" || t === "duration")
       ids.push(rows[i].rowId)
   }
   return ids
@@ -242,7 +254,7 @@ function defaultSelection(rows, hasCalc) {
     return "calc:"
   for (var i = 0; i < rows.length; i++) {
     var t = rows[i].rowType
-    if (t === "row" || t === "app" || t === "clip" || t === "command")
+    if (t === "row" || t === "app" || t === "clip" || t === "command" || t === "setting" || t === "duration")
       return rows[i].rowId
   }
   return ""

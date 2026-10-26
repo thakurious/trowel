@@ -58,6 +58,8 @@ ShellRoot {
         panel.escapeStep()
       else if (s.do === "actions")
         panel.harnessActions()
+      else if (s.do === "call")
+        panel.harnessCall(s.target || "panel", s.fn, s.args || [])
       else if (s.do === "log")
         console.log("HARNESS " + s.what + " " + panel.harnessState())
       else if (s.do === "shot")

@@ -17,7 +17,7 @@ Verified environment: omarchy-shell (Quickshell 0.3.1, Qt 6.11) running from
 |---|---|---|
 | **Quick panel** (upstream `SearchPanel`) | Omarchy shell **plugin** `trowel` (kind `panel`, `keepLoaded: true`), namespace `trowel-panel` | Summoning a panel is an IPC call into the already-running shell, so the open is instant. It gets `Color`/`Style` theme tokens for free and behaves like Omarchy's own launcher, clipboard and emoji overlays. |
 | ~~**Bar status**~~ (upstream `StatusMenu`) | none (D25) | Removed 2026-10-16 at the human's request: the panel footer shows indexing progress, `trowel-app` holds settings. |
-| **Main window, Quick Look, Settings, Onboarding, Model download** | `trowel-app`, a **separate Quickshell instance** (`quickshell -p /usr/share/trowel/app`) using `FloatingWindow` | Image grids, video playback (QtMultimedia) and long forms are heavy. Keeping them out of omarchy-shell means a Trowel bug can never take down the user's bar, notifications or **lock screen** (which run in that process). It uses the same QML components, so both look identical. |
+| **Main window, Quick Look, Onboarding, Model download** (Settings moved to the panel, D26) | `trowel-app`, a **separate Quickshell instance** (`quickshell -p /usr/share/trowel/app`) using `FloatingWindow` | Image grids, video playback (QtMultimedia) and long forms are heavy. Keeping them out of omarchy-shell means a Trowel bug can never take down the user's bar, notifications or **lock screen** (which run in that process). It uses the same QML components, so both look identical. |
 | Non-Omarchy fallback | `quickshell -p /usr/share/trowel/panel` runs the panel plugin's QML standalone, with a theme shim | So the panel still works on plain Hyprland or Sway. This is secondary; do not let it constrain the Omarchy design. |
 
 Shared code: `ui/qml/Trowel/` is a QML module with `Client.qml` (the protocol client), `Theme.qml`,
@@ -264,8 +264,9 @@ cannot import those, so it carries look-alikes built on the same tokens.
   opening at the matched place (PDF page scrolled to the band, video seeked to the moment and
   paused, code scrolled to the focus line). `Space`/`Esc` close it and `←`/`→` move through results.
   Sushi is only a fallback for kinds we can't render.
-- **Settings** (`SettingsWindow.swift`): tabs General / Folders / Code / Storage. Layout and
-  meaning follow upstream; **user-visible product name is Trowel** (DECISIONS D17), not DigUp,
+- **Settings** (`SettingsWindow.swift`): **in the panel since D26**, as the Trowel Settings
+  command (list of settings + an editing pane, `SettingsModel.js`), not a `trowel-app` window. The
+  sections are upstream's tabs plus Launcher and Clipboard. Meaning follows upstream; **user-visible product name is Trowel** (DECISIONS D17), not DigUp,
   and Linux wording replaces “this Mac” / macOS. Extract remaining copy into `ui/strings.json`. General covers the hotkey recorder, start at login (systemd
   enable), index on battery (`AppSettings.batteryTitle/Detail`) and about. Folders shows per-root
   status (missing/unreadable), Add, and Skip. Code covers folders, the editor picker and turning it
