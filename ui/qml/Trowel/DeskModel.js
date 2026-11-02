@@ -313,6 +313,167 @@ function themeRows(themes, current, query) {
   return out
 }
 
+// ---- Omarchy's menu (D35)
+//
+// Rows are `system_commands` `menu`: the visible items, in menu order, without actions. Search is
+// Omarchy's own (`shell/plugins/menu/MenuModel.js` nameSearchText / matchesQuery / searchScore,
+// Omarchy 4.0.6); `scripts/deskmodel-test.mjs` checks it against tests/menu/golden.json.
+
+function menuToken(value) {
+  return String(value || "").replace(/[._-]+/g, " ")
+}
+
+function menuLeaf(id) {
+  var parts = String(id || "").split(".")
+  return parts.length > 0 ? parts[parts.length - 1] : id
+}
+
+function menuNameText(r) {
+  var aliases = (r.aliases || []).map(menuToken)
+  return [r.label, menuToken(menuLeaf(r.id)), aliases.join(" ")].join(" ").toLowerCase()
+}
+
+function menuWordIn(term, text) {
+  return String(text || "").toLowerCase().split(/\s+/).indexOf(term) >= 0
+}
+
+function menuMatches(r, query) {
+  var name = menuNameText(r)
+  var desc = String(r.description || "").toLowerCase()
+  var terms = String(query || "").toLowerCase().trim().split(/\s+/)
+  for (var i = 0; i < terms.length; i++) {
+    if (!terms[i] || name.indexOf(terms[i]) >= 0 || menuWordIn(terms[i], desc))
+      continue
+    return false
+  }
+  return true
+}
+
+function menuScore(r, query) {
+  var needle = String(query || "").toLowerCase().trim()
+  var label = String(r.label).toLowerCase()
+  var desc = String(r.description || "").toLowerCase()
+  var score = 80
+  if (label === needle)
+    score = r.parent === "root" ? 2 : 0
+  else if (label.indexOf(needle) === 0)
+    score = 10
+  else if (label.indexOf(needle) >= 0)
+    score = 30
+  else if (menuNameText(r).indexOf(needle) >= 0)
+    score = 40
+  else if (needle.split(/\s+/).every(function (t) {
+      return !t || menuWordIn(t, desc)
+    }))
+    score = 60
+  if (r.kind === "menu" || r.kind === "link")
+    score -= 2
+  return score * 1000 + (r.depth || 0) * 25 + (r.order || 0)
+}
+
+// Every match, best first (Menu.qml's filtered display).
+function menuSearch(menu, query) {
+  var q = String(query || "").trim()
+  if (!q.length)
+    return []
+  return (menu || []).filter(function (r) {
+    return menuMatches(r, q)
+  }).map(function (r) {
+    return {
+      r: r,
+      s: menuScore(r, q)
+    }
+  }).sort(function (a, b) {
+    return a.s - b.s
+  }).map(function (x) {
+    return x.r
+  })
+}
+
+function menuLabel(r) {
+  return r.checked ? r.label + " \u2713" : r.label
+}
+
+function menuParentPath(r) {
+  var p = String(r.path || "")
+  var at = p.lastIndexOf(" \u203a ")
+  return at < 0 ? "" : p.slice(0, at)
+}
+
+// The submenu a row opens: its own id, or a link's target.
+function menuOpens(r) {
+  return r.kind === "link" ? (r.target || "") : (r.kind === "menu" ? r.id : "")
+}
+
+function menuRow(r, searching) {
+  var opens = menuOpens(r)
+  return {
+    rowType: "menu",
+    rowId: "menu:" + r.id,
+    menuId: r.id,
+    opens: opens,
+    title: menuLabel(r),
+    subtitle: searching ? menuParentPath(r) : (r.description || ""),
+    accessory: opens.length ? "\u203a" : "",
+    textGlyph: r.icon || "",
+    glyph: opens.length ? "folder" : "terminal"
+  }
+}
+
+// The menu view: `node`'s children, or with a query every match across the tree.
+function menuRows(menu, node, query) {
+  if (String(query || "").trim().length)
+    return menuSearch(menu, query).map(function (r) {
+      return menuRow(r, true)
+    })
+  var at = node || "root"
+  return (menu || []).filter(function (r) {
+    return r.parent === at
+  }).map(function (r) {
+    return menuRow(r, false)
+  })
+}
+
+// The menu's title at `node` ("Install › Style"), "" at the top.
+function menuTitle(menu, node) {
+  var ms = menu || []
+  for (var i = 0; i < ms.length; i++)
+    if (ms[i].id === node)
+      return ms[i].title || ms[i].path || ms[i].label
+  return ""
+}
+
+// The main list's share: the best `max` matches for queries of 2+ characters, without rows a
+// curated system command already covers (`dup_of`). Only a submenu named exactly what was typed
+// is strong (`install⏎` opens Install); an action never outranks an app (`fire⏎` launches
+// Firefox, not Install › Browser › Firefox).
+function menuCommands(menu, query, max) {
+  var q = String(query || "").trim()
+  if (q.length < 2)
+    return []
+  var out = []
+  var hits = menuSearch(menu, q)
+  for (var i = 0; i < hits.length && out.length < (max === undefined ? 4 : max); i++) {
+    var r = hits[i]
+    if (r.dup_of)
+      continue
+    var opens = menuOpens(r)
+    out.push({
+      id: "menu:" + r.id,
+      name: menuLabel(r),
+      subtitle: menuParentPath(r) || "Omarchy",
+      keywords: [],
+      glyph: opens.length ? "folder" : "terminal",
+      textGlyph: r.icon || "",
+      accessory: "Omarchy",
+      menu: r.id,
+      opens: opens,
+      strong: opens.length > 0 && String(r.label).toLowerCase() === q.toLowerCase()
+    })
+  }
+  return out
+}
+
 // ---- Snippets
 
 function snippetRows(snippets) {

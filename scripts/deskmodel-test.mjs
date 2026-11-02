@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 const src = readFileSync(new URL("../ui/qml/Trowel/DeskModel.js", import.meta.url), "utf8")
   .replace(/^\.pragma library\s*$/m, "");
 const M = {};
-vm.runInNewContext(src + "\nthis.M = { clock, duration, bytes, rate, pct, systemCommands, stateCommands, timerCommand, keywordHits, timerRows, metric, procRows, scriptRows, themeRows, snippetRows, parts, SORTS };", M);
+vm.runInNewContext(src + "\nthis.M = { clock, duration, bytes, rate, pct, systemCommands, stateCommands, timerCommand, keywordHits, timerRows, metric, procRows, scriptRows, themeRows, snippetRows, parts, SORTS, menuSearch, menuRows, menuCommands, menuTitle, menuScore };", M);
 const D = M.M;
 const plain = (v) => JSON.parse(JSON.stringify(v));
 let n = 0;
@@ -106,6 +106,45 @@ test("snippet rows and placeholder parts", () => {
   assert.equal(rows[0].subtitle, "Hi {argument:name}, thanks");
   assert.deepEqual(plain(D.parts("a {date} b {")), [
     { text: "a ", place: false }, { text: "{date}", place: true }, { text: " b {", place: false }]);
+});
+
+
+// Omarchy's menu (D35): the same matches in the same order as its own MenuModel.js, over the rows
+// the daemon would send (visible, no root, no apps).
+test("menu search matches MenuModel.js", () => {
+  const golden = JSON.parse(readFileSync(new URL("../tests/menu/golden.json", import.meta.url), "utf8"));
+  const byId = Object.fromEntries(golden.tree.map((t) => [t.id, t]));
+  const depth = (t) => { let d = 0; let c = t; while (c && c.parent && c.parent !== "root") { d++; c = byId[c.parent]; } return d; };
+  const rows = golden.tree
+    .filter((t) => t.visible && t.id !== "root" && t.provider !== "apps")
+    .map((t) => ({ id: t.id, parent: t.parent, kind: t.kind, label: t.label.replace(/ \u2713$/, ""), checked: / \u2713$/.test(t.label),
+      path: t.path, depth: depth(t), order: t.order, aliases: t.aliases, description: t.description, target: t.target }));
+  for (const [q, ids] of Object.entries(golden.search))
+    assert.deepEqual(plain(D.menuSearch(rows, q).map((r) => r.id)), ids, q);
+
+  const top = D.menuRows(rows, "root", "").map((r) => r.menuId);
+  assert.deepEqual(plain(top.slice(0, 4)), ["learn", "trigger", "style", "setup"]);
+  const install = D.menuRows(rows, "install", "");
+  assert.equal(install[0].menuId, "install.package");
+  assert.ok(install.every((r) => r.rowId.startsWith("menu:install.")));
+  const link = D.menuRows(rows, "personal", "").find((r) => r.menuId === "personal.go-system");
+  assert.equal(link.opens, "system");
+  assert.equal(link.accessory, "\u203a");
+  const hit = D.menuRows(rows, "root", "aur")[0];
+  assert.deepEqual(plain([hit.title, hit.subtitle, hit.opens]), ["AUR", "Install", ""]);
+  const stable = D.menuRows(rows, "update.channel", "").find((r) => r.menuId === "update.channel.stable");
+  assert.equal(stable.title, "Stable \u2713");
+  assert.equal(D.menuTitle(rows, "install.style"), "Install \u203a Style");
+
+  // Main list: capped, no 1-letter queries, duplicates of curated commands dropped, and only an
+  // exactly named submenu is strong.
+  assert.deepEqual(plain(D.menuCommands(rows, "z")), []);
+  assert.equal(D.menuCommands(rows, "theme").length, 4);
+  const upd = D.menuCommands(rows, "update")[0];
+  assert.deepEqual(plain([upd.id, upd.strong, upd.opens]), ["menu:update", true, "update"]);
+  assert.equal(D.menuCommands(rows, "aur")[0].strong, false, "actions never lead");
+  const dup = rows.map((r) => r.id === "system.lock" ? { ...r, dup_of: "lock-screen" } : r);
+  assert.ok(!D.menuCommands(dup, "lock").some((c) => c.menu === "system.lock"));
 });
 
 console.log(`deskmodel: ${n} tests passed`);

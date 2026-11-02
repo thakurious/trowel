@@ -51,6 +51,12 @@ var COMMANDS = [{
     keywords: ["create", "new", "add", "snippet", "template"],
     glyph: "snippet"
   }, {
+    id: "menu",
+    name: "Omarchy Menu",
+    subtitle: "Install, remove, update, setup, style and system: Omarchy's own menu",
+    keywords: ["omarchy", "menu"],
+    glyph: "terminal"
+  }, {
     id: "omarchy",
     name: "Omarchy Commands",
     subtitle: "Every Omarchy command, searchable",
@@ -127,6 +133,7 @@ function commandItem(c) {
     title: c.name,
     generic: c.subtitle || "",
     glyph: c.glyph || "app",
+    textGlyph: c.textGlyph || "",
     accessory: c.accessory || "",
     confirm: !!c.confirm,
     raw: c
@@ -195,6 +202,8 @@ function clipItem(c) {
 // files: the file rows already flattened (headers, rows, the weaker fold), in daemon order.
 // apps: AppRow[] for the same query. opts.maxApps caps the section (default 5); opts.commands is the
 // command list (default COMMANDS, [] for none); opts.signals maps command id → learned signal.
+// opts.menu: Omarchy menu matches (DeskModel.menuCommands, already ranked and capped), after the
+// commands.
 // A section whose top match is strong (a command or app name starting with the query, or a query
 // it was opened with before) goes first, so `fire⏎` launches Firefox and `clip⏎` opens Clipboard
 // History; otherwise it follows the file groups (before the weaker fold), so row 0 stays the best
@@ -215,6 +224,19 @@ function merge(files, apps, query, opts) {
     }
   })
   cmds = lead.concat(cmds)
+  var menu = (opts.menu || []).map(function (c) {
+    return {
+      command: c,
+      strong: !!c.strong,
+      signal: null,
+      order: 1000
+    }
+  })
+  // A strong menu row (a submenu named exactly what was typed) may lead the section.
+  if (menu.length && menu[0].strong && !(cmds.length && cmds[0].strong))
+    cmds = menu.concat(cmds)
+  else
+    cmds = cmds.concat(menu)
   var cs = []
   if (cmds.length) {
     cs = [{
@@ -282,7 +304,7 @@ function merge(files, apps, query, opts) {
 }
 
 // Row types ↑/↓ can land on (headers and the like are skipped).
-var SELECTABLE = ["row", "fold", "app", "clip", "command", "setting", "duration", "timer-new", "timer", "proc", "snippet", "script", "theme"]
+var SELECTABLE = ["row", "fold", "app", "clip", "command", "setting", "duration", "timer-new", "timer", "proc", "snippet", "script", "theme", "menu"]
 
 // Clipboard view rows: pinned first, as the daemon returns them; a "Pinned" header when any.
 // `headers: false` for the Images grid, whose cells are all thumbnails.

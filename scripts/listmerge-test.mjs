@@ -183,4 +183,21 @@ test("lead commands and snippet keywords go first", () => {
   assert.deepEqual(Array.from(L.selectable([{ rowType: "proc", rowId: "p" }, { rowType: "header", rowId: "h" }, { rowType: "timer-new", rowId: "t" }], false)), ["p", "t"]);
 });
 
+
+// D35: Omarchy menu matches join the Commands section; only a strong one (a submenu named exactly
+// what was typed) may lead it, and they never put the section ahead of a strong app.
+test("Omarchy menu matches", () => {
+  const install = { id: "menu:install", name: "Install", subtitle: "Omarchy", keywords: [], menu: "install", opens: "install", strong: true, textGlyph: "x" };
+  const rows = L.merge(files, [], "install", { commands: [], menu: [install] });
+  assert.deepEqual(ids(rows).slice(0, 2), ["hdr:commands", "cmd:menu:install"]);
+  assert.equal(rows[1].textGlyph, "x");
+  assert.equal(L.defaultSelection(rows, false), "cmd:menu:install");
+  const ffx = { id: "menu:install.browser.firefox", name: "Firefox", subtitle: "Install › Browser", keywords: [], menu: "install.browser.firefox", opens: "", strong: false };
+  const fire = L.merge(files, [firefox], "fire", { commands: [], menu: [ffx] });
+  assert.equal(L.defaultSelection(fire, false), "app:firefox", "an install action never beats the app");
+  assert.ok(ids(fire).indexOf("cmd:menu:install.browser.firefox") > ids(fire).indexOf("app:firefox"));
+  const clip = { id: "clipboard", name: "Clipboard History", keywords: ["clipboard"] };
+  const after = L.merge(files, [], "clip", { commands: [clip], menu: [{ ...ffx, id: "menu:x", strong: false }] });
+  assert.deepEqual(ids(after).slice(0, 3), ["hdr:commands", "cmd:clipboard", "cmd:menu:x"]);
+});
 console.log(`listmerge: ${n} tests passed`);

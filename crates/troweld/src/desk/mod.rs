@@ -1,4 +1,5 @@
-//! Phase 9 (`PHASE9-PLAN.md`): the Island, process monitor, system commands, timers and snippets.
+//! Phase 9 (`PHASE9-PLAN.md`): the Island, process monitor, system commands, timers and snippets;
+//! Phase 10 (D35): Omarchy's menu.
 //! The same code serves `troweld` and `troweld --mock`; what differs (state file, clipboard, the
 //! commands it may run, where process samples come from) is the [`Host`].
 
@@ -14,6 +15,7 @@ use crate::state::StateDb;
 
 pub mod clock;
 pub mod island;
+pub mod menu;
 pub mod procs;
 pub mod snippets;
 pub mod system;
@@ -81,6 +83,12 @@ pub trait Host: Send + Sync {
     fn timer_sound(&self) -> bool;
     /// Whether `state.sqlite` exists yet: the desk never creates it just to look for timers.
     fn state_exists(&self) -> bool;
+    /// Omarchy's menu files, merged in this order (D35): the shipped one, then the user's
+    /// extension. Missing files are skipped.
+    fn menu_files(&self) -> Vec<PathBuf>;
+    /// Whether menu actions start inside `uwsm-app` (their own scope, not troweld's cgroup with
+    /// its `MemoryHigh` and stop-kills-children).
+    fn uwsm(&self) -> bool;
 }
 
 /// Runs `f` on the state DB with a typed result (the host's interface speaks `Value`).
@@ -135,6 +143,46 @@ pub fn capture_command(argv: &[String], timeout: Duration) -> Result<String, Str
     }
 }
 
+/// One pass over `base`: the guard script, then each provider's script. A failed guard run keeps
+/// the last complete answers (`guardProc.onExited`); the first failure leaves every row showing.
+fn refresh_menu(host: &dyn Host, state: &Mutex<MenuState>, base: &menu::Menu) {
+    let script = menu::guard_script(base);
+    let guards = if script.is_empty() {
+        Some(menu::Guards::default())
+    } else {
+        host.capture(
+            &["bash".into(), "-lc".into(), script],
+            Duration::from_secs(10),
+        )
+        .ok()
+        .map(|out| menu::parse_guards(&out))
+    };
+    let mut provided = Vec::new();
+    for id in &base.order {
+        let Some(spec) = base.get(id).and_then(|e| menu::provider(&e.provider)) else {
+            continue;
+        };
+        if let Ok(out) = host.capture(
+            &["bash".into(), "-lc".into(), spec.script.into()],
+            Duration::from_secs(5),
+        ) {
+            provided.push((id.clone(), menu::provider_rows(spec, id, &out)));
+        }
+    }
+    let mut st = state.lock().expect("menu");
+    match guards {
+        Some(g) => st.guards = Some(g),
+        None if st.guards.is_none() => st.guards = Some(menu::Guards::default()),
+        None => {}
+    }
+    for (id, rows) in provided {
+        st.provided.retain(|(m, _)| *m != id);
+        st.provided.push((id, rows));
+    }
+    st.refreshing = false;
+    st.refreshed = Some(Instant::now());
+}
+
 struct ProcSub {
     sink: Sink,
     interval: Duration,
@@ -150,6 +198,23 @@ struct ProcMon {
     running: bool,
 }
 
+/// Omarchy's menu as last read and evaluated (D35). Guards and providers come from one
+/// background pass (≈ 0.9 s on this machine); replies use the last answers meanwhile, as
+/// Omarchy's menu does (`Menu.qml` `evaluateGuards`).
+#[derive(Default)]
+struct MenuState {
+    stamps: Vec<(PathBuf, Option<std::time::SystemTime>)>,
+    base: menu::Menu,
+    guards: Option<menu::Guards>,
+    /// Provider rows by the submenu they belong to.
+    provided: Vec<(String, Vec<menu::Item>)>,
+    refreshing: bool,
+    refreshed: Option<Instant>,
+}
+
+/// A second `system_commands` this soon after a pass doesn't start another.
+const MENU_REFRESH_GAP: Duration = Duration::from_secs(2);
+
 /// Wakes the ticker early (a timer started, an activity with a TTL was posted).
 type Wake = Arc<(Mutex<bool>, Condvar)>;
 
@@ -160,6 +225,7 @@ pub struct Desk {
     procs: Arc<Mutex<ProcMon>>,
     scripts: Mutex<Option<(Instant, Vec<system::Script>)>>,
     themes: Mutex<Vec<String>>,
+    menu: Arc<Mutex<MenuState>>,
     /// Some timer may be running, paused or freshly done; while false the ticker leaves the DB
     /// alone.
     timers_live: std::sync::atomic::AtomicBool,
@@ -189,6 +255,7 @@ impl Desk {
             procs: Arc::new(Mutex::new(ProcMon::default())),
             scripts: Mutex::new(None),
             themes: Mutex::new(Vec::new()),
+            menu: Arc::new(Mutex::new(MenuState::default())),
             timers_live: std::sync::atomic::AtomicBool::new(false),
         });
         desk.repost_keylock();
@@ -393,12 +460,35 @@ impl Desk {
                 let scripts = self.scripts();
                 let (themes, current) = system::themes(host);
                 *self.themes.lock().expect("themes") = themes.clone();
+                let (menu, guards, ready) = self.menu_view();
+                let rows = menu::rows(&menu, &guards, |a| {
+                    system::curated_for_action(a).map(String::from)
+                });
+                self.menu_refresh();
                 Ok(json!({
                     "commands": system::curated(host),
                     "omarchy": scripts.iter().map(system::script_json).collect::<Vec<_>>(),
                     "themes": themes,
                     "current_theme": current,
+                    "menu": rows,
+                    "menu_ready": ready,
                 }))
+            }
+            Op::SystemRun { command_id } if command_id.starts_with("menu:") => {
+                let id = &command_id["menu:".len()..];
+                let (menu, guards, _) = self.menu_view();
+                let action = menu::action_for(&menu, &guards, id)
+                    .ok_or_else(|| (ErrorCode::NotFound, format!("no menu action {id}")))?;
+                let mut argv: Vec<String> = Vec::new();
+                if host.uwsm() {
+                    argv.extend(["uwsm-app".into(), "--".into()]);
+                }
+                // `Util.execDetached`: `bash -lc <action>`.
+                argv.extend(["bash".into(), "-lc".into(), action.to_string()]);
+                host.spawn(&argv).map_err(io)?;
+                // What it changed (a default, a toggle, a package) shows on the next open.
+                self.menu.lock().expect("menu").refreshed = None;
+                Ok(json!({}))
             }
             Op::SystemRun { command_id } => {
                 let scripts = self.scripts();
@@ -561,6 +651,59 @@ impl Desk {
         let list = system::scan(&self.host.script_dirs());
         *slot = Some((Instant::now(), list.clone()));
         list
+    }
+
+    /// The menu with its provider rows, the last guards, and whether they were evaluated yet. The
+    /// files are read again when their mtimes changed (an extension edit, an Omarchy update).
+    fn menu_view(&self) -> (menu::Menu, menu::Guards, bool) {
+        let mut st = self.menu.lock().expect("menu");
+        let stamps: Vec<_> = self
+            .host
+            .menu_files()
+            .into_iter()
+            .map(|p| {
+                let m = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+                (p, m)
+            })
+            .collect();
+        if stamps != st.stamps {
+            let sources: Vec<_> = stamps
+                .iter()
+                .filter(|(_, m)| m.is_some())
+                .map(|(p, _)| menu::parse(&std::fs::read_to_string(p).unwrap_or_default()))
+                .collect();
+            st.base = menu::merge(&sources);
+            st.stamps = stamps;
+            st.refreshed = None;
+        }
+        let mut view = st.base.clone();
+        for (menu_id, rows) in &st.provided {
+            if view.get(menu_id).is_some() {
+                view.swap_provider_rows(menu_id, rows.clone());
+            }
+        }
+        let ready = st.guards.is_some();
+        (view, st.guards.clone().unwrap_or_default(), ready)
+    }
+
+    /// Starts a guard + provider pass in the background unless one is running or just ran.
+    fn menu_refresh(&self) {
+        let base = {
+            let mut st = self.menu.lock().expect("menu");
+            if st.refreshing || st.refreshed.is_some_and(|t| t.elapsed() < MENU_REFRESH_GAP) {
+                return;
+            }
+            st.refreshing = true;
+            st.base.clone()
+        };
+        let host = Arc::clone(&self.host);
+        let state = Arc::clone(&self.menu);
+        let spawned = std::thread::Builder::new()
+            .name("desk-menu".into())
+            .spawn(move || refresh_menu(&*host, &state, &base));
+        if spawned.is_err() {
+            self.menu.lock().expect("menu").refreshing = false;
+        }
     }
 
     fn proc_subscribe(&self, sub: ProcSub) {
@@ -839,6 +982,13 @@ mod tests {
             Ok(match argv[0].as_str() {
                 "omarchy-theme-list" => "Catppuccin\nTokyo Night\n".into(),
                 "omarchy-toggle-nightlight" => r#"{"enabled":true}"#.into(),
+                // The menu's guard script, then the fonts provider.
+                "bash" if argv[2].contains("__omarchy_pkgs") => {
+                    "system.hibernate:w:0\nupdate.channel.stable:c:1\n".into()
+                }
+                "bash" if argv[2].contains("omarchy-font-list") => {
+                    "Fira Code\tFira Code\tFira Code\nIosevka\tIosevka\tFira Code\n".into()
+                }
                 _ => String::new(),
             })
         }
@@ -847,6 +997,12 @@ mod tests {
         }
         fn script_dirs(&self) -> Vec<PathBuf> {
             vec![self.dir.join("bin")]
+        }
+        fn menu_files(&self) -> Vec<PathBuf> {
+            vec![self.dir.join("menu.jsonc"), self.dir.join("ext.jsonc")]
+        }
+        fn uwsm(&self) -> bool {
+            true
         }
         fn keylock_state(&self) -> Option<Value> {
             self.keylock.clone()
@@ -1043,6 +1199,114 @@ mod tests {
         assert!(host
             .logged()
             .contains(&"omarchy-theme-set Tokyo Night".to_string()));
+    }
+
+    fn menu_rows(desk: &Desk, s: &Sink) -> Vec<Value> {
+        desk.handle(op(json!({"op": "system_commands"})), s.clone())
+            .unwrap()["menu"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn omarchy_menu_rows_guards_and_runs() {
+        let host = TestHost::new(None);
+        std::fs::write(
+            host.dir.join("menu.jsonc"),
+            r#"{
+  // shipped
+  "install": {"label":"Install"},
+  "install.aur": {"label":"AUR","action":"xdg-terminal-exec omarchy-pkg-aur-install"},
+  "system": {"label":"System"},
+  "system.lock": {"label":"Lock","action":"omarchy-system-lock"},
+  "system.hibernate": {"label":"Hibernate","when":"omarchy-hibernation-available","action":"systemctl hibernate"},
+  "style": {"label":"Style"},
+  "style.font": {"label":"Font","provider":"fonts"},
+  "update": {"label":"Update"},
+  "update.channel": {"label":"Channel"},
+  "update.channel.stable": {"label":"Stable","checked":"true","action":"omarchy-channel-set stable"},
+}"#,
+        )
+        .unwrap();
+        let desk = Desk::new(host.clone());
+        let (s, _) = sink();
+        let first = desk
+            .handle(op(json!({"op": "system_commands"})), s.clone())
+            .unwrap();
+        // Before the first pass every row shows, unchecked.
+        assert_eq!(first["menu_ready"], false);
+        let ids = |rows: &[Value]| -> Vec<String> {
+            rows.iter()
+                .map(|r| r["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(ids(first["menu"].as_array().unwrap()).contains(&"system.hibernate".into()));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while desk.menu.lock().unwrap().refreshing || desk.menu.lock().unwrap().guards.is_none() {
+            assert!(Instant::now() < deadline, "menu pass never finished");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let rows = menu_rows(&desk, &s);
+        let got = ids(&rows);
+        assert!(!got.contains(&"system.hibernate".into()), "{got:?}");
+        assert!(
+            got.contains(&"style.font.iosevka".into()),
+            "provider rows: {got:?}"
+        );
+        let stable = rows
+            .iter()
+            .find(|r| r["id"] == "update.channel.stable")
+            .unwrap();
+        assert_eq!(
+            (stable["label"].as_str(), stable["checked"].as_bool()),
+            (Some("Stable"), Some(true))
+        );
+        assert_eq!(stable["path"], "Update › Channel › Stable");
+        let lock = rows.iter().find(|r| r["id"] == "system.lock").unwrap();
+        assert_eq!(lock["dup_of"], "lock-screen");
+        assert!(rows.iter().all(|r| r.get("action").is_none()));
+
+        desk.handle(
+            op(json!({"op": "system_run", "command_id": "menu:install.aur"})),
+            s.clone(),
+        )
+        .unwrap();
+        assert!(host.logged().contains(
+            &"uwsm-app -- bash -lc xdg-terminal-exec omarchy-pkg-aur-install".to_string()
+        ));
+        desk.handle(
+            op(json!({"op": "system_run", "command_id": "menu:style.font.iosevka"})),
+            s.clone(),
+        )
+        .unwrap();
+        assert!(host
+            .logged()
+            .contains(&"uwsm-app -- bash -lc omarchy-font-set 'Iosevka'".to_string()));
+        for bad in [
+            "menu:install",
+            "menu:system.hibernate",
+            "menu:rm -rf ~",
+            "menu:",
+        ] {
+            let err = desk
+                .handle(
+                    op(json!({"op": "system_run", "command_id": bad})),
+                    s.clone(),
+                )
+                .unwrap_err();
+            assert_eq!(err.0, ErrorCode::NotFound, "{bad}");
+        }
+
+        // An extension edit is read on the next request.
+        std::fs::write(
+            host.dir.join("ext.jsonc"),
+            r#"{"install.aur": {"label":"AUR Package","action":"true"}}"#,
+        )
+        .unwrap();
+        let rows = menu_rows(&desk, &s);
+        let aur = rows.iter().find(|r| r["id"] == "install.aur").unwrap();
+        assert_eq!(aur["label"], "AUR Package");
     }
 
     #[test]

@@ -163,6 +163,14 @@ impl crate::desk::Host for MockHost {
         vec![self.state_dir.join("bin")]
     }
 
+    fn menu_files(&self) -> Vec<std::path::PathBuf> {
+        vec![self.state_dir.join("omarchy-menu.jsonc")]
+    }
+
+    fn uwsm(&self) -> bool {
+        false
+    }
+
     fn keylock_state(&self) -> Option<Value> {
         None
     }
@@ -201,6 +209,31 @@ fn write_mock_scripts(dir: &std::path::Path) {
     ] {
         let _ = fs::write(bin.join(name), body);
     }
+    // A slice of Omarchy's menu (D35) in its own format; guards are never run here.
+    let _ = fs::write(
+        dir.join("omarchy-menu.jsonc"),
+        r#"{
+  // Mock Omarchy menu
+  "apps": {"icon":"󰀻","label":"Apps","provider":"apps"},
+  "style": {"icon":"","label":"Style"},
+  "install": {"icon":"󰉉","label":"Install"},
+  "remove": {"icon":"󰭌","label":"Remove","aliases":["uninstall"]},
+  "update": {"icon":"","label":"Update","aliases":["restart","refresh"]},
+  "system": {"icon":"","label":"System","aliases":["power-menu"]},
+  "system.lock": {"icon":"","label":"Lock","action":"omarchy-system-lock"},
+  "system.reboot": {"icon":"󰜉","label":"Reboot","action":"omarchy-system-reboot"},
+  "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"omarchy-theme-switcher"},
+  "install.package": {"icon":"󰣇","label":"Package","action":"xdg-terminal-exec --app-id=org.omarchy.terminal omarchy-pkg-install"},
+  "install.aur": {"icon":"󰣇","label":"AUR","action":"xdg-terminal-exec --app-id=org.omarchy.terminal omarchy-pkg-aur-install"},
+  "install.browser": {"icon":"","label":"Browser"},
+  "install.browser.firefox": {"icon":"","label":"Firefox","action":"omarchy-install-browser firefox"},
+  "remove.package": {"icon":"󰣇","label":"Package","action":"omarchy-pkg-remove"},
+  "update.omarchy": {"icon":"","label":"Omarchy","action":"omarchy-launch-floating-terminal-with-presentation omarchy-update"},
+  "update.channel": {"icon":"󰔫","label":"Channel"},
+  "update.channel.stable": {"icon":"","label":"Stable","checked":"true","action":"omarchy-channel-set stable"},
+}
+"#,
+    );
 }
 
 /// Five snippets and two timers, so every Phase 9 view has something to show.
@@ -318,12 +351,6 @@ pub fn run(opts: MockOpts) -> io::Result<()> {
             fs::set_permissions(parent, perms)?;
         }
     }
-    let _ = fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket)?;
-    let mut sock_perms = fs::metadata(&socket)?.permissions();
-    sock_perms.set_mode(0o600);
-    fs::set_permissions(&socket, sock_perms)?;
-
     let launcher = LauncherMock::new(
         fixture
             .launcher
@@ -344,6 +371,14 @@ pub fn run(opts: MockOpts) -> io::Result<()> {
         fixture,
         latency: Duration::from_millis(opts.latency_ms),
     });
+
+    // Bind only once the state is built: a client that connects early would otherwise wait out
+    // the setup inside its first request, and `ui-trace` would bill it to `hello`.
+    let _ = fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket)?;
+    let mut sock_perms = fs::metadata(&socket)?.permissions();
+    sock_perms.set_mode(0o600);
+    fs::set_permissions(&socket, sock_perms)?;
 
     eprintln!("troweld --mock listening on {}", socket.display());
     for incoming in listener.incoming() {

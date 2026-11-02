@@ -84,12 +84,21 @@ lookups still work via keyword.
   allow-list and Omarchy script scanner (fixture scripts), sampler rates/grouping/kill policy over a
   fake `/proc`, and the real `/proc` read of the test process.
 - `tests/proto/v3-desk.jsonl` (golden transcript against `--mock`).
-- `python3 -I ui/harness/check.py`: the panel's 55 offscreen checks, 20 of them Phase 9 (system
+- `python3 -I ui/harness/check.py`: the panel's 66 offscreen checks, 20 of them Phase 9 and 11 the
+  Omarchy menu (D35: `install⏎` opens Install, levels in and out, search, the top without Apps,
+  `dup_of` rows shown once, an action run closes the panel), and (Phase 9: system
   command state and ↵↵ confirm, typed timer and snippet keyword first, each view, End ↵↵ on the
   mock's busy process, the snippet blanks form, Create Snippet saving).
 - `python3 -I ui/harness/island/check.py`: the Island's states (geometry, centering, split bubble,
   alert expand/settle, unmap, reduce motion).
 - `node scripts/deskmodel-test.mjs`, `node scripts/listmerge-test.mjs`.
+- Omarchy's menu (D35): `node scripts/menu-golden.mjs` writes `tests/menu/golden.json` and
+  `guard.sh` from Omarchy's own `MenuModel.js` over `tests/menu/{omarchy-menu,extension}.jsonc`
+  and `guards.txt`. `cargo test -p troweld --lib desk::menu` compares the Rust port (tree,
+  parents, paths, visibility, ✓, slugs, and the guard script byte for byte) and
+  `scripts/deskmodel-test.mjs` the panel's search order. Regenerate after an Omarchy update that
+  touches the menu (copy the new `omarchy-menu.jsonc` in first); a changed golden is a port to
+  redo, not a test to loosen.
 - Live (recorded in PROGRESS): keyboard lock on the island below the bar, hover expand, a 10 s
   timer firing with sound, a timer across a daemon restart, a `yes` process ended from the monitor,
   sampler cost, snippet copy, a toggle flipped and back. Never signal a protected process live: the

@@ -1,6 +1,6 @@
 import QtQuick
 
-// The right pane for Omarchy Commands and Pick Theme: what ↵ will do with the selected row.
+// The right pane for Omarchy Commands, Omarchy Menu and Pick Theme: what ↵ will do with the selected row.
 Item {
   id: root
   property var row: null
@@ -43,6 +43,8 @@ Item {
       text: {
         if (!root.row)
           return ""
+        if (root.row.rowType === "menu")
+          return root.row.opens ? "↵ opens this part of Omarchy's menu." : "↵ runs it, as Omarchy's menu does."
         if (root.row.rowType === "theme")
           return root.row.accessory === "Current" ? "This is the theme you have now." : "↵ switches every app, the bar and the wallpaper to it."
         return root.row.accessory === "Terminal" ? "It asks questions, so ↵ opens it in a terminal." : "↵ runs it."

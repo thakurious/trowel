@@ -206,8 +206,8 @@ wraps it (`{"timer": …}`, `{"snippet": …}`). `capabilities` gains `island`, 
 | `proc_unsubscribe` | — | `{}` |
 | `proc_detail` | `{pid}` | `{pid, ppid, name, cmdline, exe, threads, state, pss, started, user, engines:[{engine, busy}], history, app_key, app_history, protected}` |
 | `proc_kill` | `{pids, signal: term\|kill, confirm?}` | `{sent, alive}` (`alive`: still there after 500 ms) / `not_allowed` |
-| `system_commands` | — | `{commands:[SystemCommand], omarchy:[{id, name, script, subtitle, group, terminal}], themes, current_theme}` |
-| `system_run` | `{command_id}`: a curated id, `omarchy:<script>`, `theme:<name>` | `{}`; a toggle waits (≤ 4 s) and answers `{state}` / `not_found` |
+| `system_commands` | — | `{commands:[SystemCommand], omarchy:[{id, name, script, subtitle, group, terminal}], themes, current_theme, menu:[MenuRow], menu_ready}`. `menu` (D35) is Omarchy's menu tree, visible rows only, in menu order: `{id, parent, kind:"menu"\|"action"\|"link", label, icon, path, depth, order, checked?, title?, description?, aliases?, target?, dup_of?}`. `label` is raw; `checked: true` where Omarchy would append ` ✓`; `dup_of` names the curated command with the same argv; no action strings. Guards and providers come from a background pass the request starts; `menu_ready` is false until the first one has landed (every row shows meanwhile, as in Omarchy). |
+| `system_run` | `{command_id}`: a curated id, `omarchy:<script>`, `theme:<name>`, `menu:<item id>` | `{}`; a toggle waits (≤ 4 s) and answers `{state}` / `not_found`. `menu:` runs a visible action row's action as `uwsm-app -- bash -lc <action>`; a submenu, a hidden row or an unknown id is `not_found` |
 | `timer_start` | `{text}` (a bare number is minutes) or `{seconds, label}` | `{timer}` |
 | `timer_parse` | `{text}` (a bare number needs the word "timer") | `{spec: {seconds, label, at?} \| null}` |
 | `timer_list` | — | `{timers}` (finished ones kept 10 min) |

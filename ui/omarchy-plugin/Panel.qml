@@ -35,7 +35,7 @@ Item {
   // "search" (files + apps + calculator), "clipboard" (history; LAUNCHER-PLAN.md L4),
   // "settings" (the Trowel Settings command, DECISIONS D26) or "keylock" (Lock Keyboard), and the
   // Phase 9 views (PHASE9-PLAN.md §1): "timers", "procs", "snippets", "snippet-edit", "omarchy",
-  // "themes".
+  // "themes"; "menu" is Omarchy's menu (D35).
   property string view: "search"
   property var clipContent: ({})
   // Clipboard History opened as a command from the search list: Esc (or Backspace on an empty
@@ -54,7 +54,10 @@ Item {
   property string procNotice: ""
   // Where Create/Edit Snippet goes back to: "search" or "snippets".
   property string snippetBack: "search"
-  readonly property var deskViews: ["timers", "procs", "snippets", "snippet-edit", "omarchy", "themes"]
+  readonly property var deskViews: ["timers", "procs", "snippets", "snippet-edit", "omarchy", "themes", "menu"]
+  // Omarchy's menu view: the submenu on screen and the ones ↵ came through (Esc pops them).
+  property string menuNode: "root"
+  property var menuStack: []
   readonly property bool inDesk: root.deskViews.indexOf(root.view) >= 0
   // The process sampler runs only while its view is on screen (PHASE9-PLAN §1.2).
   onViewChanged: {
@@ -96,6 +99,8 @@ Item {
       return "Kept in Trowel's state file; export them from Ctrl+K"
     if (root.view === "omarchy")
       return deskRows.count === 1 ? "1 command" : deskRows.count + " commands"
+    if (root.view === "menu")
+      return client.menuReady ? "" : "Checking what applies…"
     if (root.view === "themes")
       return client.currentTheme.length ? "Current theme: " + client.currentTheme : ""
     if (root.view === "keylock")
@@ -684,7 +689,7 @@ Item {
       client.procSubscribe(root.procSort, root.procGroup)
     else if (root.view === "snippets")
       client.snippetQuery(query.text)
-    else if (root.view === "omarchy" || root.view === "themes")
+    else if (root.view === "omarchy" || root.view === "themes" || root.view === "menu")
       client.systemCommands()
   }
 
@@ -703,6 +708,8 @@ Item {
       rows = DeskModel.scriptRows(client.omarchyScripts, q)
     else if (root.view === "themes")
       rows = DeskModel.themeRows(client.themes, client.currentTheme, q)
+    else if (root.view === "menu")
+      rows = DeskModel.menuRows(client.omarchyMenu, root.menuNode, q)
     var index = ({})
     for (var i = 0; i < rows.length; i++) {
       index[rows[i].rowId] = rows[i]
@@ -989,6 +996,8 @@ Item {
       openKeyLock(true)
     else if (id === "timers" || id === "procs" || id === "snippets" || id === "omarchy" || id === "themes")
       openDesk(id, true)
+    else if (id === "menu")
+      openMenu("root", true)
     else if (id === "snippet-new")
       openSnippetEditor(null, "search")
     else if (id === "timer-start") {
@@ -1009,8 +1018,49 @@ Item {
     }
   }
 
+  // Omarchy's menu at `node` ("root" for the top; a submenu picked from the main list opens there).
+  function openMenu(node, fromSearch) {
+    root.menuNode = node || "root"
+    root.menuStack = []
+    openDesk("menu", fromSearch)
+  }
+
+  // ↵ on a submenu row: one level down, with the way back kept.
+  function enterMenu(node) {
+    root.menuStack = root.menuStack.concat([root.menuNode])
+    root.menuNode = node
+    root.selection = ""
+    root.selectedRow = null
+    root.navigated = false
+    query.text = ""
+    root.syncDesk()
+  }
+
+  // One level up: the submenu ↵ came from, else the parent. False at the top.
+  function leaveMenu() {
+    if (root.view !== "menu" || root.menuNode === "root")
+      return false
+    var stack = root.menuStack.slice()
+    var up = stack.length ? stack.pop() : "root"
+    if (!stack.length && up === "root") {
+      var ms = client.omarchyMenu
+      for (var i = 0; i < ms.length; i++)
+        if (ms[i].id === root.menuNode)
+          up = ms[i].parent || "root"
+    }
+    root.menuStack = stack
+    root.menuNode = up
+    root.selection = ""
+    root.selectedRow = null
+    root.navigated = false
+    root.syncDesk()
+    return true
+  }
+
   // Esc / Backspace on an empty field inside a command: back to the search it came from.
   function goBack() {
+    if (root.leaveMenu())
+      return true
     var fromSearch = (root.view === "clipboard" && root.clipFromSearch) || (root.view === "settings" && root.settingsFromSearch) || (root.view === "keylock" && root.lockFromSearch) || (root.inDesk && root.deskFromSearch)
     if (!fromSearch)
       return false
@@ -1233,6 +1283,16 @@ Item {
     }
     if (t === "command") {
       var cmd = root.selectedRow
+      // An Omarchy menu row (D35): a submenu opens the menu there, an action runs.
+      if (cmd.raw && cmd.raw.menu) {
+        if (cmd.raw.opens)
+          root.openMenu(cmd.raw.opens, true)
+        else {
+          client.systemRun(cmd.commandId)
+          dismiss()
+        }
+        return
+      }
       if (cmd.raw && cmd.raw.system) {
         if (!cmd.confirm || root.armedCommand === cmd.rowId)
           client.commandRun(cmd.commandId, client.launcherQuery)
@@ -1269,6 +1329,15 @@ Item {
     if (t === "script") {
       client.systemRun(root.selectedRow.rowId)
       dismiss()
+      return
+    }
+    if (t === "menu") {
+      if (root.selectedRow.opens)
+        root.enterMenu(root.selectedRow.opens)
+      else {
+        client.systemRun(root.selectedRow.rowId)
+        dismiss()
+      }
       return
     }
     if (t === "theme") {
@@ -1560,7 +1629,7 @@ Item {
         client.clipRefresh()
       else if (op.indexOf("timer_") === 0 && op !== "timer_parse")
         client.timerList()
-      else if (op === "system_commands" && (root.view === "omarchy" || root.view === "themes"))
+      else if (op === "system_commands" && (root.view === "omarchy" || root.view === "themes" || root.view === "menu"))
         root.syncDesk()
       else if (op === "system_run" && msg.state !== undefined && msg.state !== null) {
         client.systemCommands()
@@ -1795,11 +1864,12 @@ Item {
                 "snippets": "Snippets",
                 "snippet-edit": snippetEditor.snippetId ? "Edit Snippet" : "Create Snippet",
                 "omarchy": "Omarchy Commands",
-                "themes": "Pick Theme"
+                "themes": "Pick Theme",
+                "menu": root.menuNode === "root" ? "Omarchy Menu" : DeskModel.menuTitle(client.omarchyMenu, root.menuNode)
               })[root.view] || ""
             hybridPending: root.phase === "words"
             countText: root.activityBadge
-            placeholder: root.view === "timers" ? "How long? 25m tea, 1h 30m, at 15:30" : root.view === "procs" ? "Filter by name or PID" : root.view === "snippets" ? "Search snippets" : root.view === "snippet-edit" ? "" : root.view === "omarchy" ? "Search Omarchy commands" : root.view === "themes" ? "Search themes" : root.view === "keylock" ? "How long? Pick one, or type 45 or 3m" : root.view === "settings" ? "Search settings" : root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
+            placeholder: root.view === "timers" ? "How long? 25m tea, 1h 30m, at 15:30" : root.view === "procs" ? "Filter by name or PID" : root.view === "snippets" ? "Search snippets" : root.view === "snippet-edit" ? "" : root.view === "omarchy" ? "Search Omarchy commands" : root.view === "menu" ? "Search Omarchy's menu" : root.view === "themes" ? "Search themes" : root.view === "keylock" ? "How long? Pick one, or type 45 or 3m" : root.view === "settings" ? "Search settings" : root.view === "clipboard" ? "Search clipboard history" : (root.codeMode ? "Search your code" : "Describe it: “payment error screenshot”, “zebra in a video”…")
             onTextEdited: root.onQueryEdited()
             onKeyPressed: function (event) {
               var ctrl = event.modifiers & Qt.ControlModifier
@@ -2401,6 +2471,7 @@ Item {
                   visible: deskCell.rowType !== "header" && deskCell.rowType !== "proc"
                   width: parent.width
                   glyph: deskCell.item.glyph || (deskCell.rowType === "snippet" ? "snippet" : "timer")
+                  textGlyph: deskCell.item.textGlyph || ""
                   title: deskCell.item.title || ""
                   subtitle: deskCell.item.subtitle || ""
                   accessory: deskCell.item.accessory || ""
@@ -2547,8 +2618,8 @@ Item {
               }
               ListPane {
                 anchors.fill: parent
-                visible: root.view === "omarchy" || root.view === "themes"
-                row: (root.selectedType === "script" || root.selectedType === "theme") ? root.selectedRow : null
+                visible: root.view === "omarchy" || root.view === "themes" || root.view === "menu"
+                row: (root.selectedType === "script" || root.selectedType === "theme" || root.selectedType === "menu") ? root.selectedRow : null
               }
 
               KeyLockPane {
@@ -2636,6 +2707,8 @@ Item {
                   return [["tab", "Next field"], ["ctrl ↵", "Save"], ["esc", "Cancel"]]
                 if (root.view === "omarchy")
                   return [["↵", "Run"], back]
+                if (root.view === "menu")
+                  return [["↵", (root.selectedRow && root.selectedRow.opens) ? "Open" : "Run"], ["esc", root.menuNode !== "root" ? "Up" : back[1]]]
                 if (root.view === "themes")
                   return [["↵", "Apply"], back]
                 if (root.view === "keylock")

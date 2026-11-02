@@ -29,8 +29,23 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
   pointer is on its buttons (`ee1879a`, HoverHandler; verified live), and `FEATURES.md` documents
   the whole feature set. Note: `tests/calc.rs` `expression_table` / `fuzz_random_strings` failed
   once at load average ~14 (they time the 20 ms interrupt) and passed in the next 3 full runs.
-- **Next step:** decide the sampler budget (open question 4) and run the live checks in open
-  question 5; then L5 hardening / 8U parity.
+- **Phase 10 (`phase-10-omarchy-menu`, 2026-11-02, D35):** Omarchy's menu in Trowel, read from
+  Omarchy's files; app dirs missing at startup are now watched through their ancestor. Session log
+  "Phase 10".
+- **Deployed 2026-11-02 13:08 (human: "deploy and push this"):** release `troweld`/`trowel` of
+  `phase-10-omarchy-menu`, plugin `Panel.qml`, `omarchy restart shell`. Backups
+  `…bak.trowel-20261102-130800` of `~/.local/bin/{troweld,trowel}` and `omarchy-plugin/Panel.qml`.
+  Revert: stop `troweld.socket troweld.service`, copy the three back, start them, `omarchy restart
+  shell` (the plugin's `Trowel/` links to this repo: check out `main` too).
+- **Merged 2026-11-02 (human: "it works, merge to main"; the human checked the live panel):**
+  `phase-10-omarchy-menu` → `main` (no-ff), pushed. Before it, CI failed
+  `ui_trace_against_mock_meets_ipc_budgets` twice on the branch (hello 183 ms, budget 50; the same
+  failure as phase-9-island's first run). Cause: `troweld --mock` bound its socket before building
+  its state, so ui-trace's hello waited out the setup (10–16 ms locally, more on the runner). The
+  mock now binds once ready (`mock.rs`); the budget is unchanged; CI run 41417033370 green; harness
+  66/66.
+- **Next step:** open question 6(b) (list all apps on an empty query?), the sampler budget (4) and
+  the Phase 9 live checks (5).
 
 ### Phase 8 map
 
@@ -175,6 +190,25 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
    there is no pointer-click tool here; Lock Screen and Shut Down (not run: they end the session);
    Night Light from the panel (Keep Awake was flipped and back instead); a snippet pasted into
    Ghostty and Chromium (copy mode verified; paste uses the D21 path measured in L0.4).
+6. **New app "not showing" (reported 2026-11-02, KeePassXC AppImage) — not reproduced; gap (a)
+   fixed on `phase-10-omarchy-menu`, gap (b) open (does the human want all apps listed on an
+   empty query, like Omarchy's launcher?).** The
+   `.desktop` landed in `~/.local/share/applications` at 12:29:00.149, 0.4 s after its TryExec
+   AppImage; the live daemon (up since 10:55) had that dir in its inotify set (wd 1, ino 0x16e)
+   and `apps_query` over the socket now returns it for `k`…`keepassxc`, `password`. A probe entry
+   written to the same dir was served 367 ms later and dropped on `rm`. The panel re-queries per
+   keystroke (no cache). Need from the human: what was typed, and how long after install. Two
+   real gaps found on the way, not yet fixed: (a) app dirs that don't exist at startup
+   (`/var/lib/flatpak/exports/share/applications`, `/usr/local/share/applications` here) are
+   never watched, so a first system Flatpak needs a daemon restart; (b) with no text the panel
+   lists no apps, unlike Omarchy's launcher.
+7. **Omarchy menu parity ("same to same").** Omarchy's menu is data:
+   `$OMARCHY_PATH/default/omarchy/omarchy-menu.jsonc` (333 ids; install 78 / remove 50 /
+   update 22 / setup 55 leaves) plus `~/.config/omarchy/extensions/omarchy-menu.jsonc` and
+   plugin `extras/omarchy-menu.jsonc`, parsed by `shell/plugins/menu/MenuModel.js` (`when`,
+   `checked`, `provider`). Mirroring it means running its `action` shell strings, which D31's
+   allow-list forbids today. **Resolved 2026-11-02: D35** (read Omarchy's menu; Omarchy's
+   pickers for packages).
 
 1. **Watchdog kill after resume (2026-10-16 10:17, old v1 binary):** systemd's 30 s watchdog fired right after the laptop woke; core dump in `coredumpctl`. Check whether the current build's watchdog thread survives suspend/resume (ROBUSTNESS F7) before L5 closes.
 1. **L0.5 leftover:** copy one test password from Chrome's password manager (or whatever manager is used) with the metadata logger running, to see whether it marks itself sensitive.
@@ -219,6 +253,76 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-11-02 — Phase 10: Omarchy's menu (D35), app-dir watch gap (`phase-10-omarchy-menu`)
+
+**Asked:** KeePassXC (an AppImage, `.desktop` in `~/.local/share/applications`) "not showing" in
+Trowel; Omarchy's launcher functions (install/remove suggestions, updater, all system utilities)
+"same to same".
+
+**The app report (not reproduced):** the `.desktop` landed at 12:29:00.149, 0.4 s after its
+TryExec AppImage (birth 12:28:59.678, chmod 12:29:00.144); the daemon (up since 10:55) watched
+`~/.local/share/applications` (inotify wd 1, ino 0x16e); `apps_query` over the socket returned
+`keepassxc-2.8.0-1-x86_64` for `k`, `ke`, `keep`, `KeePassXC`, `keepass xc`, `password`; a probe
+`.desktop` was served **367 ms** after it was written and gone after `rm`. Found on the way and
+fixed: app dirs missing at startup (`/var/lib/flatpak/exports/share/applications`,
+`/usr/local/share/applications` here) were never watched. `apps::watch` now watches the nearest
+existing ancestor and re-arms after each burst (`watch_picks_up_dirs_created_later`, which fails
+on the old code: no watch, no event). Still open: Trowel lists no apps on an empty query (Omarchy's
+launcher lists all) — open question 6.
+
+**Omarchy's menu (D35, human chose "Read Omarchy's menu" and "Omarchy's pickers first"):**
+- `crates/troweld/src/desk/menu.rs`: port of `MenuModel.js` (stripJsonc, normalizeItem, merge,
+  pathFor/depthFor/isVisible/labelFor, guardScript + helpers, provider rows, slugify,
+  shellQuote) with document-order JSON keys (a `Deserialize` that keeps object key order; no
+  new dependency). `Desk` caches the merged tree (re-read on mtime change), runs the guard script
+  and the fonts/power-profiles providers in a background pass on `system_commands` (not twice
+  within 2 s), and answers with the last results meanwhile. `system_run menu:<id>` runs a
+  visible action row via `uwsm-app -- bash -lc <action>`; submenus, hidden rows and unknown ids
+  are `not_found`. `Host` gained `menu_files()` and `uwsm()`.
+- Panel: "Omarchy Menu" command and view `menu` (levels, Esc/⌫ up, Omarchy's search across the
+  tree with the parent path, Nerd Font glyphs in `ListRow`/`AppRow`), up to 4 menu matches in
+  the main list's Commands (2+ chars, `dup_of` rows dropped, only an exactly named submenu is
+  strong), a re-ask 1.2 s later while `menu_ready` is false.
+- PROTOCOL.md: `system_commands` `menu`/`menu_ready`, `system_run` `menu:<id>` (additive, still v3).
+
+**Verified facts (2026-11-02):** Omarchy 4.0.6's menu is `default/omarchy/omarchy-menu.jsonc`
+(334 items: 59 menus, 275 actions; providers `apps`, `fonts`) plus
+`~/.config/omarchy/extensions/omarchy-menu.jsonc` (under `$HOME/.config`, not
+`$XDG_CONFIG_HOME`; `Menu.qml:51-52`); plugin `extras/omarchy-menu.jsonc` files are not read by
+the menu. Actions run as `Quickshell.execDetached(["bash","-lc",action])` (`Commons/Util.qml:53`).
+Guards are re-evaluated on every menu open (`Menu.qml:808`) in one `bash -lc`: **880–921 ms** on
+this machine (195 answers; 69 `when` false). `omarchy-font-list` provider: 110 ms. troweld's
+environment has `WAYLAND_DISPLAY`, `HYPRLAND_INSTANCE_SIGNATURE`, `OMARCHY_PATH`; its unit has
+`MemoryHigh=400M` and the default KillMode, hence `uwsm-app`.
+
+**Gates (all on this branch):**
+```
+$ cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings   → exit 0
+$ cargo test --workspace                                                      → all ok; troweld lib 133 passed (was 124)
+$ cargo test -p troweld --lib desk::menu    → 7 passed (tree_matches_menu_model, guard_script_is_byte_identical, …)
+$ node scripts/deskmodel-test.mjs           → deskmodel: 8 tests passed (menu search = MenuModel.js on 13 queries)
+$ node scripts/listmerge-test.mjs           → listmerge: 16 tests passed
+$ python3 -I ui/harness/check.py            → 66 ok, exit 0, no QML warnings
+$ /usr/lib/qt6/bin/qmllint -I ui/qml <changed QML>   → Panel.qml 43 lines, same as main; others 0
+```
+
+**Live after deploy (13:08):** `system_commands` over the socket: 68 ms, `menu_ready` true, 264
+rows, `apps` left out; ✓ on exactly the six rows Omarchy's own guard run marked
+(`setup.network.dns.dhcp`, `setup.default.{agent.omp,browser.chromium,terminal.ghostty,editor.neovim}`,
+`update.channel.stable`); System › Hibernate shown, and `omarchy-hibernation-available` is true
+here (guard `system.hibernate:w:1`); Style › Font lists installed fonts; 8 rows carry `dup_of`
+(lock, suspend, logout, reboot, shutdown, notifications, nightlight, restart shell); no row has an
+`action`. `system_run menu:install.package` → ok, and `omarchy-pkg-install` ran in
+`app.slice/app-graphical.slice/app-Hyprland-bash-71f15c86.scope` (not under troweld.service);
+closed with `systemctl --user stop` on that scope. `system_run "menu:rm -rf ~"` → `not_found`.
+**Still to see in the panel itself (no input tool here):** `install⏎`, levels and Esc, glyphs.
+
+**Before deploy, needed the human:** deploy and live checks: `install⏎` opens Install; Install ›
+Package opens `omarchy-pkg-install` in Omarchy's terminal and its unit is an `app-*.scope`, not
+under `troweld.service` (`systemctl --user status <pid>`); a ✓ (Update › Channel) and a hidden
+`when:` row (System › Hibernate) match Omarchy's menu; Style › Font lists fonts; an edit to the
+extension file shows on the next open; merge to `main`.
 
 ### 2026-10-26 — Phase 9 P2–P7 (`phase-9-island`)
 
