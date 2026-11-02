@@ -99,7 +99,7 @@ struct Engine {
     app_launches: Mutex<Option<std::collections::HashMap<String, Launches>>>,
     /// `state.sqlite` `learned` (apps and commands), loaded on the first `apps_query`.
     learned: Mutex<Option<std::collections::HashMap<String, crate::learn::Learned>>>,
-    apps_watch: Mutex<Option<notify::RecommendedWatcher>>,
+    apps_watch: Mutex<Option<apps::AppsWatch>>,
     clip_watch: Arc<Watcher>,
     clip_subscribers: Arc<Mutex<Vec<Arc<Outbox>>>>,
     clip_events: clip::Events,

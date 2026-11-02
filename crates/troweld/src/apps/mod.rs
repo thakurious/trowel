@@ -323,12 +323,71 @@ pub fn write_hide(path: &Path, id: &str, hidden: bool) -> io::Result<()> {
 /// How long a burst of `.desktop` changes (a package install) settles before one rescan.
 pub const RESCAN_DEBOUNCE: Duration = Duration::from_millis(300);
 
+/// Keeps the application-dir watches alive (dropping it stops them).
+pub struct AppsWatch {
+    _watcher: std::sync::Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
+}
+
+/// Which dirs are watched, and through what: the dir itself (recursively) once it exists, else
+/// its nearest existing ancestor (non-recursively), so the first Flatpak install or a fresh
+/// `~/.local/share/applications` is seen without a restart.
+#[derive(Default)]
+struct Armed {
+    dirs: HashSet<PathBuf>,
+    /// Pending dir → the ancestor watched for it.
+    ancestors: std::collections::HashMap<PathBuf, PathBuf>,
+}
+
+fn nearest_existing(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors()
+        .skip(1)
+        .find(|a| a.is_dir())
+        .map(Path::to_path_buf)
+}
+
+/// Watches what exists now; re-run after every burst. An ancestor watched for a dir is dropped
+/// once the dir itself is watched and no other pending dir needs it.
+fn arm(watcher: &mut impl notify::Watcher, dirs: &[PathBuf], armed: &mut Armed) {
+    use notify::RecursiveMode;
+    for dir in dirs {
+        if armed.dirs.contains(dir) {
+            continue;
+        }
+        // Loop: the next level may appear between the check and the watch.
+        loop {
+            if dir.is_dir() {
+                if watcher.watch(dir, RecursiveMode::Recursive).is_ok() {
+                    armed.dirs.insert(dir.clone());
+                }
+                if let Some(old) = armed.ancestors.remove(dir) {
+                    if !armed.ancestors.values().any(|a| *a == old) && !armed.dirs.contains(&old) {
+                        let _ = watcher.unwatch(&old);
+                    }
+                }
+                break;
+            }
+            let Some(anc) = nearest_existing(dir) else {
+                break;
+            };
+            if armed.ancestors.get(dir) == Some(&anc) {
+                break;
+            }
+            if !armed.ancestors.values().any(|a| *a == anc) {
+                let _ = watcher.watch(&anc, RecursiveMode::NonRecursive);
+            }
+            if let Some(old) = armed.ancestors.insert(dir.clone(), anc) {
+                if !armed.ancestors.values().any(|a| *a == old) {
+                    let _ = watcher.unwatch(&old);
+                }
+            }
+        }
+    }
+}
+
 /// Watches the application dirs (recursively) and the dirs holding the hide files; calls
-/// `on_change` once per burst. Missing paths are skipped.
-pub fn watch(
-    env: &AppsEnv,
-    on_change: impl Fn() + Send + 'static,
-) -> notify::Result<notify::RecommendedWatcher> {
+/// `on_change` once per burst. An application dir that doesn't exist yet is watched for through
+/// its nearest existing ancestor.
+pub fn watch(env: &AppsEnv, on_change: impl Fn() + Send + 'static) -> notify::Result<AppsWatch> {
     use notify::{RecursiveMode, Watcher};
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
@@ -336,26 +395,29 @@ pub fn watch(
             let _ = tx.send(());
         }
     })?;
-    for dir in &env.app_dirs {
-        if dir.is_dir() {
-            let _ = watcher.watch(dir, RecursiveMode::Recursive);
-        }
-    }
+    let dirs = env.app_dirs.clone();
+    let mut armed = Armed::default();
+    arm(&mut watcher, &dirs, &mut armed);
     for hides in [&env.omarchy_hides, &env.trowel_hides] {
         if let Some(dir) = hides.parent().filter(|d| d.is_dir()) {
             let _ = watcher.watch(dir, RecursiveMode::NonRecursive);
         }
     }
+    let watcher = std::sync::Arc::new(std::sync::Mutex::new(watcher));
+    let shared = std::sync::Arc::clone(&watcher);
     std::thread::Builder::new()
         .name("troweld-apps-watch".into())
         .spawn(move || {
             while rx.recv().is_ok() {
                 // Settle: keep draining until the burst is quiet.
                 while rx.recv_timeout(RESCAN_DEBOUNCE).is_ok() {}
+                if let Ok(mut w) = shared.lock() {
+                    arm(&mut *w, &dirs, &mut armed);
+                }
                 on_change();
             }
         })?;
-    Ok(watcher)
+    Ok(AppsWatch { _watcher: watcher })
 }
 
 /// Ids in a set, for tests and the doctor row.
@@ -479,6 +541,46 @@ mod tests {
             }
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// A dir missing at startup (the first Flatpak) is picked up through its ancestor, then
+    /// watched itself.
+    #[test]
+    fn watch_picks_up_dirs_created_later() {
+        let root = std::env::temp_dir().join(format!("trowel-apps-watch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let late = root.join("flatpak/exports/share/applications");
+        let env = AppsEnv {
+            app_dirs: vec![late.clone()],
+            hide_scan_dirs: vec![],
+            desktops: vec![],
+            omarchy_hides: root.join("none/launcher.hides"),
+            trowel_hides: root.join("none2/launcher.hides"),
+            locale: Locale::default(),
+        };
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h = std::sync::Arc::clone(&hits);
+        let _w = watch(&env, move || {
+            h.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })
+        .unwrap();
+        let wait_for = |n: usize| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while hits.load(std::sync::atomic::Ordering::SeqCst) < n {
+                assert!(Instant::now() < deadline, "no rescan #{n}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        fs::create_dir_all(&late).unwrap();
+        write(&late.join("one.desktop"), &app("One", ""));
+        wait_for(1);
+        // Now the dir itself is watched: a second app is seen too.
+        std::thread::sleep(RESCAN_DEBOUNCE);
+        let before = hits.load(std::sync::atomic::Ordering::SeqCst);
+        write(&late.join("two.desktop"), &app("Two", ""));
+        wait_for(before + 1);
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
