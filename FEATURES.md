@@ -66,6 +66,13 @@ Snippets don't expand while typing in other apps (that would need an fcitx5 addo
 - **Toggles** (On/Off shown live): Night Light, Keep Awake, Do Not Disturb, Hide Bar, Touchpad,
   Suspend in Menu.
 - **Restart:** Wi-Fi, Bluetooth, Audio, Shell. **Look:** Next Background, **Pick Theme**.
+- **Omarchy Menu (D35):** Omarchy's own menu, from the same files Omarchy reads, so it stays the
+  same as Omarchy's: Learn, Trigger, Style, Setup, Install, Remove, Update, System and your
+  extensions, with Omarchy's `when:` rules and ✓ marks and its font and power-profile lists.
+  ↵ on a submenu goes in, Esc goes back up; typing searches the whole tree as Omarchy does.
+  From the main list, typing a submenu's name (`install`, `update`) and ↵ opens it there, and up
+  to four menu items show under Commands. Installs, removals and updates run Omarchy's own
+  pickers and scripts in its terminal.
 - **Omarchy Commands:** every `omarchy-*` script with a summary, searchable; ones that ask
   questions open in Omarchy's terminal.
 - **Trowel:** Pause / Resume Indexing, Pause / Resume Clipboard History.
