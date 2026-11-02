@@ -351,12 +351,6 @@ pub fn run(opts: MockOpts) -> io::Result<()> {
             fs::set_permissions(parent, perms)?;
         }
     }
-    let _ = fs::remove_file(&socket);
-    let listener = UnixListener::bind(&socket)?;
-    let mut sock_perms = fs::metadata(&socket)?.permissions();
-    sock_perms.set_mode(0o600);
-    fs::set_permissions(&socket, sock_perms)?;
-
     let launcher = LauncherMock::new(
         fixture
             .launcher
@@ -377,6 +371,14 @@ pub fn run(opts: MockOpts) -> io::Result<()> {
         fixture,
         latency: Duration::from_millis(opts.latency_ms),
     });
+
+    // Bind only once the state is built: a client that connects early would otherwise wait out
+    // the setup inside its first request, and `ui-trace` would bill it to `hello`.
+    let _ = fs::remove_file(&socket);
+    let listener = UnixListener::bind(&socket)?;
+    let mut sock_perms = fs::metadata(&socket)?.permissions();
+    sock_perms.set_mode(0o600);
+    fs::set_permissions(&socket, sock_perms)?;
 
     eprintln!("troweld --mock listening on {}", socket.display());
     for incoming in listener.incoming() {
