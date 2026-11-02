@@ -249,6 +249,16 @@ fn entry(id: &str) -> Option<&'static Entry> {
     ENTRIES.iter().find(|e| e.id == id)
 }
 
+/// The curated command an Omarchy menu action is the same as (`omarchy-system-lock` → Lock
+/// Screen), so the main list shows it once.
+pub fn curated_for_action(action: &str) -> Option<&'static str> {
+    let words: Vec<&str> = action.split_whitespace().collect();
+    ENTRIES
+        .iter()
+        .find(|e| !e.argv.is_empty() && e.argv == words.as_slice())
+        .map(|e| e.id)
+}
+
 fn probe(host: &dyn Host, p: Probe) -> Option<bool> {
     match p {
         Probe::None => None,

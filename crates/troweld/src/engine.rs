@@ -153,6 +153,24 @@ impl crate::desk::Host for EngineHost {
         crate::desk::system::script_dirs(&self.home())
     }
 
+    /// `Menu.qml` `defaultMenuPath` / `userMenuPath` (the user's is under `$HOME/.config` there,
+    /// not `$XDG_CONFIG_HOME`).
+    fn menu_files(&self) -> Vec<PathBuf> {
+        let omarchy = std::env::var_os("OMARCHY_PATH")
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/usr/share/omarchy"));
+        vec![
+            omarchy.join("default/omarchy/omarchy-menu.jsonc"),
+            self.home()
+                .join(".config/omarchy/extensions/omarchy-menu.jsonc"),
+        ]
+    }
+
+    fn uwsm(&self) -> bool {
+        apps::uwsm_available()
+    }
+
     fn keylock_state(&self) -> Option<Value> {
         let path = std::env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)

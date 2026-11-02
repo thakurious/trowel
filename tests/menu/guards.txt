@@ -1,0 +1,5 @@
+personal.hidden:w:0
+system.hibernate:w:0
+trigger.hardware.hybrid-gpu:w:0
+update.channel.stable:c:1
+setup.default.browser.chromium:c:1

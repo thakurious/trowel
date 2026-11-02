@@ -369,6 +369,8 @@ states are read without side effects (flag files, `omarchy-toggle-nightlight --s
 `~/.local/share/omarchy/bin` that have `omarchy:summary`, not `omarchy:hidden`, and no required
 `<arg>`; those that ask questions (gum, `read`, fzf, sudo) open in Omarchy's floating terminal.
 Pick Theme runs `omarchy-theme-set` with a name from `omarchy-theme-list` only.
+*Amended 2026-11-02 by D35:* Omarchy's own menu is a second source of commands, read from
+Omarchy's files rather than curated here.
 
 ## D32. **Timers persist with wall-clock ends** (human, 2026-10-26; was P-D32)
 
@@ -392,6 +394,26 @@ addon (a new dependency), not approved.
 connection `proc` events, error code `not_allowed`, capabilities `island procs system timers
 snippets`. The daemon answers `hello` with the client's version (2 or 3); the panel asks for 3
 and falls back to 2 against an older daemon.
+
+## D35. **Omarchy's menu, read from Omarchy's files** (human, 2026-11-02)
+
+The human asked for "all system level utility things that omarchy launcher has, same to same"
+and picked, of three options, reading Omarchy's menu over deep-linking into it or a curated copy.
+`troweld` reads `$OMARCHY_PATH/default/omarchy/omarchy-menu.jsonc` and
+`~/.config/omarchy/extensions/omarchy-menu.jsonc` (the two files `Menu.qml` reads), merges them as
+`MenuModel.js` does, evaluates `when:` / `checked:` with Omarchy's guard script (byte-identical,
+one `bash -lc`, ≈ 0.9 s here, in the background; replies use the last answers, as Omarchy's menu
+does), and runs the `fonts` / `power-profiles` providers. The `apps` provider is left out: the main
+list is the app launcher. The panel gets visible rows without actions and sends `menu:<id>`; the
+daemon runs that row's `action` as `uwsm-app -- bash -lc <action>` (`Util.execDetached` is
+`bash -lc`; `uwsm-app` keeps package installs out of troweld's cgroup, its `MemoryHigh=400M` and
+stop-kills-children). Trust is Omarchy's own: the shipped file is root-owned, the extension is the
+user's. Package install/remove suggestions are Omarchy's terminal pickers (`omarchy-pkg-install`,
+`omarchy-pkg-aur-install`, `omarchy-pkg-remove`) for now (human: "Omarchy's pickers first");
+inline package search may come later. Search in the menu view is `MenuModel.js`'s
+(`matchesQuery` / `searchScore`); in the main list at most 4 menu matches join Commands for 2+
+characters, rows a curated command already covers (`dup_of`) are dropped, and only a submenu named
+exactly what was typed may lead (`install⏎` opens Install; `fire⏎` still launches Firefox).
 
 ## Related approvals (2026-10-13)
 

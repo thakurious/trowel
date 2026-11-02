@@ -1,0 +1,10 @@
+{
+  // Test extension: overrides a shipped row, adds a submenu, a link, a guarded
+  // row and a provider-backed menu, the shapes ~/.config/omarchy/extensions uses.
+  "personal": {"icon":"","label":"Personal","aliases":["mine"]},
+  "personal.notes": {"icon":"","label":"Notes","description":"open the notes folder","action":"xdg-open ~/Notes"},
+  "personal.hidden": {"icon":"","label":"Never Shown","when":"false","action":"true"},
+  "personal.power": {"icon":"","label":"Power Profiles","provider":"power-profiles"},
+  "personal.go-system": {"icon":"","label":"Go To System","target":"system"},
+  "about": {"icon":"","label":"About This Machine","action":"omarchy-launch-about"},
+}
