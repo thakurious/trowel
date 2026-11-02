@@ -44,7 +44,7 @@ hooks = """
       opened: root.opened, armed: root.armedCommand, procSort: root.procSort, procArmed: root.procArmed, procNotice: root.procNotice,
       accessory: root.selectedRow && root.selectedRow.accessory !== undefined ? root.selectedRow.accessory : null,
       title: root.selectedRow && root.selectedRow.title !== undefined ? root.selectedRow.title : null,
-      snippetEditing: snippetPane.editing, island: client.island.map(function (a) { return a.id }),
+      snippetEditing: snippetPane.editing, menuNode: root.menuNode, menuStack: root.menuStack, island: client.island.map(function (a) { return a.id }),
       desk: root.inDesk ? root.shownRows().map(function (r) { var d = root.deskIndex[r.rowId] || {}; return r.rowId + "|" + (d.title || "") + "|" + (d.accessory || "") }) : []})
   }
 """

@@ -6,6 +6,8 @@ import QtQuick
 Rectangle {
   id: root
   property string glyph: "doc"
+  // A Nerd Font glyph (Omarchy's menu icons, D35) instead of the KindIcon.
+  property string textGlyph: ""
   property string title: ""
   property string subtitle: ""
   property string accessory: ""
@@ -30,9 +32,18 @@ Rectangle {
     color: root.selected ? Theme.alpha(Theme.accent, 0.22) : Theme.keycapFill
     KindIcon {
       anchors.centerIn: parent
+      visible: root.textGlyph.length === 0
       kind: root.glyph
       side: 16
       color: root.selected ? Theme.accent : Theme.secondary
+    }
+    Text {
+      anchors.centerIn: parent
+      visible: root.textGlyph.length > 0
+      text: root.textGlyph
+      color: root.selected ? Theme.accent : Theme.secondary
+      font.family: Theme.monoFamily
+      font.pixelSize: 15
     }
   }
 

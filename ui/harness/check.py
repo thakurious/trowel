@@ -82,7 +82,20 @@ steps = [
     {"do": "command", "id": "omarchy", "wait": 800}, {"do": "log", "what": "omarchy"},
     {"do": "esc", "wait": 400},
     {"do": "command", "id": "themes", "wait": 800}, {"do": "log", "what": "themes"}, {"do": "shot", "name": "themes"},
-    {"do": "esc", "wait": 400}, {"do": "log", "what": "island-state"},
+    {"do": "esc", "wait": 400},
+    # Omarchy's menu (D35, the mock's slice of it; nothing runs).
+    {"do": "type", "text": "install", "wait": 800}, {"do": "log", "what": "menu-main"}, {"do": "shot", "name": "menu-main"},
+    {"do": "enter", "wait": 800}, {"do": "log", "what": "menu-install"}, {"do": "shot", "name": "menu-install"},
+    {"do": "down", "wait": 100}, {"do": "down", "wait": 200}, {"do": "enter", "wait": 400}, {"do": "log", "what": "menu-browser"},
+    {"do": "esc", "wait": 300}, {"do": "log", "what": "menu-up"},
+    {"do": "type", "text": "aur", "wait": 400}, {"do": "log", "what": "menu-search"}, {"do": "shot", "name": "menu-search"},
+    {"do": "type", "text": "", "wait": 200}, {"do": "esc", "wait": 300}, {"do": "log", "what": "menu-top"},
+    {"do": "esc", "wait": 400}, {"do": "log", "what": "menu-back"},
+    {"do": "type", "text": "lock", "wait": 800}, {"do": "log", "what": "menu-dup"},
+    {"do": "type", "text": "aur", "wait": 800}, {"do": "log", "what": "menu-aur"},
+    {"do": "command", "id": "menu", "wait": 800}, {"do": "log", "what": "menu-cmd"},
+    {"do": "type", "text": "omarchy pkg", "wait": 300}, {"do": "type", "text": "package", "wait": 300}, {"do": "enter", "wait": 600}, {"do": "log", "what": "menu-ran"},
+    {"do": "open", "wait": 400}, {"do": "log", "what": "island-state"},
 ]
 out = subprocess.run([str(here / "run.sh"), json.dumps(steps)], capture_output=True, text=True).stdout
 states = {}
@@ -147,6 +160,17 @@ checks = [
     ("saving lands in Snippets with the new one", lambda s: s["snippet-saved"]["view"] == "snippets" and len(s["snippet-saved"]["rows"]) == 6),
     ("Omarchy Commands: summary scripts, not hidden or arg-only ones", lambda s: [r.split("|")[0] for r in s["omarchy"]["desk"]] == ["omarchy:omarchy-theme-bg-next", "omarchy:omarchy-toggle-idle", "omarchy:omarchy-update"] and s["omarchy"]["desk"][2].endswith("|Terminal")),
     ("Pick Theme marks the current one", lambda s: len(s["themes"]["rows"]) == 4 and "theme:Tokyo Night|Tokyo Night|Current" in s["themes"]["desk"]),
+    ("'install' leads with Omarchy's Install submenu", lambda s: s["menu-main"]["rows"][:2] == ["hdr:commands", "cmd:menu:install"] and s["menu-main"]["selection"] == "cmd:menu:install"),
+    ("↵ opens the menu there: Install's rows", lambda s: s["menu-install"]["view"] == "menu" and s["menu-install"]["menuNode"] == "install" and [r.split("|")[0] for r in s["menu-install"]["desk"]] == ["menu:install.package", "menu:install.aur", "menu:install.browser"]),
+    ("↵ on a submenu goes one level down", lambda s: s["menu-browser"]["menuNode"] == "install.browser" and s["menu-browser"]["desk"] == ["menu:install.browser.firefox|Firefox|"]),
+    ("Esc goes back up a level", lambda s: s["menu-up"]["view"] == "menu" and s["menu-up"]["menuNode"] == "install"),
+    ("typing searches the whole menu, with the path", lambda s: s["menu-search"]["desk"][0] == "menu:install.aur|AUR|" and s["menu-search"]["selection"] == "menu:install.aur"),
+    ("Esc from Install reaches the top, apps left out", lambda s: s["menu-top"]["menuNode"] == "root" and s["menu-top"]["desk"][0].startswith("menu:style|") and not any(r.startswith("menu:apps|") for r in s["menu-top"]["desk"])),
+    ("Esc at the top goes back to the search", lambda s: s["menu-back"]["view"] == "search"),
+    ("a menu row a system command covers shows once", lambda s: "cmd:sys:lock-screen" in s["menu-dup"]["rows"] and "cmd:menu:system.lock" not in s["menu-dup"]["rows"]),
+    ("an action is offered in the main list, never leading", lambda s: "cmd:menu:install.aur" in s["menu-aur"]["rows"]),
+    ("Omarchy Menu opens the top", lambda s: s["menu-cmd"]["view"] == "menu" and s["menu-cmd"]["menuNode"] == "root"),
+    ("↵ on an action runs it and closes", lambda s: s["menu-ran"]["opened"] is False),
     ("the island holds the seeded timers", lambda s: s["island-state"]["island"] == ["timer:1", "timer:2"] and s["island-state"]["opened"] is True),
 ]
 failed = 0

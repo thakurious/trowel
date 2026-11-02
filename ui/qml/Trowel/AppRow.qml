@@ -55,7 +55,18 @@ Rectangle {
         anchors.centerIn: parent
         kind: (root.row && root.row.glyph) ? root.row.glyph : "app"
         side: 22
-        visible: icon.status !== Image.Ready
+        visible: icon.status !== Image.Ready && !glyphText.visible
+      }
+
+      // Omarchy's menu rows carry its Nerd Font glyph (D35).
+      Text {
+        id: glyphText
+        anchors.centerIn: parent
+        visible: icon.status !== Image.Ready && text.length > 0
+        text: (root.row && root.row.textGlyph) ? root.row.textGlyph : ""
+        color: Theme.secondary
+        font.family: Theme.monoFamily
+        font.pixelSize: 20
       }
     }
 

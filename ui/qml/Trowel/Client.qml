@@ -114,6 +114,10 @@ QtObject {
   property var island: []
   property var systemList: []
   property var omarchyScripts: []
+  // Omarchy's menu rows (D35), and whether their guards have been evaluated yet.
+  property var omarchyMenu: []
+  property bool menuReady: true
+  property int menuRetries: 0
   property var themes: []
   property string currentTheme: ""
   property var timers: []
@@ -379,6 +383,15 @@ QtObject {
     } else if (op === "system_commands") {
       root.systemList = msg.commands || []
       root.omarchyScripts = msg.omarchy || []
+      root.omarchyMenu = msg.menu || []
+      root.menuReady = msg.menu_ready !== false
+      // The first guard pass lands about a second after the daemon starts it: ask once more.
+      if (!root.menuReady && root.menuRetries < 4) {
+        root.menuRetries += 1
+        root.menuRetry.restart()
+      } else if (root.menuReady)
+        root.menuRetries = 0
+      syncModel()
       root.themes = msg.themes || []
       root.currentTheme = msg.current_theme || ""
       root.opDone(op, msg)
@@ -740,6 +753,7 @@ QtObject {
       signals: current ? root.commandSignals : {},
       commands: root.allCommands,
       lead: (q.length && timer) ? [timer] : [],
+      menu: DeskModel.menuCommands(root.omarchyMenu, q, 4),
       snippets: q.length ? DeskModel.keywordHits(root.keywordSnippets, q) : []
     })
   }
@@ -1026,6 +1040,12 @@ QtObject {
       if (root.wantConnected && !root.sock.connected)
         root.sock.connected = true
     }
+  }
+
+  property Timer menuRetry: Timer {
+    interval: 1200
+    repeat: false
+    onTriggered: root.systemCommands()
   }
 
   onShowWeakerChanged: syncModel()
