@@ -33,9 +33,15 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
   Omarchy's files; app dirs missing at startup are now watched through their ancestor. Built and
   tested offscreen; **not deployed, not merged** (both wait for the human). Session log
   "Phase 10".
-- **Next step:** ask the human to deploy `phase-10-omarchy-menu` (release `troweld`/`trowel`,
-  plugin `Panel.qml`, `omarchy restart shell`, backups first) and run the live checks in the
-  Phase 10 log; then the sampler budget (open question 4) and the Phase 9 live checks (5).
+- **Deployed 2026-11-02 13:08 (human: "deploy and push this"):** release `troweld`/`trowel` of
+  `phase-10-omarchy-menu`, plugin `Panel.qml`, `omarchy restart shell`. Backups
+  `…bak.trowel-20261102-130800` of `~/.local/bin/{troweld,trowel}` and `omarchy-plugin/Panel.qml`.
+  Revert: stop `troweld.socket troweld.service`, copy the three back, start them, `omarchy restart
+  shell` (the plugin's `Trowel/` links to this repo: check out `main` too). Branch pushed; not
+  merged to `main`.
+- **Next step:** the human's eyes on the panel (`install⏎`, Esc up, Style › Font, a ✓), then a PR
+  `phase-10-omarchy-menu` → `main`; then open question 6(b), the sampler budget (4) and the Phase 9
+  live checks (5).
 
 ### Phase 8 map
 
@@ -297,7 +303,18 @@ $ python3 -I ui/harness/check.py            → 66 ok, exit 0, no QML warnings
 $ /usr/lib/qt6/bin/qmllint -I ui/qml <changed QML>   → Panel.qml 43 lines, same as main; others 0
 ```
 
-**Not done (needs the human):** deploy and live checks: `install⏎` opens Install; Install ›
+**Live after deploy (13:08):** `system_commands` over the socket: 68 ms, `menu_ready` true, 264
+rows, `apps` left out; ✓ on exactly the six rows Omarchy's own guard run marked
+(`setup.network.dns.dhcp`, `setup.default.{agent.omp,browser.chromium,terminal.ghostty,editor.neovim}`,
+`update.channel.stable`); System › Hibernate shown, and `omarchy-hibernation-available` is true
+here (guard `system.hibernate:w:1`); Style › Font lists installed fonts; 8 rows carry `dup_of`
+(lock, suspend, logout, reboot, shutdown, notifications, nightlight, restart shell); no row has an
+`action`. `system_run menu:install.package` → ok, and `omarchy-pkg-install` ran in
+`app.slice/app-graphical.slice/app-Hyprland-bash-71f15c86.scope` (not under troweld.service);
+closed with `systemctl --user stop` on that scope. `system_run "menu:rm -rf ~"` → `not_found`.
+**Still to see in the panel itself (no input tool here):** `install⏎`, levels and Esc, glyphs.
+
+**Before deploy, needed the human:** deploy and live checks: `install⏎` opens Install; Install ›
 Package opens `omarchy-pkg-install` in Omarchy's terminal and its unit is an `app-*.scope`, not
 under `troweld.service` (`systemctl --user status <pid>`); a ✓ (Update › Channel) and a hidden
 `when:` row (System › Hibernate) match Omarchy's menu; Style › Font lists fonts; an edit to the
