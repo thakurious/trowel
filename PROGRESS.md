@@ -30,18 +30,22 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
   the whole feature set. Note: `tests/calc.rs` `expression_table` / `fuzz_random_strings` failed
   once at load average ~14 (they time the 20 ms interrupt) and passed in the next 3 full runs.
 - **Phase 10 (`phase-10-omarchy-menu`, 2026-11-02, D35):** Omarchy's menu in Trowel, read from
-  Omarchy's files; app dirs missing at startup are now watched through their ancestor. Built and
-  tested offscreen; **not deployed, not merged** (both wait for the human). Session log
+  Omarchy's files; app dirs missing at startup are now watched through their ancestor. Session log
   "Phase 10".
 - **Deployed 2026-11-02 13:08 (human: "deploy and push this"):** release `troweld`/`trowel` of
   `phase-10-omarchy-menu`, plugin `Panel.qml`, `omarchy restart shell`. Backups
   `…bak.trowel-20261102-130800` of `~/.local/bin/{troweld,trowel}` and `omarchy-plugin/Panel.qml`.
   Revert: stop `troweld.socket troweld.service`, copy the three back, start them, `omarchy restart
-  shell` (the plugin's `Trowel/` links to this repo: check out `main` too). Branch pushed; not
-  merged to `main`.
-- **Next step:** the human's eyes on the panel (`install⏎`, Esc up, Style › Font, a ✓), then a PR
-  `phase-10-omarchy-menu` → `main`; then open question 6(b), the sampler budget (4) and the Phase 9
-  live checks (5).
+  shell` (the plugin's `Trowel/` links to this repo: check out `main` too).
+- **Merged 2026-11-02 (human: "it works, merge to main"; the human checked the live panel):**
+  `phase-10-omarchy-menu` → `main` (no-ff), pushed. Before it, CI failed
+  `ui_trace_against_mock_meets_ipc_budgets` twice on the branch (hello 183 ms, budget 50; the same
+  failure as phase-9-island's first run). Cause: `troweld --mock` bound its socket before building
+  its state, so ui-trace's hello waited out the setup (10–16 ms locally, more on the runner). The
+  mock now binds once ready (`mock.rs`); the budget is unchanged; CI run 41417033370 green; harness
+  66/66.
+- **Next step:** open question 6(b) (list all apps on an empty query?), the sampler budget (4) and
+  the Phase 9 live checks (5).
 
 ### Phase 8 map
 
