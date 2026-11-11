@@ -2,7 +2,9 @@
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::net::UnixStream;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -75,8 +77,54 @@ fn start(root: PathBuf, extra: &[&str]) -> Daemon {
 
 /// `envs` override the daemon's environment (e.g. a `PATH` with stub `wl-copy`).
 fn start_with(root: PathBuf, extra: &[&str], envs: &[(&str, &str)]) -> Daemon {
-    let socket = root.join("troweld.sock");
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_troweld"));
+    spawn_daemon(root, extra, envs, None)
+}
+
+/// With `activated`, the daemon is started the way systemd starts a socket-activated service:
+/// that listener as fd 3 and `LISTEN_FDS` / `LISTEN_PID` (its own pid) / `LISTEN_FDNAMES` set.
+fn spawn_daemon(
+    root: PathBuf,
+    extra: &[&str],
+    envs: &[(&str, &str)],
+    activated: Option<&UnixListener>,
+) -> Daemon {
+    let mut socket = root.join("troweld.sock");
+    let mut cmd = match activated {
+        None => Command::new(env!("CARGO_BIN_EXE_troweld")),
+        Some(listener) => {
+            // `$$` is the shell's pid and `exec` keeps it, so `LISTEN_PID` names the daemon.
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c")
+                .arg(
+                    r#"export LISTEN_FDS=1 LISTEN_FDNAMES=troweld.socket LISTEN_PID=$$; exec "$@""#,
+                )
+                .arg("sh")
+                .arg(env!("CARGO_BIN_EXE_troweld"));
+            let fd = listener.as_raw_fd();
+            // SAFETY: only fcntl/dup2, both async-signal-safe.
+            unsafe {
+                cmd.pre_exec(move || {
+                    // dup2 clears FD_CLOEXEC on the new fd; if it is already 3 clear it by hand.
+                    let ok = if fd == 3 {
+                        libc::fcntl(3, libc::F_SETFD, 0)
+                    } else {
+                        libc::dup2(fd, 3)
+                    };
+                    if ok < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            socket = listener
+                .local_addr()
+                .unwrap()
+                .as_pathname()
+                .unwrap()
+                .to_path_buf();
+            cmd
+        }
+    };
     cmd.arg("--fake")
         .arg("--socket")
         .arg(&socket)
@@ -1283,4 +1331,80 @@ fn code_sync_progress_is_not_main_progress() {
     }
     assert!(found, "the code file must be indexed");
     assert!(statuses > 0, "no status events seen");
+}
+
+/// systemd hands troweld its socket as fd 3 plus `LISTEN_*`. The daemon serves on it, but nothing
+/// it starts (apps through `uwsm-app`, helpers) may see the variables or the descriptor: T3
+/// Code's `cloudflared`, launched from Trowel, read `LISTEN_FDS=1` and died on "error inheriting
+/// socket fd 3".
+#[test]
+fn socket_activation_does_not_leak_to_launched_apps() {
+    let root = temp();
+    desktop(
+        &root.join("sys/applications"),
+        "chromium.desktop",
+        "Name=Chromium\nExec=chromium\n",
+    );
+    let bin = root.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let log = root.join("launched.txt");
+    for name in ["uwsm-app", "gtk-launch"] {
+        let path = bin.join(name);
+        // fd 3 is tested before the log is opened: the shell may reuse the lowest free fd for it.
+        fs::write(
+            &path,
+            format!(
+                "#!/bin/sh\nfd3=closed\n[ -e /proc/$$/fd/3 ] && fd3=open\n\
+                 {{ echo \"args $*\"; echo \"fd3 $fd3\"; env | grep '^LISTEN_'; }} >> '{}'\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let listener = UnixListener::bind(root.join("activated.sock")).unwrap();
+    let d = spawn_daemon(
+        root.clone(),
+        &[],
+        &[
+            ("PATH", path.as_str()),
+            ("XDG_CURRENT_DESKTOP", "Hyprland"),
+            ("XDG_SESSION_DESKTOP", ""),
+            ("DESKTOP_SESSION", ""),
+        ],
+        Some(&listener),
+    );
+    let mut stream = connect(&d);
+    send(
+        &mut stream,
+        &json!({"id":1,"op":"hello","protocol":2,"client":"test","pid":1}),
+    );
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let hello = recv(&mut reader);
+    assert_eq!(hello["id"], 1, "served on the activated socket: {hello}");
+    send(
+        &mut stream,
+        &json!({"id":2,"op":"app_launch","app_id":"chromium"}),
+    );
+    assert_eq!(recv(&mut reader)["ok"], true);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while !fs::read_to_string(&log)
+        .unwrap_or_default()
+        .contains("fd3 ")
+        && Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(20));
+    }
+    let launched = fs::read_to_string(&log).unwrap_or_default();
+    assert!(launched.contains("fd3 closed"), "fd 3 leaked: {launched:?}");
+    assert!(
+        !launched.contains("LISTEN_"),
+        "LISTEN_* leaked to the app: {launched:?}"
+    );
 }

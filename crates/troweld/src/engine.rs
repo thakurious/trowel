@@ -282,6 +282,9 @@ struct Conn {
 }
 
 pub fn run(opts: EngineOpts) -> io::Result<()> {
+    // First thing, while the process is still single-threaded: `take_systemd_listener` edits the
+    // environment, and everything spawned later (apps, helpers) inherits it.
+    let activated = take_systemd_listener();
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
@@ -298,7 +301,7 @@ pub fn run(opts: EngineOpts) -> io::Result<()> {
     let store = IndexStore::open(&index_dir).map_err(io_err)?;
     let searcher = Searcher::new(store, true).map_err(io_err)?;
     let socket = opts.socket.unwrap_or_else(|| dir.join("troweld.sock"));
-    let listener = bind_listener(&socket)?;
+    let listener = bind_listener(&socket, activated)?;
 
     let status = Status {
         vectors_loaded: searcher.vectors_loaded,
@@ -436,9 +439,10 @@ fn reject_foreign_uid(stream: &UnixStream) -> io::Result<u32> {
     Ok(cred.pid.max(0) as u32)
 }
 
-/// systemd socket activation (`LISTEN_FDS`) or bind `$XDG_RUNTIME_DIR/trowel/troweld.sock`.
-fn bind_listener(socket: &Path) -> io::Result<UnixListener> {
-    if let Some(listener) = take_systemd_listener() {
+/// The socket systemd activated us with (`activated`), or bind
+/// `$XDG_RUNTIME_DIR/trowel/troweld.sock`.
+fn bind_listener(socket: &Path, activated: Option<UnixListener>) -> io::Result<UnixListener> {
+    if let Some(listener) = activated {
         return Ok(listener);
     }
     if let Some(parent) = socket.parent() {
@@ -457,20 +461,51 @@ fn bind_listener(socket: &Path) -> io::Result<UnixListener> {
     Ok(listener)
 }
 
+/// `sd_listen_fds(1)`'s environment variables.
+const LISTEN_VARS: [&str; 4] = [
+    "LISTEN_FDS",
+    "LISTEN_PID",
+    "LISTEN_PIDFDID",
+    "LISTEN_FDNAMES",
+];
+
+/// Claims the socket systemd passed as fd 3. The variables are always removed, claimed or not:
+/// they describe *this* process's descriptors, and a child that inherits them (an app started
+/// through `gtk-launch`, `wl-paste`, the helper) believes it was socket-activated too. T3 Code's
+/// `cloudflared` did exactly that and died on "error inheriting socket fd 3". The fd gets
+/// `FD_CLOEXEC` for the same reason: no child should hold the listening socket open.
 fn take_systemd_listener() -> Option<UnixListener> {
-    let fds: u32 = std::env::var("LISTEN_FDS").ok()?.parse().ok()?;
-    if fds == 0 {
-        return None;
+    let ours = listen_fds_are_ours(
+        std::env::var("LISTEN_FDS").ok().as_deref(),
+        std::env::var("LISTEN_PID").ok().as_deref(),
+        std::process::id(),
+    );
+    for var in LISTEN_VARS {
+        std::env::remove_var(var);
     }
-    if let Ok(pid) = std::env::var("LISTEN_PID") {
-        let pid: u32 = pid.parse().ok()?;
-        if pid != std::process::id() {
-            return None;
-        }
+    if !ours {
+        return None;
     }
     // SD_LISTEN_FDS_START == 3
     let fd = 3i32;
-    unsafe { Some(UnixListener::from_raw_fd(fd)) }
+    // SAFETY: systemd handed us `fd` for this process (`LISTEN_PID` matched); fcntl on it is
+    // harmless, and nothing else owns it.
+    unsafe {
+        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        Some(UnixListener::from_raw_fd(fd))
+    }
+}
+
+/// Whether `LISTEN_FDS` / `LISTEN_PID` say systemd passed descriptors to process `me`. A missing
+/// `LISTEN_PID` is accepted (hand-rolled launchers); a present one must match.
+fn listen_fds_are_ours(fds: Option<&str>, pid: Option<&str>, me: u32) -> bool {
+    let Some(fds) = fds.and_then(|v| v.parse::<u32>().ok()) else {
+        return false;
+    };
+    if fds == 0 {
+        return false;
+    }
+    pid.is_none_or(|p| p.parse::<u32>().is_ok_and(|p| p == me))
 }
 
 fn sd_notify(msg: &str) {
@@ -2740,6 +2775,26 @@ mod tests {
         assert_eq!(search_plan(SearchMode::Hybrid, false, false), (false, true));
         assert_eq!(search_plan(SearchMode::Hybrid, false, true), (true, false));
         assert_eq!(search_plan(SearchMode::Hybrid, true, true), (true, true));
+    }
+
+    #[test]
+    fn listen_fds_are_ours_follows_sd_listen_fds() {
+        assert!(listen_fds_are_ours(Some("1"), Some("42"), 42));
+        assert!(
+            listen_fds_are_ours(Some("2"), None, 42),
+            "no LISTEN_PID: accepted"
+        );
+        assert!(
+            !listen_fds_are_ours(Some("1"), Some("41"), 42),
+            "another process's"
+        );
+        assert!(
+            !listen_fds_are_ours(Some("1"), Some("x"), 42),
+            "unparseable pid"
+        );
+        assert!(!listen_fds_are_ours(Some("0"), Some("42"), 42));
+        assert!(!listen_fds_are_ours(Some("x"), Some("42"), 42));
+        assert!(!listen_fds_are_ours(None, Some("42"), 42));
     }
 
     #[test]

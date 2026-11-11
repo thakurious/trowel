@@ -44,6 +44,11 @@ Agents: update this at the end of every session (see `CLAUDE.md`). Newest sessio
   its state, so ui-trace's hello waited out the setup (10–16 ms locally, more on the runner). The
   mock now binds once ready (`mock.rs`); the budget is unchanged; CI run 41417033370 green; harness
   66/66.
+- **Fix, deployed 2026-11-11 18:26 (human: "fix trowel fully, rebuild and push"; branch
+  `fix-sd-listen-env-leak`, not merged):** `troweld` no longer leaks its socket activation to what
+  it starts. Release `troweld` installed in `~/.local/bin`; backup
+  `~/.local/bin/troweld.bak.trowel-20261111-182646` (revert: copy it back, `systemctl --user restart
+  troweld.service`). Session log "Socket-activation leak".
 - **Next step:** open question 6(b) (list all apps on an empty query?), the sampler budget (4) and
   the Phase 9 live checks (5).
 
@@ -253,6 +258,44 @@ hyprctl reload
 Leave these in place until the IME re-test is done so `SUPER+D` still summons the panel.
 
 ## Session log
+
+### 2026-11-11 — Socket-activation leak: `LISTEN_*` reached every app Trowel launched (`fix-sd-listen-env-leak`)
+
+**Asked:** T3 Code's "T3 Connect" tunnel would not start (`cloudflared` exited ~100 ms after each
+start: `error inheriting socket fd 3 ... socket operation on non-socket`); "look deep into trowel
+and why it is interfering", then "fix trowel fully, rebuild and push".
+
+**Cause:** systemd starts `troweld` through `troweld.socket` and passes the socket as fd 3 with
+`LISTEN_FDS=1`, `LISTEN_PID=<troweld>`, `LISTEN_FDNAMES=troweld.socket`. `take_systemd_listener`
+read them and never removed them (`sd_listen_fds(1)` does), so everything `troweld` spawns — apps
+via `uwsm-app -- gtk-launch` (`apps::spawn`, plain `Command`, no `env_remove`), `wl-paste`, `gdbus`,
+the helper — inherited them. T3 Code started from Super+D passed them on to `cloudflared`, which
+treats `LISTEN_FDS` as "my metrics socket is fd 3" (it does not check `LISTEN_PID`). Second leak:
+fd 3 had no `FD_CLOEXEC`, so `gdbus`, `wl-paste`, `trowel` and `trowel-worker` also held the
+listening socket (`/proc/9208/fdinfo/3` flags `02`, five holders of the inode).
+
+**Fix (`crates/troweld/src/engine.rs`):** `run` claims the activation socket first, before any
+thread exists; `LISTEN_FDS/PID/PIDFDID/FDNAMES` are always removed (claimed or not); fd 3 gets
+`FD_CLOEXEC`. The decision is a pure function, `listen_fds_are_ours` (same rules as before: a
+missing `LISTEN_PID` is accepted, a present one must match).
+
+**Tests:** `engine::tests::listen_fds_are_ours_follows_sd_listen_fds`;
+`tests/daemon.rs::socket_activation_does_not_leak_to_launched_apps` starts the daemon as systemd
+does (socket on fd 3, `LISTEN_PID` = its pid), serves a `hello` on it, launches an app through stub
+`uwsm-app`/`gtk-launch` and asserts the app sees no `LISTEN_*` and no open fd 3. On the old
+`engine.rs` it fails with `"fd3 open\nLISTEN_FDS=1\nLISTEN_PID=…\nLISTEN_FDNAMES=troweld.socket"`.
+
+**Gates:** `cargo fmt --all -- --check` clean; `cargo clippy --workspace --all-targets -- -D
+warnings` clean; `cargo test --workspace` green (troweld lib 134, `daemon` 19).
+
+**Live check after deploy (new pid 1389012):** children `wl-paste`, `gdbus`, `trowel index-service`
+have no `LISTEN_*` in `/proc/<pid>/environ`; troweld's fd 3 flags `02000002` (CLOEXEC); the
+listener inode is held by `troweld` alone; `trowel doctor` all OK. Note `/proc/<pid>/environ` of
+`troweld` itself still shows the startup block (unsetenv does not rewrite it); read children.
+
+**Open:** apps launched before the deploy keep the old environment until relaunched. Not run: a
+real launch of T3 Code from Super+D (the human's check). The same pattern could bite other
+daemons here that are socket-activated and spawn children; none found in this repo.
 
 ### 2026-11-02 — Phase 10: Omarchy's menu (D35), app-dir watch gap (`phase-10-omarchy-menu`)
 
